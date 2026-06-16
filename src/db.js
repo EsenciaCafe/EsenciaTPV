@@ -204,3 +204,51 @@ export async function deleteGridItems(gridKey) {
   const { error } = await supabase.from('grid_items').delete().eq('grid_key', gridKey);
   if (error) notifyDbError('deleteGridItems', error.message);
 }
+
+// ─────────────────────────────────────────
+// TPV STATE (Realtime Sync)
+// ─────────────────────────────────────────
+
+export async function loadTPVState() {
+  const { data, error } = await supabase
+    .from('tpv_state')
+    .select('*')
+    .eq('id', 'global')
+    .single();
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      // Row not found, create a default one
+      const defaultState = {
+        id: 'global',
+        tables: [],
+        direct_sale: { items: [] },
+        transactions: []
+      };
+      const { error: insErr } = await supabase.from('tpv_state').insert(defaultState);
+      if (insErr) {
+        console.warn('[DB] Error creating default TPV state:', insErr.message);
+      }
+      return defaultState;
+    }
+    console.warn('[DB] Error loading TPV state:', error.message);
+    throw error;
+  }
+  return data;
+}
+
+export async function saveTPVState(tables, directSale, transactions) {
+  const { error } = await supabase
+    .from('tpv_state')
+    .upsert({
+      id: 'global',
+      tables,
+      direct_sale: directSale,
+      transactions,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+
+  if (error) {
+    console.warn('[DB] Error saving TPV state to Supabase:', error.message);
+  }
+}

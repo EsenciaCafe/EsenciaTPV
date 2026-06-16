@@ -31,3 +31,24 @@ union all
 select 'modifier_options', count(*) from modifier_options
 union all
 select 'grid_items',    count(*) from grid_items;
+
+-- Deshabilitar RLS y dar permisos para el estado del TPV
+alter table if exists tpv_state disable row level security;
+grant all on tpv_state to anon;
+
+-- Habilitar tiempo real para esta tabla de forma segura
+do $$
+begin
+  -- Asegurar que la publicación existe
+  if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    create publication supabase_realtime;
+  end if;
+  
+  -- Intentar añadir la tabla a la publicación (ignorar si ya es miembro)
+  begin
+    alter publication supabase_realtime add table tpv_state;
+  exception
+    when duplicate_object then
+      null; -- ya es miembro
+  end;
+end $$;

@@ -41,3 +41,12 @@ create table if not exists grid_items (
   grid_key text primary key,
   slots    jsonb not null default '[]'
 );
+
+-- Estado del TPV en tiempo real
+create table if not exists tpv_state (
+  id           text primary key,
+  tables       jsonb not null default '[]',
+  direct_sale  jsonb not null default '{}',
+  transactions jsonb not null default '[]',
+  updated_at   timestamptz default now()
+);

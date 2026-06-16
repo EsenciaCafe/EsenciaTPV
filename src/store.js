@@ -6,8 +6,11 @@ import {
   upsertModifier,
   deleteModifier as dbDeleteModifier,
   upsertGridItems,
-  deleteGridItems
+  deleteGridItems,
+  loadTPVState,
+  saveTPVState
 } from './db.js';
+import { supabase } from './supabase.js';
 
 const DINING_STATE_STORAGE_KEY = 'tpv-dining-state-v1';
 const createInitialTables = () => [
@@ -107,17 +110,21 @@ class Store {
   }
 
   persistDiningState() {
-    if (typeof window === 'undefined' || !window.localStorage) return;
-
-    try {
-      window.localStorage.setItem(DINING_STATE_STORAGE_KEY, JSON.stringify({
-        tables: this.state.tables,
-        directSaleTicket: this.state.directSaleTicket,
-        transactions: this.state.transactions
-      }));
-    } catch (err) {
-      console.warn('[Store] No se pudo guardar el estado de mesas.', err);
+    // 1. Save to LocalStorage fallback
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        window.localStorage.setItem(DINING_STATE_STORAGE_KEY, JSON.stringify({
+          tables: this.state.tables,
+          directSaleTicket: this.state.directSaleTicket,
+          transactions: this.state.transactions
+        }));
+      } catch (err) {
+        console.warn('[Store] No se pudo guardar el estado de mesas en LocalStorage.', err);
+      }
     }
+
+    // 2. Save to Supabase (Realtime Sync)
+    saveTPVState(this.state.tables, this.state.directSaleTicket, this.state.transactions);
   }
 
   // Subscribe components
@@ -152,12 +159,76 @@ class Store {
         grids: Object.keys(catalog.gridItems).length
       });
       
+      // Cargar el estado del TPV desde Supabase
+      try {
+        const tpvState = await loadTPVState();
+        if (tpvState) {
+          if (Array.isArray(tpvState.tables) && tpvState.tables.length > 0) {
+            this.state.tables = tpvState.tables;
+          }
+          if (tpvState.direct_sale) {
+            this.state.directSaleTicket = tpvState.direct_sale;
+          }
+          if (Array.isArray(tpvState.transactions)) {
+            this.state.transactions = tpvState.transactions;
+          }
+        }
+      } catch (err) {
+        console.warn('[Store] No se pudo cargar el estado del TPV desde la BD, usando local.', err);
+      }
+
+      // Suscribirse a cambios en tiempo real
+      this.subscribeToRealtime();
+      
       this.notify();
       return true;
     } catch (err) {
       console.warn('[Store] No se pudo conectar a Supabase, usando datos locales como fallback.', err.message);
       return false;
     }
+  }
+
+  subscribeToRealtime() {
+    if (this.realtimeChannel) {
+      this.realtimeChannel.unsubscribe();
+    }
+
+    this.realtimeChannel = supabase
+      .channel('tpv-state-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'tpv_state',
+          filter: 'id=eq.global'
+        },
+        (payload) => {
+          console.log('[Store] Estado del TPV actualizado en tiempo real:', payload);
+          const newState = payload.new;
+          if (newState) {
+            let changed = false;
+            
+            if (Array.isArray(newState.tables) && JSON.stringify(this.state.tables) !== JSON.stringify(newState.tables)) {
+              this.state.tables = newState.tables;
+              changed = true;
+            }
+            if (newState.direct_sale && JSON.stringify(this.state.directSaleTicket) !== JSON.stringify(newState.direct_sale)) {
+              this.state.directSaleTicket = newState.direct_sale;
+              changed = true;
+            }
+            if (Array.isArray(newState.transactions) && JSON.stringify(this.state.transactions) !== JSON.stringify(newState.transactions)) {
+              this.state.transactions = newState.transactions;
+              changed = true;
+            }
+
+            if (changed) {
+              this.listeners.forEach(listener => listener(this.state));
+            }
+          }
+        }
+      )
+      .subscribe();
   }
 
   // Action Methods
