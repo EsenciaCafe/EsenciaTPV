@@ -1136,14 +1136,7 @@ function renderInlineTicketPanel() {
       </div>
     </div>
     <div class="ticket-actions-grid">
-      <details class="ticket-action-menu">
-        <summary class="pay-btn-opt primary">Cobrar</summary>
-        <div class="ticket-action-menu-panel">
-          <button class="pay-btn-opt" id="split-pay-cash">Cobrar efectivo</button>
-          <button class="pay-btn-opt" id="split-pay-card">Cobrar tarjeta</button>
-          <button class="pay-btn-opt" id="split-divide-btn">Dividir cuenta</button>
-        </div>
-      </details>
+      <button class="pay-btn-opt primary" id="split-pay-btn">Cobrar</button>
       <button class="pay-btn-opt" id="split-save-order-btn">Guardar Comanda</button>
     </div>
   ` : `
@@ -1231,14 +1224,7 @@ function renderDrawerOverlay() {
 
         <div style="display:flex; flex-direction:column; gap:8px; margin-top: 10px;">
           <div class="ticket-actions-grid">
-            <details class="ticket-action-menu">
-              <summary class="pay-btn-opt primary">Cobrar</summary>
-              <div class="ticket-action-menu-panel">
-                <button class="pay-btn-opt" id="drawer-pay-cash" data-method="Efectivo">Cobrar efectivo</button>
-                <button class="pay-btn-opt" id="drawer-pay-card" data-method="Tarjeta">Cobrar tarjeta</button>
-                <button class="pay-btn-opt" id="drawer-divide-btn">Dividir cuenta</button>
-              </div>
-            </details>
+            <button class="pay-btn-opt primary" id="drawer-pay-btn">Cobrar</button>
             <button class="pay-btn-opt" id="drawer-save-order-btn">Guardar Comanda</button>
           </div>
         </div>
@@ -1641,6 +1627,183 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
   });
 }
 
+// Modal de pago unificado y táctil
+function showPaymentModal(totalAmount) {
+  if (totalAmount <= 0) return;
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.id = 'payment-modal';
+
+  let selectedMethod = 'Tarjeta'; // Default selection
+  let cashReceived = totalAmount;
+
+  const getChangeAmount = () => {
+    return Math.max(0, cashReceived - totalAmount);
+  };
+
+  const renderPaymentContent = () => {
+    const change = getChangeAmount();
+    const isEfectivo = selectedMethod === 'Efectivo';
+    const isDividir = selectedMethod === 'Dividir';
+
+    let methodSpecificHTML = '';
+    if (isEfectivo) {
+      methodSpecificHTML = `
+        <div class="payment-cash-section" style="margin-top: 16px; animation: fadeIn 0.2s ease;">
+          <div class="editor-form-group">
+            <label class="editor-form-label">Efectivo entregado por el cliente</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="number" class="search-input" id="cash-received-input" step="0.01" value="${cashReceived.toFixed(2)}" style="font-size:1.3rem; text-align:right; font-weight:700; flex:1; height: 48px; padding-right:12px; background:var(--bg-panel); color:var(--text-main); border:1px solid var(--border-color); border-radius:var(--border-radius-md);">
+              <span style="font-size:1.3rem; font-weight:700;">€</span>
+            </div>
+          </div>
+          
+          <div class="cash-quick-buttons" style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px; margin-top:12px;">
+            <button class="cash-quick-btn" data-val="${totalAmount}">Exacto</button>
+            <button class="cash-quick-btn" data-val="5">5€</button>
+            <button class="cash-quick-btn" data-val="10">10€</button>
+            <button class="cash-quick-btn" data-val="20">20€</button>
+            <button class="cash-quick-btn" data-val="50">50€</button>
+            <button class="cash-quick-btn" data-val="${Math.ceil(totalAmount / 5) * 5}">Próx 5</button>
+            <button class="cash-quick-btn" data-val="${Math.ceil(totalAmount / 10) * 10}">Próx 10</button>
+            <button class="cash-quick-btn" data-val="${Math.ceil(totalAmount / 20) * 20}">Próx 20</button>
+          </div>
+
+          <div class="payment-change-highlight" style="background: rgba(16, 185, 129, 0.1); border: 1px dashed var(--secondary); padding: 12px; border-radius: var(--border-radius-md); display:flex; justify-content:space-between; align-items:center; margin-top:16px;">
+            <span style="font-weight:600; font-size:0.9rem; color:var(--text-muted);">Cambio a devolver:</span>
+            <strong style="font-size:1.4rem; color:var(--secondary); font-weight:800;">${change.toFixed(2)}€</strong>
+          </div>
+        </div>
+      `;
+    } else if (selectedMethod === 'Tarjeta') {
+      methodSpecificHTML = `
+        <div class="payment-card-section" style="margin-top: 24px; text-align:center; padding: 16px 0; animation: fadeIn 0.2s ease;">
+          <div class="loading-spinner" style="margin: 0 auto; width: 44px; height: 44px;"></div>
+          <p style="margin-top:16px; font-weight:600; color:var(--text-muted); font-size:0.9rem;">Esperando respuesta del datáfono...</p>
+          <span style="font-size:0.75rem; color:var(--text-muted); display:block; margin-top:4px;">(Puedes pulsar "Confirmar Pago" para simular cobro exitoso)</span>
+        </div>
+      `;
+    } else if (isDividir) {
+      methodSpecificHTML = `
+        <div class="payment-split-section" style="margin-top: 16px; animation: fadeIn 0.2s ease;">
+          <div class="editor-form-group">
+            <label class="editor-form-label" style="display:block; margin-bottom: 6px;">Número de partes</label>
+            <select id="split-parts-select" class="editor-form-select" style="background-color: var(--bg-panel); border: 1px solid var(--border-color); color: var(--text-main); font-family: var(--font-family); padding: 10px; border-radius: var(--border-radius-md); outline:none; width: 100%;">
+              <option value="2">Dividir en 2 partes (${(totalAmount / 2).toFixed(2)}€ c/u)</option>
+              <option value="3">Dividir en 3 partes (${(totalAmount / 3).toFixed(2)}€ c/u)</option>
+              <option value="4">Dividir en 4 partes (${(totalAmount / 4).toFixed(2)}€ c/u)</option>
+              <option value="5">Dividir en 5 partes (${(totalAmount / 5).toFixed(2)}€ c/u)</option>
+              <option value="6">Dividir en 6 partes (${(totalAmount / 6).toFixed(2)}€ c/u)</option>
+            </select>
+          </div>
+          <p style="font-size: 0.78rem; color: var(--text-muted); margin-top: 8px; line-height:1.4;">El cobro parcial se registrará de forma secuencial. Función simplificada para ticket único.</p>
+        </div>
+      `;
+    }
+
+    modal.innerHTML = `
+      <div class="modal-dialog" style="max-width: 480px; width:95%;">
+        <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
+          <h3 style="margin:0; font-size:1.3rem; font-weight:700;">Procesar Cobro</h3>
+        </div>
+        <div class="modal-body">
+          <div class="payment-amount-box" style="background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: var(--border-radius-lg); padding: 16px; text-align: center; margin-bottom: 20px;">
+            <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Total a Cobrar</div>
+            <div style="font-size: 2.2rem; font-weight: 800; color: var(--secondary);">${totalAmount.toFixed(2)}€</div>
+          </div>
+
+          <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">Método de Pago</div>
+          <div class="payment-methods-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;">
+            <button class="payment-method-card ${selectedMethod === 'Tarjeta' ? 'active' : ''}" data-method="Tarjeta" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:16px 8px; display:flex; flex-direction:column; align-items:center; gap:8px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.85rem; transition:all 0.2s ease;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:24px; height:24px; color:${selectedMethod === 'Tarjeta' ? 'var(--secondary)' : 'var(--text-muted)'};"><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></svg>
+              <span>Tarjeta</span>
+            </button>
+            <button class="payment-method-card ${selectedMethod === 'Efectivo' ? 'active' : ''}" data-method="Efectivo" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:16px 8px; display:flex; flex-direction:column; align-items:center; gap:8px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.85rem; transition:all 0.2s ease;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:24px; height:24px; color:${selectedMethod === 'Efectivo' ? '#10b981' : 'var(--text-muted)'};"><rect x="2" y="6" width="20" height="12" rx="2" /><circle cx="12" cy="12" r="2" /><path d="M6 12h.01M18 12h.01" /></svg>
+              <span>Efectivo</span>
+            </button>
+            <button class="payment-method-card ${selectedMethod === 'Dividir' ? 'active' : ''}" data-method="Dividir" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:16px 8px; display:flex; flex-direction:column; align-items:center; gap:8px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.85rem; transition:all 0.2s ease;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:24px; height:24px; color:${selectedMethod === 'Dividir' ? '#f59e0b' : 'var(--text-muted)'};"><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><circle cx="4" cy="12" r="2" /><circle cx="12" cy="10" r="2" /><circle cx="20" cy="14" r="2" /></svg>
+              <span>Dividir</span>
+            </button>
+          </div>
+
+          ${methodSpecificHTML}
+        </div>
+        <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:12px; margin-top:24px; border-top: 1px solid var(--border-color); padding-top: 16px;">
+          <button class="btn btn-secondary" id="payment-cancel-btn" style="height:44px; padding:0 20px; font-weight:600; border-radius:var(--border-radius-md); background:var(--bg-item); border:1px solid var(--border-color); color:var(--text-main); cursor:pointer;">Cancelar</button>
+          <button class="btn btn-primary" id="payment-confirm-btn" style="height:44px; padding:0 24px; font-weight:600; border-radius:var(--border-radius-md); background:var(--secondary); border:none; color:white; cursor:pointer;">Confirmar Pago</button>
+        </div>
+      </div>
+    `;
+
+    // Reattach event listeners to selectors & inputs
+    const methodCards = modal.querySelectorAll('.payment-method-card');
+    methodCards.forEach(card => {
+      card.addEventListener('click', () => {
+        selectedMethod = card.dataset.method;
+        if (selectedMethod === 'Efectivo') {
+          cashReceived = totalAmount;
+        }
+        renderPaymentContent();
+      });
+    });
+
+    // Cancel Button
+    modal.querySelector('#payment-cancel-btn').addEventListener('click', () => {
+      modal.remove();
+    });
+
+    // Confirm Button
+    modal.querySelector('#payment-confirm-btn').addEventListener('click', () => {
+      if (selectedMethod === 'Efectivo') {
+        const change = getChangeAmount();
+        store.payActiveTicket('Efectivo');
+        isDrawerOpen = false;
+        modal.remove();
+        showToast(`Pago en efectivo registrado. Cambio: ${change.toFixed(2)}€.`, 'success');
+      } else if (selectedMethod === 'Tarjeta') {
+        store.payActiveTicket('Tarjeta');
+        isDrawerOpen = false;
+        modal.remove();
+        showToast('Pago con tarjeta procesado correctamente.', 'success');
+      } else if (selectedMethod === 'Dividir') {
+        const parts = parseInt(modal.querySelector('#split-parts-select').value, 10);
+        store.payActiveTicket(`Dividido x${parts}`);
+        isDrawerOpen = false;
+        modal.remove();
+        showToast(`Pago dividido en ${parts} partes registrado.`, 'success');
+      }
+    });
+
+    // Cash received inputs & quick buttons
+    if (isEfectivo) {
+      const cashInput = modal.querySelector('#cash-received-input');
+      cashInput.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        cashReceived = isNaN(val) ? 0 : val;
+        const changeVal = modal.querySelector('.payment-change-highlight strong');
+        if (changeVal) {
+          changeVal.innerText = `${getChangeAmount().toFixed(2)}€`;
+        }
+      });
+
+      // Quick buttons
+      modal.querySelectorAll('.cash-quick-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const val = parseFloat(btn.dataset.val);
+          cashReceived = val;
+          renderPaymentContent();
+        });
+      });
+    }
+  };
+
+  renderPaymentContent();
+  document.body.appendChild(modal);
+}
+
 // Event bindings
 function setupEventListeners(container) {
   // Bottom Nav tabs
@@ -1952,33 +2115,11 @@ function setupEventListeners(container) {
     });
   }
 
-  // Drawer Payment Card / Cash
-  const drawerPayCard = container.querySelector('#drawer-pay-card');
-  if (drawerPayCard) {
-    drawerPayCard.addEventListener('click', () => {
-      if (confirm('¿Cobrar pedido con Tarjeta?')) {
-        store.payActiveTicket('Tarjeta');
-        isDrawerOpen = false;
-        alert('Pago procesado correctamente. Caja abierta.');
-      }
-    });
-  }
-
-  const drawerPayCash = container.querySelector('#drawer-pay-cash');
-  if (drawerPayCash) {
-    drawerPayCash.addEventListener('click', () => {
-      if (confirm('¿Cobrar pedido en Efectivo?')) {
-        store.payActiveTicket('Efectivo');
-        isDrawerOpen = false;
-        alert('Pago en efectivo registrado. Caja abierta.');
-      }
-    });
-  }
-
-  const drawerDivide = container.querySelector('#drawer-divide-btn');
-  if (drawerDivide) {
-    drawerDivide.addEventListener('click', () => {
-      alert('Dividir cuenta estara disponible en el siguiente paso.');
+  // Drawer Payment direct modal
+  const drawerPayBtn = container.querySelector('#drawer-pay-btn');
+  if (drawerPayBtn) {
+    drawerPayBtn.addEventListener('click', () => {
+      showPaymentModal(store.getActiveTicketTotal());
     });
   }
 
@@ -2008,30 +2149,11 @@ function setupEventListeners(container) {
     });
   }
 
-  const splitPayCard = container.querySelector('#split-pay-card');
-  if (splitPayCard) {
-    splitPayCard.addEventListener('click', () => {
-      if (confirm('¿Registrar pago del pedido?')) {
-        store.payActiveTicket('Tarjeta');
-        alert('Cobro completado.');
-      }
-    });
-  }
-
-  const splitPayCash = container.querySelector('#split-pay-cash');
-  if (splitPayCash) {
-    splitPayCash.addEventListener('click', () => {
-      if (confirm('Cobrar pedido en efectivo?')) {
-        store.payActiveTicket('Efectivo');
-        alert('Pago en efectivo registrado. Caja abierta.');
-      }
-    });
-  }
-
-  const splitDivide = container.querySelector('#split-divide-btn');
-  if (splitDivide) {
-    splitDivide.addEventListener('click', () => {
-      alert('Dividir cuenta estara disponible en el siguiente paso.');
+  // Tablet Payment direct modal
+  const splitPayBtn = container.querySelector('#split-pay-btn');
+  if (splitPayBtn) {
+    splitPayBtn.addEventListener('click', () => {
+      showPaymentModal(store.getActiveTicketTotal());
     });
   }
 

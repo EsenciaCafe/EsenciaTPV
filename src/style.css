@@ -1651,3 +1651,36 @@ body.light-theme .btn-quick-pay {
 .db-toast-text {
   line-height: 1.3;
 }
+
+/* ── Payment Modal Styles ─────────────────────────────────── */
+.payment-method-card.active {
+  border-color: var(--secondary) !important;
+  background-color: rgba(16, 185, 129, 0.06) !important;
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.25);
+  color: var(--text-main) !important;
+}
+
+.payment-method-card:hover {
+  border-color: var(--text-muted);
+  background-color: rgba(255, 255, 255, 0.02) !important;
+}
+
+.cash-quick-btn {
+  height: 38px;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background-color: var(--bg-item);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  border-radius: var(--border-radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.cash-quick-btn:hover {
+  background-color: var(--border-color);
+}
