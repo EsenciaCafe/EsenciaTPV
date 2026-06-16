@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Rounded Background -->
+  <rect width="512" height="512" rx="128" fill="#121824"/>
+  
+  <!-- Subtle Gradient Glow -->
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="40%" r="50%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#121824" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="cupGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+  </defs>
+  
+  <circle cx="256" cy="220" r="180" fill="url(#glow)"/>
+
+  <!-- Coffee Cup Shape -->
+  <path d="M160 180H320C320 250 280 290 220 290H200C160 290 160 250 160 180Z" fill="url(#cupGrad)" />
+  
+  <!-- Coffee Cup Handle -->
+  <path d="M320 200H345C365 200 365 240 345 240H320" stroke="url(#cupGrad)" stroke-width="20" fill="none" stroke-linecap="round"/>
+  
+  <!-- Cup Base -->
+  <rect x="170" y="300" width="100" height="12" rx="6" fill="#64748b"/>
+  
+  <!-- Steaming Lines -->
+  <path d="M195 140Q205 120 195 100" stroke="#10b981" stroke-width="12" fill="none" stroke-linecap="round"/>
+  <path d="M240 135Q250 115 240 95" stroke="#10b981" stroke-width="12" fill="none" stroke-linecap="round"/>
+  <path d="M285 140Q295 120 285 100" stroke="#10b981" stroke-width="12" fill="none" stroke-linecap="round"/>
+
+  <!-- Check/Ticket Accent overlay (TPV context) -->
+  <path d="M270 340H360M270 380H340" stroke="#ffffff" stroke-width="16" stroke-linecap="round" stroke-opacity="0.8"/>
+  <path d="M380 300L250 430" stroke="#38bdf8" stroke-width="16" stroke-linecap="round"/>
+  <path d="M250 430L210 390" stroke="#38bdf8" stroke-width="16" stroke-linecap="round"/>
+</svg>

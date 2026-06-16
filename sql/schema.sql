@@ -1,0 +1,43 @@
+-- ============================================================
+-- schema.sql — Esquema de la base de datos del TPV
+-- Ejecutar en: Supabase → SQL Editor
+-- ============================================================
+
+-- Categorías (principales y subcategorías)
+create table if not exists categories (
+  id        text primary key,
+  name      text not null,
+  type      text not null check (type in ('category', 'subcategory')),
+  parent_id text references categories(id) on delete cascade
+);
+
+-- Artículos del catálogo
+create table if not exists menu_items (
+  id        text primary key,
+  name      text not null,
+  price     numeric(10,2) not null default 0.00,
+  category  text references categories(id) on delete set null,
+  image     text,
+  modifiers text[] default '{}'
+);
+
+-- Grupos de modificadores (ej: "Tipo de leche")
+create table if not exists modifiers (
+  id             text primary key,
+  name           text not null,
+  assigned_items text[] default '{}'
+);
+
+-- Opciones de cada modificador (ej: "Leche de Avena +1.00€")
+create table if not exists modifier_options (
+  id          text primary key,
+  modifier_id text not null references modifiers(id) on delete cascade,
+  name        text not null,
+  price       numeric(10,2) not null default 0.00
+);
+
+-- Grid de atajos rápidos (un registro por nivel: 'root', 'drinks', etc.)
+create table if not exists grid_items (
+  grid_key text primary key,
+  slots    jsonb not null default '[]'
+);
