@@ -1152,10 +1152,24 @@ function renderInlineTicketPanel() {
     </div>
   `;
 
+  const reassignButton = table ? `
+    <button class="ticket-reassign-btn" title="Reasignar/Mover Mesa">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px; display: block;">
+        <path d="M17 2.1l4 4-4 4" />
+        <path d="M3 12.2v-2a4 4 0 0 1 4-4h14" />
+        <path d="M7 21.9l-4-4 4-4" />
+        <path d="M21 11.8v2a4 4 0 0 1-4 4H3" />
+      </svg>
+    </button>
+  ` : '';
+
   return `
     <div class="ticket-header">
       <span class="ticket-header-title">Ticket de Servicio</span>
-      <span class="ticket-header-table" style="color:var(--primary); font-weight:700;">${tableName}</span>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <span class="ticket-header-table" style="color:var(--primary); font-weight:700;">${tableName}</span>
+        ${reassignButton}
+      </div>
     </div>
     ${content}
   `;
@@ -1198,13 +1212,27 @@ function renderDrawerOverlay() {
   const tax = total * 0.10;
   const subtotal = total - tax;
 
+  const reassignButton = table ? `
+    <button class="ticket-reassign-btn" title="Reasignar/Mover Mesa">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px; display: block;">
+        <path d="M17 2.1l4 4-4 4" />
+        <path d="M3 12.2v-2a4 4 0 0 1 4-4h14" />
+        <path d="M7 21.9l-4-4 4-4" />
+        <path d="M21 11.8v2a4 4 0 0 1-4 4H3" />
+      </svg>
+    </button>
+  ` : '';
+
   return `
     <div class="drawer-overlay" id="drawer-backdrop">
       <div class="drawer-content">
         <div class="drawer-close-indicator" id="drawer-pull-bar"></div>
-        <div class="drawer-header">
+        <div class="drawer-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
           <span class="drawer-title">Pedido Actual</span>
-          <span class="drawer-table-sel">${tableName}</span>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span class="drawer-table-sel">${tableName}</span>
+            ${reassignButton}
+          </div>
         </div>
         
         <div class="ticket-list">
@@ -1750,6 +1778,109 @@ function showTableSelectionModal() {
         store.saveActiveOrderToTable(tableId);
         modal.remove();
         showToast(`Comanda guardada en la ${table.name}.`, 'success');
+      }
+    });
+  });
+}
+
+// Modal para mover/reasignar comanda de mesa
+function showReassignTableModal() {
+  const currentTable = store.getSelectedTable();
+  if (!currentTable) {
+    showToast('No hay ninguna mesa activa seleccionada.', 'warning');
+    return;
+  }
+
+  const activeItems = store.getActiveItems();
+  if (activeItems.length === 0) {
+    showToast('No hay artículos en la comanda para mover.', 'warning');
+    return;
+  }
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.id = 'table-reassign-modal';
+
+  const tables = store.state.tables;
+  const diningTables = tables.filter(t => (t.type || 'table') === 'table');
+  const takeawayTables = tables.filter(t => t.type === 'takeaway');
+
+  const renderTableButtons = (tableList) => {
+    return tableList.map(table => {
+      const total = store.getTableTotal(table);
+      const itemCount = table.items.reduce((sum, item) => sum + item.qty, 0);
+      const isOccupied = itemCount > 0;
+      const isCurrent = currentTable.id === table.id;
+      const statusClass = isCurrent ? 'current-table' : (isOccupied ? 'occupied' : 'available');
+      const disabledAttr = isCurrent ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : '';
+
+      return `
+        <button class="modal-table-btn ${statusClass}" data-table-id="${table.id}" ${disabledAttr}>
+          <span style="font-size: 0.95rem; font-weight: 700;">${table.name}</span>
+          ${isCurrent 
+            ? `<span class="table-badge" style="font-size: 0.7rem; font-weight: 700; color: var(--primary);">Actual</span>`
+            : isOccupied 
+              ? `<span class="table-badge" style="font-size: 0.7rem; font-weight: 700; color: var(--warning);">${total.toFixed(2)}€</span>` 
+              : `<span class="table-badge" style="font-size: 0.7rem; font-weight: 600; color: var(--text-muted);">Libre</span>`
+          }
+        </button>
+      `;
+    }).join('');
+  };
+
+  modal.innerHTML = `
+    <div class="modal-dialog" style="max-width: 520px; width:95%; max-height: 90vh; display:flex; flex-direction:column; padding: 20px;">
+      <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px; flex-shrink:0;">
+        <h3 style="margin:0; font-size:1.2rem; font-weight:700;">Mover / Reasignar ${currentTable.name}</h3>
+      </div>
+      <div class="modal-body" style="overflow-y:auto; flex:1; padding-right:2px; display:flex; flex-direction:column; gap:16px;">
+        <div>
+          <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">Sala</div>
+          <div class="modal-table-grid">
+            ${renderTableButtons(diningTables)}
+          </div>
+        </div>
+        
+        <div>
+          <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">Para Llevar</div>
+          <div class="modal-table-grid">
+            ${renderTableButtons(takeawayTables)}
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px; border-top: 1px solid var(--border-color); padding-top: 12px; flex-shrink:0;">
+        <button class="btn btn-secondary" id="reassign-cancel-btn" style="height:40px; padding:0 16px; font-weight:600; border-radius:var(--border-radius-md); background:var(--bg-item); border:1px solid var(--border-color); color:var(--text-main); cursor:pointer; font-size:0.85rem;">Cancelar</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  modal.querySelector('#reassign-cancel-btn').addEventListener('click', () => {
+    modal.remove();
+  });
+
+  modal.querySelectorAll('.modal-table-btn').forEach(btn => {
+    if (btn.hasAttribute('disabled')) return;
+    btn.addEventListener('click', () => {
+      const tableId = parseInt(btn.dataset.tableId, 10);
+      const table = store.state.tables.find(t => t.id === tableId);
+      const isOccupied = table && table.items.length > 0;
+
+      if (isOccupied) {
+        showConfirm(
+          'Combinar Comandas',
+          `La ${table.name} ya tiene una comanda activa.\n¿Deseas combinar la comanda de la ${currentTable.name} con la ${table.name}?`,
+          () => {
+            store.assignActiveOrderToTable(tableId);
+            modal.remove();
+            showToast(`Comanda de la ${currentTable.name} combinada con la ${table.name}.`, 'success');
+          }
+        );
+      } else {
+        store.assignActiveOrderToTable(tableId);
+        modal.remove();
+        showToast(`Comanda movida de la ${currentTable.name} a la ${table.name}.`, 'success');
       }
     });
   });
@@ -2748,6 +2879,15 @@ function setupEventListeners(container) {
       }
     });
   }
+
+  // Reassign table action
+  container.querySelectorAll('.ticket-reassign-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      isDrawerOpen = false;
+      showReassignTableModal();
+    });
+  });
 
   // Settings active table selection
   const settingTableSelect = container.querySelector('#settings-table-select');

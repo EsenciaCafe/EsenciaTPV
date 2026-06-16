@@ -1547,6 +1547,24 @@ body.light-theme .btn-quick-pay {
   border-radius: var(--border-radius-sm);
 }
 
+.ticket-reassign-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.ticket-reassign-btn:hover {
+  background-color: rgba(16, 185, 129, 0.1);
+  color: var(--secondary);
+}
+
 .ticket-summary {
   background-color: var(--bg-panel);
   border-top: 1px solid var(--border-color);
