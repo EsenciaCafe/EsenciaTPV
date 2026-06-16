@@ -2352,7 +2352,31 @@ function setupEventListeners(container) {
       const tableId = parseInt(btn.dataset.tableId, 10);
       if (!Number.isNaN(tableId)) {
         isDrawerOpen = false;
-        store.selectTable(tableId);
+        
+        const hasUnassignedItems = store.state.selectedTableId === null && store.state.directSaleTicket.items.length > 0;
+        
+        if (hasUnassignedItems) {
+          const table = store.state.tables.find(t => t.id === tableId);
+          const isOccupied = table && table.items.length > 0;
+          
+          if (isOccupied) {
+            showConfirm(
+              'Combinar Mesa y Comanda',
+              `La ${table.name} ya tiene una comanda activa.\n¿Deseas combinar tu comanda actual con la cuenta de la mesa?`,
+              () => {
+                store.assignActiveOrderToTable(tableId);
+                showToast(`Comanda combinada con la ${table.name}.`, 'success');
+              }
+            );
+          } else {
+            // Assign automatically without prompt for empty table
+            store.assignActiveOrderToTable(tableId);
+            showToast(`Comanda asignada a la ${table.name}.`, 'success');
+          }
+        } else {
+          // Normal selection when cart is empty or we are already editing another table
+          store.selectTable(tableId);
+        }
       }
     });
   });
@@ -2725,7 +2749,32 @@ function setupEventListeners(container) {
       if (val === 'direct') {
         store.selectTable(null);
       } else {
-        store.selectTable(parseInt(val, 10));
+        const tableId = parseInt(val, 10);
+        const hasUnassignedItems = store.state.selectedTableId === null && store.state.directSaleTicket.items.length > 0;
+        
+        if (hasUnassignedItems) {
+          const table = store.state.tables.find(t => t.id === tableId);
+          const isOccupied = table && table.items.length > 0;
+          
+          if (isOccupied) {
+            showConfirm(
+              'Combinar Mesa y Comanda',
+              `La ${table.name} ya tiene una comanda activa.\n¿Deseas combinar tu comanda actual con la cuenta de la mesa?`,
+              () => {
+                store.assignActiveOrderToTable(tableId);
+                showToast(`Comanda combinada con la ${table.name}.`, 'success');
+              },
+              () => {
+                settingTableSelect.value = 'direct';
+              }
+            );
+          } else {
+            store.assignActiveOrderToTable(tableId);
+            showToast(`Comanda asignada a la ${table.name}.`, 'success');
+          }
+        } else {
+          store.selectTable(tableId);
+        }
       }
     });
   }
