@@ -1405,20 +1405,50 @@ body.light-theme .btn-quick-pay {
 
 /* Modifiers & Options Styles */
 .ticket-item {
-  cursor: pointer;
-  border-radius: var(--border-radius-sm);
-  padding: 8px;
-  transition: background-color 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background-color: var(--bg-item);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .ticket-item:hover {
-  background-color: var(--bg-item);
+  background-color: var(--bg-item-active);
+  border-color: var(--text-muted);
+}
+
+.ticket-item-details {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ticket-item-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-main);
+  word-break: break-word;
+}
+
+.ticket-item-modifiers {
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }
 
 .ticket-item-options {
   margin-top: 4px;
-  padding-left: 12px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border-color);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1427,8 +1457,116 @@ body.light-theme .btn-quick-pay {
 .ticket-item-option-row {
   display: flex;
   justify-content: space-between;
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Quantity Actions & Pill */
+.ticket-item-qty-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 24px;
+  padding: 4px;
+  flex-shrink: 0;
+}
+
+.qty-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: none;
+  background-color: var(--bg-item);
+  color: var(--text-main);
+  font-size: 1.25rem;
+  font-weight: 700;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+.qty-btn:active {
+  background-color: var(--bg-item-active);
+  transform: scale(0.9);
+}
+
+.qty-minus-btn {
+  color: var(--danger);
+}
+
+.qty-plus-btn {
+  color: var(--secondary);
+}
+
+.ticket-item-qty {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-main);
+  min-width: 24px;
+  text-align: center;
+  display: inline-block;
+}
+
+.ticket-item-total {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-main);
+  min-width: 65px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.ticket-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 16px;
+}
+
+.ticket-header-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.ticket-header-table {
+  font-size: 0.9rem;
+  font-weight: 700;
+  background-color: rgba(37, 99, 235, 0.1);
+  color: var(--primary) !important;
+  padding: 4px 10px;
+  border-radius: var(--border-radius-sm);
+}
+
+.ticket-summary {
+  background-color: var(--bg-panel);
+  border-top: 1px solid var(--border-color);
+  padding: 16px 0;
+  margin-top: auto;
+}
+
+.summary-row.total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--text-main);
+  padding: 4px 8px;
+}
+
+.summary-row.total .total-val {
+  font-size: 1.55rem;
+  color: var(--secondary);
 }
 
 .modifier-group {
