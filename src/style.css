@@ -12,6 +12,7 @@
   
   --primary: #2563eb;        /* Classic Blue for Category buttons */
   --primary-hover: #1d4ed8;
+  --primary-light: rgba(37, 99, 235, 0.15);
   --secondary: #10b981;      /* Emerald Green for Subcategories */
   --accent: #38bdf8;         /* Sky Blue */
   --danger: #ff453a;         /* iOS style Red */
@@ -45,6 +46,7 @@ body.light-theme {
   /* Legible primary/secondary accents in light mode */
   --primary: #1d4ed8;
   --primary-hover: #1e40af;
+  --primary-light: rgba(29, 78, 216, 0.08);
   --secondary: #059669;
   --accent: #0284c7;
   --danger: #dc2626;
@@ -1331,39 +1333,33 @@ body.light-theme .btn-quick-pay {
 }
 
 .editor-form-label {
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: 0.72rem;
+  font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
 }
 
-.editor-form-input {
-  background-color: var(--bg-panel);
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius-md);
-  color: var(--text-main);
-  font-family: var(--font-family);
-  font-size: 1.05rem;
-  padding: 14px;
-  outline: none;
-  width: 100%;
-}
-
-.editor-form-input:focus {
-  border-color: var(--primary);
-}
-
+.editor-form-input,
 .editor-form-select {
   background-color: var(--bg-panel);
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius-md);
   color: var(--text-main);
   font-family: var(--font-family);
-  font-size: 1.05rem;
-  padding: 14px;
+  font-size: 1rem;
+  font-weight: 500;
+  padding: 12px 14px;
   outline: none;
   width: 100%;
+  transition: all 0.15s ease-in-out;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.editor-form-input:focus,
+.editor-form-select:focus {
+  border-color: var(--primary);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05), 0 0 0 3px var(--primary-light, rgba(37, 99, 235, 0.15));
 }
 
 .editor-form-actions {
@@ -2250,5 +2246,48 @@ body.light-theme .btn-quick-pay {
 }
 .article-card:not(.has-image) .article-card-price {
   color: var(--text-muted);
+}
+
+/* ── Premium Form Buttons ─────────────────────────────────── */
+.btn {
+  font-family: var(--font-family);
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 10px 18px;
+  border-radius: var(--border-radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  height: 40px;
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn-primary {
+  background-color: var(--secondary) !important;
+  border-color: var(--secondary) !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
+}
+.btn-primary:hover {
+  opacity: 0.9;
+  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.25);
+}
+
+.btn-secondary {
+  background-color: var(--bg-item) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+.btn-secondary:hover {
+  background-color: var(--bg-item-active) !important;
+  border-color: var(--text-muted) !important;
 }
 
