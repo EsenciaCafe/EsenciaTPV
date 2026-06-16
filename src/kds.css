@@ -1,34 +1,34 @@
 /* ═══════════════════════════════════════════════════
    KDS — Kitchen Display System
-   Hoja de estilos independiente, misma paleta del TPV
    ═══════════════════════════════════════════════════ */
 
-/* ── Variables (misma paleta que el TPV) ─────────── */
+/* ── Variables ───────────────────────────────────── */
 :root {
-  --bg-base:        #0d1117;
-  --bg-panel:       #161b22;
-  --bg-card:        #1c2333;
-  --bg-card-hover:  #222b3d;
-  --border-color:   #2a3447;
-  --primary:        #2563eb;
-  --primary-light:  rgba(37, 99, 235, 0.15);
-  --secondary:      #10b981;
-  --secondary-light:rgba(16, 185, 129, 0.15);
-  --warning:        #f59e0b;
-  --warning-light:  rgba(245, 158, 11, 0.15);
-  --danger:         #ef4444;
-  --danger-light:   rgba(239, 68, 68, 0.15);
-  --text-main:      #e6edf3;
-  --text-muted:     #7d8590;
-  --text-dim:       #4a5568;
-  --font:           'Outfit', sans-serif;
-  --radius-sm:      6px;
-  --radius-md:      10px;
-  --radius-lg:      14px;
-  --radius-xl:      20px;
+  --bg-base:         #0d1117;
+  --bg-panel:        #161b22;
+  --bg-card:         #1c2333;
+  --bg-card-hover:   #222b3d;
+  --border-color:    #2a3447;
+  --primary:         #2563eb;
+  --primary-light:   rgba(37, 99, 235, 0.15);
+  --secondary:       #10b981;
+  --secondary-light: rgba(16, 185, 129, 0.15);
+  --warning:         #f59e0b;
+  --warning-light:   rgba(245, 158, 11, 0.15);
+  --danger:          #ef4444;
+  --danger-light:    rgba(239, 68, 68, 0.15);
+  --ready:           #10b981;
+  --ready-light:     rgba(16, 185, 129, 0.15);
+  --text-main:       #e6edf3;
+  --text-muted:      #7d8590;
+  --text-dim:        #4a5568;
+  --font:            'Outfit', sans-serif;
+  --radius-sm:       6px;
+  --radius-md:       10px;
+  --radius-lg:       14px;
 }
 
-/* ── Reset & Base ────────────────────────────────── */
+/* ── Reset ───────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
@@ -58,8 +58,7 @@ html, body {
   font-size: 0.95rem;
 }
 .kds-loading-spinner {
-  width: 40px;
-  height: 40px;
+  width: 40px; height: 40px;
   border: 3px solid var(--border-color);
   border-top-color: var(--secondary);
   border-radius: 50%;
@@ -72,22 +71,18 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 20px;
+  padding: 10px 20px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
   gap: 12px;
 }
-
 .kds-logo {
   display: flex;
   align-items: center;
   gap: 10px;
 }
-.kds-logo-icon {
-  width: 32px;
-  height: 32px;
-}
+.kds-logo-icon { width: 32px; height: 32px; }
 .kds-logo-text {
   font-size: 1.1rem;
   font-weight: 800;
@@ -97,92 +92,75 @@ html, body {
   background-clip: text;
   letter-spacing: -0.02em;
 }
-
-.kds-header-center {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 .kds-clock {
   font-size: 1.6rem;
   font-weight: 700;
   color: var(--text-main);
   letter-spacing: 0.04em;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 .kds-date {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   text-align: center;
+  margin-top: 2px;
 }
-
 .kds-header-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
+.kds-stats {
+  display: flex;
+  gap: 14px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.kds-stat strong { color: var(--text-main); font-weight: 700; }
+.kds-stat.ready-stat strong { color: var(--secondary); }
+
 .kds-status-dot {
-  width: 8px;
-  height: 8px;
+  width: 8px; height: 8px;
   border-radius: 50%;
   background: var(--secondary);
   box-shadow: 0 0 8px var(--secondary);
   animation: pulse-dot 2s ease-in-out infinite;
   flex-shrink: 0;
 }
-.kds-status-dot.disconnected {
-  background: var(--danger);
-  box-shadow: 0 0 8px var(--danger);
-}
+.kds-status-dot.disconnected { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
-.kds-status-label {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-}
-.kds-stats {
-  display: flex;
-  gap: 16px;
-  font-size: 0.78rem;
-  color: var(--text-muted);
-}
-.kds-stat strong {
-  color: var(--text-main);
-  font-weight: 700;
-}
+.kds-status-label { font-size: 0.75rem; color: var(--text-muted); }
 
 .kds-settings-btn {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   color: var(--text-muted);
   border-radius: var(--radius-md);
-  width: 38px;
-  height: 38px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: 38px; height: 38px;
+  display: flex; align-items: center; justify-content: center;
   cursor: pointer;
   transition: all 0.2s;
+  flex-shrink: 0;
 }
 .kds-settings-btn:hover {
   background: var(--bg-card-hover);
   color: var(--text-main);
   border-color: var(--primary);
 }
-.kds-settings-btn svg { pointer-events: none; }
 
-/* ── Main Grid Area ──────────────────────────────── */
+/* ── Main Grid ───────────────────────────────────── */
 .kds-main {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: 14px;
 }
-
 .kds-grid {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   grid-template-columns: repeat(var(--kds-cols, 3), 1fr);
   align-content: start;
 }
@@ -201,67 +179,83 @@ html, body {
 .kds-empty svg { opacity: 0.3; }
 .kds-empty p { font-size: 1rem; }
 
-/* ── Order Card ──────────────────────────────────── */
+/* ══════════════════════════════════════════════════
+   ORDER CARD
+   ══════════════════════════════════════════════════ */
+
 .kds-card {
   background: var(--bg-card);
-  border: 1px solid var(--border-color);
+  border: 2px solid var(--border-color);
   border-radius: var(--radius-lg);
   overflow: hidden;
   display: flex;
   flex-direction: column;
   animation: cardIn 0.3s ease;
-  transition: border-color 0.3s, box-shadow 0.3s;
-  position: relative;
+  transition: border-color 0.4s, box-shadow 0.4s;
 }
-
 @keyframes cardIn {
   from { opacity: 0; transform: scale(0.95) translateY(8px); }
   to   { opacity: 1; transform: scale(1) translateY(0); }
 }
 
-/* Time-based border coloring */
-.kds-card.fresh   { border-color: var(--secondary); box-shadow: 0 0 0 1px rgba(16,185,129,0.15), 0 4px 20px rgba(16,185,129,0.08); }
-.kds-card.medium  { border-color: var(--warning);   box-shadow: 0 0 0 1px rgba(245,158,11,0.15),  0 4px 20px rgba(245,158,11,0.08); }
-.kds-card.urgent  { border-color: var(--danger);    box-shadow: 0 0 0 1px rgba(239,68,68,0.15),   0 4px 20px rgba(239,68,68,0.08); }
-.kds-card.urgent  { animation: cardIn 0.3s ease, urgentPulse 2.5s ease-in-out infinite; }
+/* Status-based borders */
+.kds-card.waiting {
+  border-color: var(--warning);
+  box-shadow: 0 0 0 1px rgba(245,158,11,0.12), 0 4px 20px rgba(245,158,11,0.06);
+}
+.kds-card.urgent {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px rgba(239,68,68,0.15), 0 4px 20px rgba(239,68,68,0.08);
+  animation: cardIn 0.3s ease, urgentPulse 2s ease-in-out infinite;
+}
 @keyframes urgentPulse {
   0%, 100% { box-shadow: 0 0 0 1px rgba(239,68,68,0.15), 0 4px 20px rgba(239,68,68,0.08); }
-  50%       { box-shadow: 0 0 0 2px rgba(239,68,68,0.35), 0 6px 28px rgba(239,68,68,0.18); }
+  50%       { box-shadow: 0 0 0 2px rgba(239,68,68,0.4),  0 8px 32px rgba(239,68,68,0.18); }
 }
+.kds-card.ready {
+  border-color: var(--secondary);
+  box-shadow: 0 0 0 1px rgba(16,185,129,0.15), 0 4px 20px rgba(16,185,129,0.06);
+  opacity: 0.75;
+  transition: opacity 0.3s, border-color 0.4s;
+}
+.kds-card.ready:hover { opacity: 1; }
 
+/* ── Card Header ─────────────────────────────────── */
 .kds-card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 14px 10px;
-  background: rgba(255,255,255,0.02);
+  padding: 11px 14px 9px;
+  background: rgba(255,255,255,0.025);
   border-bottom: 1px solid var(--border-color);
 }
-
 .kds-card-name {
-  font-size: 1.05rem;
+  font-size: 1rem;
   font-weight: 800;
   color: var(--text-main);
   letter-spacing: -0.01em;
 }
 
+/* Time badge */
 .kds-card-time {
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 700;
   padding: 3px 8px;
   border-radius: 20px;
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
-.fresh  .kds-card-time { background: var(--secondary-light); color: var(--secondary); }
-.medium .kds-card-time { background: var(--warning-light);   color: var(--warning); }
-.urgent .kds-card-time { background: var(--danger-light);    color: var(--danger); }
+.kds-card-time.waiting { background: var(--warning-light); color: var(--warning); }
+.kds-card-time.urgent  { background: var(--danger-light);  color: var(--danger); }
+.kds-card-time.ready   { background: var(--ready-light);   color: var(--ready); }
 
+/* ── Card Items ──────────────────────────────────── */
 .kds-card-items {
   flex: 1;
-  padding: 10px 14px;
+  padding: 8px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
 }
 
 .kds-item {
@@ -274,50 +268,131 @@ html, body {
 }
 .kds-item:last-child { border-bottom: none; }
 @keyframes itemFadeIn {
-  from { opacity: 0; transform: translateX(-6px); }
+  from { opacity: 0; transform: translateX(-5px); }
   to   { opacity: 1; transform: translateX(0); }
 }
 
+/* Delivered → strikethrough, dimmed */
+.kds-item.delivered {
+  opacity: 0.42;
+}
+.kds-item.delivered .kds-item-name,
+.kds-item.delivered .kds-item-qty {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-muted);
+  text-decoration-thickness: 2px;
+}
+
+/* New item that arrived on an already-ready table */
+.kds-item.new-item {
+  background: rgba(37, 99, 235, 0.07);
+  border-radius: var(--radius-sm);
+  padding-left: 6px;
+  padding-right: 6px;
+  margin: 0 -6px;
+  animation: newItemFlash 0.5s ease;
+}
+@keyframes newItemFlash {
+  0%   { background: rgba(37,99,235,0.25); }
+  100% { background: rgba(37,99,235,0.07); }
+}
+
 .kds-item-qty {
-  font-size: 1.2rem;
   font-weight: 800;
   color: var(--secondary);
-  min-width: 28px;
+  min-width: 26px;
   line-height: 1;
   flex-shrink: 0;
 }
 .kds-item-name {
-  font-size: 0.9rem;
   font-weight: 600;
   color: var(--text-main);
   flex: 1;
+  line-height: 1.3;
 }
 .kds-item-opts {
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   color: var(--text-muted);
-  margin-top: 2px;
+  margin-top: 1px;
   line-height: 1.4;
 }
+.kds-item-price {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  font-weight: 500;
+}
 
+/* ── Font size variants ──────────────────────────── */
+.kds-card.font-sm .kds-card-name { font-size: 0.88rem; }
+.kds-card.font-sm .kds-item-qty  { font-size: 0.9rem; }
+.kds-card.font-sm .kds-item-name { font-size: 0.8rem; }
+.kds-card.font-sm .kds-item-opts { font-size: 0.65rem; }
+
+.kds-card.font-md .kds-card-name { font-size: 1rem; }
+.kds-card.font-md .kds-item-qty  { font-size: 1rem; }
+.kds-card.font-md .kds-item-name { font-size: 0.88rem; }
+
+.kds-card.font-lg .kds-card-name { font-size: 1.15rem; }
+.kds-card.font-lg .kds-item-qty  { font-size: 1.15rem; }
+.kds-card.font-lg .kds-item-name { font-size: 1rem; }
+.kds-card.font-lg .kds-item-opts { font-size: 0.75rem; }
+
+/* ── Card Footer ─────────────────────────────────── */
 .kds-card-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 14px;
+  padding: 8px 12px;
   border-top: 1px solid var(--border-color);
-  background: rgba(0,0,0,0.2);
+  background: rgba(0,0,0,0.18);
+  gap: 8px;
 }
-.kds-card-count {
-  font-size: 0.75rem;
+.kds-card-count { font-size: 0.72rem; color: var(--text-muted); }
+.kds-card-total { font-size: 0.9rem; font-weight: 800; color: var(--text-main); }
+
+/* LISTO button */
+.kds-ready-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: var(--radius-md);
+  font-family: var(--font);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.18s;
+  border: 1px solid var(--secondary);
+  background: var(--secondary-light);
+  color: var(--secondary);
+  white-space: nowrap;
+  margin-left: auto;
+}
+.kds-ready-btn:hover {
+  background: var(--secondary);
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(16,185,129,0.3);
+}
+.kds-ready-btn:active { transform: translateY(0); }
+
+.kds-ready-btn.reopen {
+  border-color: var(--text-dim);
+  background: transparent;
   color: var(--text-muted);
 }
-.kds-card-total {
-  font-size: 0.95rem;
-  font-weight: 800;
-  color: var(--text-main);
+.kds-ready-btn.reopen:hover {
+  border-color: var(--warning);
+  background: var(--warning-light);
+  color: var(--warning);
+  box-shadow: none;
 }
 
-/* ── Settings Panel (slide-in) ───────────────────── */
+/* ══════════════════════════════════════════════════
+   SETTINGS PANEL
+   ══════════════════════════════════════════════════ */
 .kds-settings-overlay {
   position: fixed;
   inset: 0;
@@ -349,24 +424,18 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 20px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
-.kds-settings-header h2 {
-  font-size: 1rem;
-  font-weight: 700;
-}
+.kds-settings-header h2 { font-size: 1rem; font-weight: 700; }
 .kds-settings-close {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   color: var(--text-muted);
   border-radius: var(--radius-sm);
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
   cursor: pointer;
   transition: all 0.2s;
   font-size: 1rem;
@@ -379,16 +448,15 @@ html, body {
   padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 22px;
 }
-
 .kds-settings-section h3 {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 /* Column selector */
@@ -406,81 +474,101 @@ html, body {
   text-align: center;
   cursor: pointer;
   font-family: var(--font);
-  font-size: 0.85rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  transition: all 0.15s;
+  display: block;
+}
+.kds-col-btn:hover { border-color: var(--primary); color: var(--text-main); }
+.kds-col-btn.active { background: var(--primary-light); border-color: var(--primary); color: var(--primary); }
+.kds-col-btn span { display: block; font-size: 0.62rem; font-weight: 400; color: var(--text-dim); margin-top: 2px; }
+.kds-col-btn.active span { color: var(--primary); opacity: 0.8; }
+
+/* Font size */
+.kds-font-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.kds-font-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  border-radius: var(--radius-md);
+  padding: 9px 4px;
+  text-align: center;
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 0.82rem;
   font-weight: 600;
   transition: all 0.15s;
 }
-.kds-col-btn:hover { border-color: var(--primary); color: var(--text-main); }
-.kds-col-btn.active {
-  background: var(--primary-light);
-  border-color: var(--primary);
-  color: var(--primary);
-}
-.kds-col-btn span {
-  display: block;
-  font-size: 0.65rem;
-  font-weight: 400;
-  color: var(--text-dim);
-  margin-top: 2px;
-}
-.kds-col-btn.active span { color: var(--primary); opacity: 0.8; }
+.kds-font-btn:hover { border-color: var(--primary); color: var(--text-main); }
+.kds-font-btn.active { background: var(--primary-light); border-color: var(--primary); color: var(--primary); }
 
-/* Table checkboxes */
-.kds-table-list {
+/* Threshold control */
+.kds-threshold-row {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
 }
-.kds-table-checkbox {
+.kds-threshold-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background 0.15s;
-  user-select: none;
-}
-.kds-table-checkbox:hover { background: var(--bg-card); }
-.kds-table-checkbox input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--secondary);
-  cursor: pointer;
+  gap: 6px;
   flex-shrink: 0;
 }
-.kds-table-checkbox-label {
-  font-size: 0.88rem;
+.kds-threshold-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
   color: var(--text-main);
+  border-radius: var(--radius-sm);
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 700;
+  transition: all 0.15s;
+  font-family: var(--font);
 }
-.kds-table-checkbox-status {
-  margin-left: auto;
-  font-size: 0.7rem;
+.kds-threshold-btn:hover { border-color: var(--primary); background: var(--primary-light); color: var(--primary); }
+.kds-threshold-input {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  width: 52px;
+  text-align: center;
+  font-family: var(--font);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.kds-threshold-input:focus { outline: none; border-color: var(--primary); }
+.kds-threshold-hint {
+  font-size: 0.75rem;
   color: var(--text-muted);
+  line-height: 1.5;
 }
-.kds-table-checkbox-status.occupied { color: var(--secondary); }
+.kds-threshold-hint strong { color: var(--warning); }
 
-/* Toggle switch for filter mode */
+/* Toggle row */
 .kds-toggle-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 2px 0;
+  padding: 6px 0;
   gap: 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
 }
-.kds-toggle-label {
-  font-size: 0.88rem;
-  color: var(--text-main);
-}
-.kds-toggle-sub {
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
+.kds-toggle-row:last-child { border-bottom: none; }
+.kds-toggle-label { font-size: 0.88rem; color: var(--text-main); }
+.kds-toggle-sub { font-size: 0.72rem; color: var(--text-muted); margin-top: 1px; }
 .kds-toggle {
   position: relative;
-  width: 44px;
-  height: 24px;
+  width: 44px; height: 24px;
   flex-shrink: 0;
 }
 .kds-toggle input { opacity: 0; width: 0; height: 0; }
@@ -496,30 +584,18 @@ html, body {
 .kds-toggle-slider::before {
   content: '';
   position: absolute;
-  left: 3px;
-  top: 50%;
+  left: 3px; top: 50%;
   transform: translateY(-50%);
-  width: 16px;
-  height: 16px;
+  width: 16px; height: 16px;
   border-radius: 50%;
   background: var(--text-dim);
   transition: transform 0.2s, background 0.2s;
 }
-.kds-toggle input:checked + .kds-toggle-slider {
-  background: var(--secondary-light);
-  border-color: var(--secondary);
-}
-.kds-toggle input:checked + .kds-toggle-slider::before {
-  transform: translateY(-50%) translateX(20px);
-  background: var(--secondary);
-}
+.kds-toggle input:checked + .kds-toggle-slider { background: var(--secondary-light); border-color: var(--secondary); }
+.kds-toggle input:checked + .kds-toggle-slider::before { transform: translateY(-50%) translateX(20px); background: var(--secondary); }
 
-/* Select all/none */
-.kds-select-links {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 8px;
-}
+/* Table checkboxes */
+.kds-select-links { display: flex; gap: 12px; margin-bottom: 8px; }
 .kds-select-link {
   font-size: 0.75rem;
   color: var(--primary);
@@ -529,12 +605,33 @@ html, body {
 }
 .kds-select-link:hover { color: var(--text-main); }
 
-/* Scrollbar for main area */
-.kds-main::-webkit-scrollbar { width: 6px; }
+.kds-table-list { display: flex; flex-direction: column; gap: 2px; }
+.kds-table-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s;
+  user-select: none;
+}
+.kds-table-checkbox:hover { background: var(--bg-card); }
+.kds-table-checkbox input[type="checkbox"] {
+  width: 15px; height: 15px;
+  accent-color: var(--secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.kds-table-checkbox-label { font-size: 0.85rem; color: var(--text-main); }
+.kds-table-checkbox-status { margin-left: auto; font-size: 0.7rem; color: var(--text-muted); }
+.kds-table-checkbox-status.occupied { color: var(--secondary); }
+
+/* ── Scrollbars ──────────────────────────────────── */
+.kds-main::-webkit-scrollbar { width: 5px; }
 .kds-main::-webkit-scrollbar-track { background: transparent; }
 .kds-main::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
 .kds-main::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
-
 .kds-settings-body::-webkit-scrollbar { width: 4px; }
 .kds-settings-body::-webkit-scrollbar-track { background: transparent; }
 .kds-settings-body::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
