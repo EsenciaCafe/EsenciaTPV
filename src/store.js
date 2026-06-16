@@ -681,7 +681,7 @@ class Store {
     
     this.state.tables[tableIndex] = { ...table, status: 'pending-bill' };
     this.state.selectedTableId = null;
-    this.state.activeTab = 'mesas';
+    this.state.activeTab = 'inicio';
     this.notify();
   }
 

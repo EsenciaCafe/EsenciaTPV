@@ -2302,10 +2302,6 @@ function setupEventListeners(container) {
       const tab = btn.dataset.tab;
       if (tab) {
         isDrawerOpen = false; // Reset drawer on tab switch
-        if (tab === 'inicio' && store.state.selectedTableId === null) {
-          store.setActiveTab('mesas');
-          return;
-        }
         store.setActiveTab(tab);
       }
     });
