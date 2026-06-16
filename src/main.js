@@ -71,11 +71,15 @@ function showToast(message, type = 'error') {
   const existing = document.getElementById('db-toast');
   if (existing) existing.remove();
 
+  let icon = '✓';
+  if (type === 'error' || type === 'warning') icon = '⚠';
+  else if (type === 'info') icon = 'ℹ';
+
   const toast = document.createElement('div');
   toast.id = 'db-toast';
   toast.className = `db-toast db-toast--${type}`;
   toast.innerHTML = `
-    <span class="db-toast-icon">${type === 'error' ? '⚠' : '✓'}</span>
+    <span class="db-toast-icon">${icon}</span>
     <span class="db-toast-text">${message}</span>
   `;
   document.body.appendChild(toast);
@@ -1625,6 +1629,38 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
   });
 }
 
+// Modal de confirmación estilizado
+function showConfirm(title, message, onConfirm, onCancel = null, isDanger = false) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.id = 'confirm-dialog-modal';
+  
+  const confirmBtnBg = isDanger ? 'var(--danger)' : 'var(--secondary)';
+
+  modal.innerHTML = `
+    <div class="modal-dialog" style="max-width: 400px; width: 90%; text-align: center; padding: 24px; border-radius: var(--border-radius-lg); background: var(--bg-panel); border: 1px solid var(--border-color); box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5); animation: slideUp 0.2s ease;">
+      <h3 style="margin: 0 0 10px 0; font-size: 1.25rem; font-weight: 700; color: var(--text-main);">${title}</h3>
+      <p style="margin: 0 0 24px 0; font-size: 0.9rem; color: var(--text-muted); line-height: 1.45; word-break: break-word; white-space: pre-line;">${message}</p>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <button class="btn btn-secondary" id="confirm-cancel-btn" style="height: 44px; font-weight: 600; border-radius: var(--border-radius-md); background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); cursor: pointer; font-size: 0.85rem; transition: background 0.2s;">Cancelar</button>
+        <button class="btn btn-primary" id="confirm-ok-btn" style="height: 44px; font-weight: 600; border-radius: var(--border-radius-md); background: ${confirmBtnBg}; border: none; color: white; cursor: pointer; font-size: 0.85rem; transition: opacity 0.2s;">Aceptar</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  modal.querySelector('#confirm-cancel-btn').addEventListener('click', () => {
+    modal.remove();
+    if (onCancel) onCancel();
+  });
+
+  modal.querySelector('#confirm-ok-btn').addEventListener('click', () => {
+    modal.remove();
+    if (onConfirm) onConfirm();
+  });
+}
+
 // Modal para elegir en qué mesa guardar la comanda
 function showTableSelectionModal() {
   const activeItems = store.getActiveItems();
@@ -1701,11 +1737,15 @@ function showTableSelectionModal() {
       const isOccupied = table && table.items.length > 0;
 
       if (isOccupied) {
-        if (confirm(`La ${table.name} ya tiene una comanda activa. ¿Deseas añadir estos artículos a la cuenta existente?`)) {
-          store.saveActiveOrderToTable(tableId);
-          modal.remove();
-          showToast(`Comanda añadida a la ${table.name}.`, 'success');
-        }
+        showConfirm(
+          'Mesa Ocupada',
+          `La ${table.name} ya tiene una comanda activa.\n¿Deseas añadir estos artículos a la cuenta existente?`,
+          () => {
+            store.saveActiveOrderToTable(tableId);
+            modal.remove();
+            showToast(`Comanda añadida a la ${table.name}.`, 'success');
+          }
+        );
       } else {
         store.saveActiveOrderToTable(tableId);
         modal.remove();
@@ -2408,7 +2448,7 @@ function setupEventListeners(container) {
 
         keypadAmount = '0';
         store.notify(); // Re-trigger reactive sync
-        alert('Cargo rápido añadido al ticket!');
+        showToast('Cargo rápido añadido al ticket!', 'success');
       }
     });
   }
@@ -2455,9 +2495,15 @@ function setupEventListeners(container) {
       e.stopPropagation(); // prevent card click
       const slotIndex = parseInt(badge.dataset.deleteSlot, 10);
       const gridKey = badge.dataset.gridKey;
-      if (confirm('¿Seguro que deseas quitar este atajo de la cuadrícula?')) {
-        store.removeGridShortcut(gridKey, slotIndex);
-      }
+      showConfirm(
+        'Quitar Atajo',
+        '¿Seguro que deseas quitar este atajo de la cuadrícula?',
+        () => {
+          store.removeGridShortcut(gridKey, slotIndex);
+        },
+        null,
+        true // isDanger
+      );
     });
   });
 
@@ -2479,7 +2525,7 @@ function setupEventListeners(container) {
           showModifierSelectionModal(itemId);
         } else {
           store.addItemToActiveTicket(itemId);
-          alert(`Añadido: ${btn.querySelector('.product-row-name').innerText}`);
+          showToast(`Añadido: ${btn.querySelector('.product-row-name').innerText}`, 'success');
         }
       }
     });
@@ -2513,7 +2559,7 @@ function setupEventListeners(container) {
                 showModifierSelectionModal(itemId);
               } else {
                 store.addItemToActiveTicket(itemId);
-                alert(`Añadido: ${row.querySelector('.product-row-name').innerText}`);
+                showToast(`Añadido: ${row.querySelector('.product-row-name').innerText}`, 'success');
               }
             }
           });
@@ -2584,10 +2630,16 @@ function setupEventListeners(container) {
   const drawerClear = container.querySelector('#drawer-clear-btn');
   if (drawerClear) {
     drawerClear.addEventListener('click', () => {
-      if (confirm('¿Vaciar pedido actual?')) {
-        store.clearActiveTicket();
-        isDrawerOpen = false;
-      }
+      showConfirm(
+        'Vaciar Pedido',
+        '¿Seguro que deseas vaciar el pedido actual?',
+        () => {
+          store.clearActiveTicket();
+          isDrawerOpen = false;
+        },
+        null,
+        true // isDanger
+      );
     });
   }
 
@@ -2595,7 +2647,7 @@ function setupEventListeners(container) {
   const drawerPrint = container.querySelector('#drawer-print-btn');
   if (drawerPrint) {
     drawerPrint.addEventListener('click', () => {
-      alert('Imprimiendo pre-factura del ticket...');
+      showToast('Imprimiendo pre-factura del ticket...', 'success');
       store.printBill();
       isDrawerOpen = false;
     });
@@ -2626,16 +2678,22 @@ function setupEventListeners(container) {
   const splitClear = container.querySelector('#split-clear-btn');
   if (splitClear) {
     splitClear.addEventListener('click', () => {
-      if (confirm('¿Vaciar pedido actual?')) {
-        store.clearActiveTicket();
-      }
+      showConfirm(
+        'Vaciar Pedido',
+        '¿Seguro que deseas vaciar el pedido actual?',
+        () => {
+          store.clearActiveTicket();
+        },
+        null,
+        true // isDanger
+      );
     });
   }
 
   const splitPrint = container.querySelector('#split-print-btn');
   if (splitPrint) {
     splitPrint.addEventListener('click', () => {
-      alert('Imprimiendo pre-factura...');
+      showToast('Imprimiendo pre-factura...', 'success');
       store.printBill();
     });
   }
@@ -2685,17 +2743,23 @@ function setupEventListeners(container) {
   const settingsReset = container.querySelector('#settings-reset-btn');
   if (settingsReset) {
     settingsReset.addEventListener('click', () => {
-      if (confirm('¿CUIDADO! ¿Deseas restablecer de fábrica todo el TPV? Se borrará el historial de ventas y los tickets de las mesas.')) {
-        store.state.transactions = [];
-        store.state.tables.forEach(t => {
-          t.status = 'available';
-          t.items = [];
-        });
-        store.state.directSaleTicket.items = [];
-        store.selectTable(null);
-        store.navigateSettings([]); // reset settings view too
-        alert('TPV Restablecido.');
-      }
+      showConfirm(
+        '¡Restablecer de Fábrica!',
+        '¿CUIDADO!\n¿Deseas restablecer de fábrica todo el TPV?\nSe borrará el historial de ventas y los tickets de las mesas.',
+        () => {
+          store.state.transactions = [];
+          store.state.tables.forEach(t => {
+            t.status = 'available';
+            t.items = [];
+          });
+          store.state.directSaleTicket.items = [];
+          store.selectTable(null);
+          store.navigateSettings([]); // reset settings view too
+          showToast('TPV Restablecido.', 'success');
+        },
+        null,
+        true // isDanger
+      );
     });
   }
 
@@ -2743,15 +2807,16 @@ function setupEventListeners(container) {
       const price = parseFloat(priceRaw);
       const category = container.querySelector('#create-article-category')?.value || '';
 
-      if (!name) { alert('El nombre no puede estar vacío.'); return; }
-      if (isNaN(price) || price < 0) { alert('El precio debe ser un número válido mayor o igual a 0.'); return; }
-      if (!category) { alert('Selecciona una categoría.'); return; }
+      if (!name) { showToast('El nombre no puede estar vacío.', 'error'); return; }
+      if (isNaN(price) || price < 0) { showToast('El precio debe ser un número válido mayor o igual a 0.', 'error'); return; }
+      if (!category) { showToast('Selecciona una categoría.', 'error'); return; }
 
       const modifiers = Array.from(container.querySelectorAll('#create-article-modifiers-checklist .assign-checkbox-card.assigned'))
         .map(card => card.dataset.createModifierId);
 
       store.addMenuItem({ name, price, category, modifiers });
       store.navigateSettings(['articulos', 'todos']);
+      showToast('Artículo creado correctamente.', 'success');
     });
   }
 
@@ -2791,11 +2856,11 @@ function setupEventListeners(container) {
       const category = container.querySelector('#edit-item-category').value;
 
       if (!name) {
-        alert('El nombre no puede estar vacío.');
+        showToast('El nombre no puede estar vacío.', 'error');
         return;
       }
       if (isNaN(price) || price < 0) {
-        alert('El precio debe ser un número válido mayor o igual a 0.');
+        showToast('El precio debe ser un número válido mayor o igual a 0.', 'error');
         return;
       }
 
@@ -2805,7 +2870,7 @@ function setupEventListeners(container) {
 
       store.updateMenuItem(itemId, { name, price, category, modifiers });
       store.goBackSettings();
-      alert('Artículo actualizado correctamente.');
+      showToast('Artículo actualizado correctamente.', 'success');
     });
   }
 
@@ -2849,13 +2914,13 @@ function setupEventListeners(container) {
       const name = nameInput ? nameInput.value.trim() : '';
 
       if (!name) {
-        alert('El nombre de la categoría no puede estar vacío.');
+        showToast('El nombre de la categoría no puede estar vacío.', 'error');
         return;
       }
 
       store.addCategory({ name, type: 'category' });
       store.goBackSettings();
-      alert('Categoría creada correctamente.');
+      showToast('Categoría creada correctamente.', 'success');
     });
   }
 
@@ -2906,13 +2971,13 @@ function setupEventListeners(container) {
       const parentId = createSubcatSaveBtn.dataset.parentId;
 
       if (!name) {
-        alert('El nombre de la subcategoría no puede estar vacío.');
+        showToast('El nombre de la subcategoría no puede estar vacío.', 'error');
         return;
       }
 
       store.addCategory({ name, type: 'subcategory', parentId });
       store.goBackSettings();
-      alert('Subcategoría creada correctamente.');
+      showToast('Subcategoría creada correctamente.', 'success');
     });
   }
 
@@ -2932,13 +2997,13 @@ function setupEventListeners(container) {
       const name = nameInput ? nameInput.value.trim() : '';
 
       if (!name) {
-        alert('El nombre de la categoría no puede estar vacío.');
+        showToast('El nombre de la categoría no puede estar vacío.', 'error');
         return;
       }
 
       store.updateCategory(catId, { name, type: 'category' });
       store.goBackSettings();
-      alert('Categoría actualizada correctamente.');
+      showToast('Categoría actualizada correctamente.', 'success');
     });
   }
 
@@ -2948,11 +3013,17 @@ function setupEventListeners(container) {
       const catId = editParentCatDeleteBtn.dataset.deleteCatId;
       if (!catId) return;
 
-      if (confirm('¿Seguro que deseas eliminar esta categoría? Se borrarán de forma recursiva todas sus subcategorías y sus atajos del grid.')) {
-        store.deleteCategory(catId);
-        store.navigateSettings(['articulos', 'categorias']);
-        alert('Categoría eliminada correctamente.');
-      }
+      showConfirm(
+        'Eliminar Categoría',
+        '¿Seguro que deseas eliminar esta categoría? Se borrarán de forma recursiva todas sus subcategorías y sus atajos del grid.',
+        () => {
+          store.deleteCategory(catId);
+          store.navigateSettings(['articulos', 'categorias']);
+          showToast('Categoría eliminada correctamente.', 'success');
+        },
+        null,
+        true // isDanger
+      );
     });
   }
 
@@ -2973,13 +3044,13 @@ function setupEventListeners(container) {
       const parentId = store.state.settingsPath[2];
 
       if (!name) {
-        alert('El nombre de la subcategoría no puede estar vacío.');
+        showToast('El nombre de la subcategoría no puede estar vacío.', 'error');
         return;
       }
 
       store.updateCategory(subcatId, { name, type: 'subcategory', parentId });
       store.goBackSettings();
-      alert('Subcategoría actualizada correctamente.');
+      showToast('Subcategoría actualizada correctamente.', 'success');
     });
   }
 
@@ -2989,11 +3060,17 @@ function setupEventListeners(container) {
       const subcatId = editSubcatDeleteBtn.dataset.deleteSubcatId;
       if (!subcatId) return;
 
-      if (confirm('¿Seguro que deseas eliminar esta subcategoría? Se borrará su atajo del grid.')) {
-        store.deleteCategory(subcatId);
-        store.goBackSettings();
-        alert('Subcategoría eliminada correctamente.');
-      }
+      showConfirm(
+        'Eliminar Subcategoría',
+        '¿Seguro que deseas eliminar esta subcategoría? Se borrará su atajo del grid.',
+        () => {
+          store.deleteCategory(subcatId);
+          store.goBackSettings();
+          showToast('Subcategoría eliminada correctamente.', 'success');
+        },
+        null,
+        true // isDanger
+      );
     });
   }
 
@@ -3041,13 +3118,13 @@ function setupEventListeners(container) {
       const name = nameInput ? nameInput.value.trim() : '';
 
       if (!name) {
-        alert('El nombre del modificador no puede estar vacío.');
+        showToast('El nombre del modificador no puede estar vacío.', 'error');
         return;
       }
 
       const newMod = store.addModifier({ name });
       store.navigateSettings(['articulos', 'modificadores', newMod.id]);
-      alert('Modificador creado. Añada opciones y asigne artículos.');
+      showToast('Modificador creado. Añada opciones y asigne artículos.', 'success');
     });
   }
 
@@ -3067,13 +3144,13 @@ function setupEventListeners(container) {
       const name = nameInput ? nameInput.value.trim() : '';
 
       if (!name) {
-        alert('El nombre del grupo no puede estar vacío.');
+        showToast('El nombre del grupo no puede estar vacío.', 'error');
         return;
       }
 
       store.updateModifier(modId, { name });
       store.goBackSettings();
-      alert('Modificador guardado correctamente.');
+      showToast('Modificador guardado correctamente.', 'success');
     });
   }
 
@@ -3081,10 +3158,18 @@ function setupEventListeners(container) {
   if (editModDeleteBtn) {
     editModDeleteBtn.addEventListener('click', () => {
       const modId = editModDeleteBtn.dataset.deleteModId;
-      if (modId && confirm('¿Seguro que deseas eliminar este modificador?')) {
-        store.deleteModifier(modId);
-        store.navigateSettings(['articulos', 'modificadores']);
-        alert('Modificador eliminado correctamente.');
+      if (modId) {
+        showConfirm(
+          'Eliminar Modificador',
+          '¿Seguro que deseas eliminar este modificador?',
+          () => {
+            store.deleteModifier(modId);
+            store.navigateSettings(['articulos', 'modificadores']);
+            showToast('Modificador eliminado correctamente.', 'success');
+          },
+          null,
+          true // isDanger
+        );
       }
     });
   }
@@ -3100,11 +3185,11 @@ function setupEventListeners(container) {
       const price = optPriceInput ? parseFloat(optPriceInput.value) : 0;
 
       if (!name) {
-        alert('El nombre de la opción no puede estar vacío.');
+        showToast('El nombre de la opción no puede estar vacío.', 'error');
         return;
       }
       if (isNaN(price) || price < 0) {
-        alert('El precio debe ser un número válido mayor o igual a 0.');
+        showToast('El precio debe ser un número válido mayor o igual a 0.', 'error');
         return;
       }
 
@@ -3117,6 +3202,7 @@ function setupEventListeners(container) {
         };
         const newOptions = [...(mod.options || []), newOption];
         store.updateModifier(modId, { options: newOptions });
+        showToast('Opción añadida correctamente.', 'success');
       }
     });
   }

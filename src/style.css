@@ -1776,6 +1776,18 @@ body.light-theme .btn-quick-pay {
   color: #fca5a5;
 }
 
+.db-toast--success {
+  background-color: #062016;
+  border: 1px solid rgba(16, 185, 129, 0.5);
+  color: #a7f3d0;
+}
+
+.db-toast--warning {
+  background-color: #1c1305;
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  color: #fde68a;
+}
+
 .db-toast--visible {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
