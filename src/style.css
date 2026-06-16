@@ -732,6 +732,19 @@ body.light-theme .btn-quick-pay {
   border-color: rgba(20, 184, 166, 0.5);
 }
 
+/* Empty Table Card styles */
+.table-card--empty {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+.table-card--empty .table-card-name-large {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
 .table-card-topline,
 .table-card-meta {
   display: flex;

@@ -313,6 +313,15 @@ function renderTablesView(state) {
         ? 'occupied'
         : 'available';
     const typeClass = table.type === 'takeaway' ? 'takeaway' : '';
+    const isEmpty = itemCount === 0 && table.status !== 'pending-bill';
+
+    if (isEmpty) {
+      return `
+        <button class="table-card ${statusClass} ${typeClass} ${isSelected ? 'selected' : ''} table-card--empty" data-table-id="${table.id}">
+          <span class="table-card-name-large">${table.name}</span>
+        </button>
+      `;
+    }
 
     return `
       <button class="table-card ${statusClass} ${typeClass} ${isSelected ? 'selected' : ''}" data-table-id="${table.id}">
