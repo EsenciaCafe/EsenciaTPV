@@ -29,7 +29,30 @@ const DEFAULT_CONFIG = {
   showPrices:          false,
   soundOnNew:          false,
   autoResetReady:      false,
+  theme:               'system',   // 'system' | 'light' | 'dark'
 };
+
+function applyTheme(themeOverride) {
+  const theme = themeOverride || state.config.theme || 'system';
+  let isLight = false;
+  if (theme === 'light') {
+    isLight = true;
+  } else if (theme === 'system') {
+    isLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+  }
+  if (isLight) {
+    document.body.classList.add('light-theme');
+  } else {
+    document.body.classList.remove('light-theme');
+  }
+}
+
+// Watch system theme preference changes
+window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+  if (state.config.theme === 'system') {
+    applyTheme();
+  }
+});
 
 function loadConfig() {
   try {
@@ -462,7 +485,7 @@ function renderNumInput(id, label, value, min, max) {
 
 function renderSettingsPanel() {
   const { columns, showOnlyOccupied, visibleTableIds, yellowToRedMinutes,
-          collapsedItemCount, fontSize, showPrices, soundOnNew, autoResetReady } = state.config;
+          collapsedItemCount, fontSize, showPrices, soundOnNew, autoResetReady, theme } = state.config;
 
   const diningTables   = state.allTableDefs.filter(t => (t.type || 'table') === 'table');
   const takeawayTables = state.allTableDefs.filter(t => t.type === 'takeaway');
@@ -489,6 +512,11 @@ function renderSettingsPanel() {
       ${{ sm: 'Pequeño', md: 'Normal', lg: 'Grande' }[s]}
     </button>`).join('');
 
+  const themeButtons = ['light', 'dark', 'system'].map(t => `
+    <button class="kds-theme-btn ${theme === t ? 'active' : ''}" data-theme="${t}">
+      ${{ light: 'Claro', dark: 'Oscuro', system: 'Sistema' }[t]}
+    </button>`).join('');
+
   return `
     <div class="kds-settings-overlay" id="kds-settings-overlay">
       <div class="kds-settings-panel">
@@ -506,6 +534,11 @@ function renderSettingsPanel() {
           <div class="kds-settings-section">
             <h3>Tamaño del texto</h3>
             <div class="kds-font-grid">${fontButtons}</div>
+          </div>
+
+          <div class="kds-settings-section">
+            <h3>Tema visual</h3>
+            <div class="kds-theme-grid">${themeButtons}</div>
           </div>
 
           <div class="kds-settings-section">
@@ -666,6 +699,16 @@ function bindSettingsEvents() {
     btn.addEventListener('click', () => {
       state.config.fontSize = btn.dataset.font;
       saveConfig(state.config); render();
+    });
+  });
+
+  // Theme selector
+  overlay.querySelectorAll('.kds-theme-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.config.theme = btn.dataset.theme;
+      saveConfig(state.config);
+      applyTheme();
+      render();
     });
   });
 
@@ -861,6 +904,7 @@ function startTimeRefresh() {
 
 async function init() {
   state.allTableDefs = buildAllTableDefs();
+  applyTheme();
   await loadInitialState();
   render();
   subscribeRealtime();
