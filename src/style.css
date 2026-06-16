@@ -1684,3 +1684,238 @@ body.light-theme .btn-quick-pay {
 .cash-quick-btn:hover {
   background-color: var(--border-color);
 }
+
+/* ── Split Bill Advanced Styles ───────────────────────────── */
+.split-tabs-list {
+  display: flex;
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  padding: 4px;
+  gap: 4px;
+  margin-top: 14px;
+  margin-bottom: 16px;
+}
+
+.split-tab-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-family);
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 8px 4px;
+  border-radius: var(--border-radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+
+.split-tab-btn.active {
+  background-color: var(--bg-item);
+  color: var(--text-main);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.split-parts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 230px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.split-part-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  padding: 10px 14px;
+  transition: all 0.2s ease;
+}
+
+.split-part-row.pagado {
+  border-color: rgba(16, 185, 129, 0.4);
+  background-color: rgba(16, 185, 129, 0.03);
+}
+
+.split-part-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.split-part-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--text-main);
+}
+
+.split-part-status {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.split-part-status.pending {
+  color: #f59e0b;
+}
+
+.split-part-status.paid-card {
+  color: var(--secondary);
+}
+
+.split-part-status.paid-cash {
+  color: #10b981;
+}
+
+.split-part-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.split-part-pay-btn {
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border-radius: var(--border-radius-sm);
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-item);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.split-part-pay-btn:hover {
+  border-color: var(--text-muted);
+}
+
+.split-part-pay-btn.card-btn:hover {
+  background-color: rgba(37, 99, 235, 0.1);
+  border-color: var(--secondary);
+  color: var(--secondary);
+}
+
+.split-part-pay-btn.cash-btn:hover {
+  background-color: rgba(16, 185, 129, 0.1);
+  border-color: #10b981;
+  color: #10b981;
+}
+
+/* Split by Articles list */
+.split-articles-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.split-articles-scroll {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  background-color: var(--bg-panel);
+}
+
+.split-article-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.split-article-row:last-child {
+  border-bottom: none;
+}
+
+.split-article-row.all-paid {
+  opacity: 0.4;
+  background-color: rgba(255, 255, 255, 0.01);
+}
+
+.split-article-info {
+  display: flex;
+  flex-direction: column;
+  max-width: 55%;
+}
+
+.split-article-name {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.split-article-price-qty {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.split-article-selector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.split-article-qty-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-item);
+  color: var(--text-main);
+  font-size: 1rem;
+  font-weight: bold;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.split-article-qty-btn:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+
+.split-article-qty-btn:not(:disabled):active {
+  background-color: var(--bg-item-active);
+}
+
+.split-article-select-val {
+  font-size: 0.9rem;
+  font-weight: 700;
+  min-width: 32px;
+  text-align: center;
+}
+
+.split-article-select-val .selected-qty {
+  color: var(--secondary);
+}
+
+.split-article-select-val .total-qty {
+  color: var(--text-muted);
+}
+
+.split-articles-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  padding: 12px;
+}
+
+.split-articles-actions-right {
+  display: flex;
+  gap: 6px;
+}
+

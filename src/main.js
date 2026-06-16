@@ -1635,13 +1635,82 @@ function showPaymentModal(totalAmount) {
   modal.className = 'modal-backdrop';
   modal.id = 'payment-modal';
 
-  let selectedMethod = 'Tarjeta'; // Default selection
+  let selectedMethod = 'Tarjeta'; // 'Tarjeta' | 'Efectivo' | 'Dividir'
+  let splitType = 'iguales'; // 'iguales' | 'articulos' | 'libre'
   let cashReceived = totalAmount;
 
+  // ── 1. Estado Partes Iguales
+  let numParts = 2;
+  let parts = []; // { id, amount, status: 'pending'|'paid-card'|'paid-cash' }
+
+  const initParts = () => {
+    parts = [];
+    const baseAmount = parseFloat((totalAmount / numParts).toFixed(2));
+    let sum = 0;
+    for (let i = 0; i < numParts - 1; i++) {
+      parts.push({ id: i + 1, amount: baseAmount, status: 'pending' });
+      sum += baseAmount;
+    }
+    const lastAmount = parseFloat((totalAmount - sum).toFixed(2));
+    parts.push({ id: numParts, amount: lastAmount, status: 'pending' });
+  };
+  initParts();
+
+  // ── 2. Estado División Libre
+  const freePayments = []; // { id, amount, method: 'Tarjeta' | 'Efectivo' }
+  let freeInputValue = null;
+
+  const getFreeTotalPaid = () => {
+    return freePayments.reduce((sum, p) => sum + p.amount, 0);
+  };
+  const getFreeRemaining = () => {
+    return Math.max(0, parseFloat((totalAmount - getFreeTotalPaid()).toFixed(2)));
+  };
+
+  // ── 3. Estado Por Artículos
+  const activeItems = store.getActiveItems();
+  const articleStocks = activeItems.map(item => {
+    let displayName = item.name;
+    if (item.selectedOptions && item.selectedOptions.length > 0) {
+      const optsStr = item.selectedOptions.map(o => `${o.qty}x ${o.name}`).join(', ');
+      displayName += ` (${optsStr})`;
+    }
+    
+    // Obtener precio total unitario del artículo con sus modificadores
+    const singleItemTotal = store.getItemTotal({ ...item, qty: 1 });
+    
+    return {
+      ticketItemId: item.ticketItemId,
+      id: item.id,
+      name: displayName,
+      price: singleItemTotal,
+      totalQty: item.qty,
+      qtyRemaining: item.qty
+    };
+  });
+
+  const articleSelections = {};
+  articleStocks.forEach(stock => {
+    articleSelections[stock.ticketItemId] = 0;
+  });
+  
+  const articlePayments = []; // { id, amount, method: 'Tarjeta'|'Efectivo', itemsText }
+
+  const getSelectedArticlesTotal = () => {
+    let sum = 0;
+    articleStocks.forEach(stock => {
+      const qty = articleSelections[stock.ticketItemId] || 0;
+      sum += stock.price * qty;
+    });
+    return parseFloat(sum.toFixed(2));
+  };
+
+  // ── Helper de cambio en Efectivo directo
   const getChangeAmount = () => {
     return Math.max(0, cashReceived - totalAmount);
   };
 
+  // ── Renderizador reactivo de contenido
   const renderPaymentContent = () => {
     const change = getChangeAmount();
     const isEfectivo = selectedMethod === 'Efectivo';
@@ -1685,62 +1754,218 @@ function showPaymentModal(totalAmount) {
         </div>
       `;
     } else if (isDividir) {
-      methodSpecificHTML = `
-        <div class="payment-split-section" style="margin-top: 16px; animation: fadeIn 0.2s ease;">
-          <div class="editor-form-group">
-            <label class="editor-form-label" style="display:block; margin-bottom: 6px;">Número de partes</label>
-            <select id="split-parts-select" class="editor-form-select" style="background-color: var(--bg-panel); border: 1px solid var(--border-color); color: var(--text-main); font-family: var(--font-family); padding: 10px; border-radius: var(--border-radius-md); outline:none; width: 100%;">
-              <option value="2">Dividir en 2 partes (${(totalAmount / 2).toFixed(2)}€ c/u)</option>
-              <option value="3">Dividir en 3 partes (${(totalAmount / 3).toFixed(2)}€ c/u)</option>
-              <option value="4">Dividir en 4 partes (${(totalAmount / 4).toFixed(2)}€ c/u)</option>
-              <option value="5">Dividir en 5 partes (${(totalAmount / 5).toFixed(2)}€ c/u)</option>
-              <option value="6">Dividir en 6 partes (${(totalAmount / 6).toFixed(2)}€ c/u)</option>
-            </select>
+      let splitHTML = '';
+      if (splitType === 'iguales') {
+        splitHTML = `
+          <div class="split-equal-section" style="animation: fadeIn 0.15s ease;">
+            <div class="editor-form-group" style="margin-bottom: 12px; display:flex; flex-direction:column; gap:4px;">
+              <label class="editor-form-label">Número de comensales</label>
+              <select id="split-parts-count" class="editor-form-select" style="background-color: var(--bg-panel); border: 1px solid var(--border-color); color: var(--text-main); font-family: var(--font-family); padding: 10px; border-radius: var(--border-radius-md); outline:none;">
+                ${[2,3,4,5,6,7,8].map(n => `<option value="${n}" ${n === numParts ? 'selected' : ''}>Dividir en ${n} partes</option>`).join('')}
+              </select>
+            </div>
+
+            <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; margin-top:14px;">Partes de la cuenta</div>
+            <div class="split-parts-list">
+              ${parts.map(p => {
+                const isPaid = p.status !== 'pending';
+                const rowClass = isPaid ? 'split-part-row pagado' : 'split-part-row';
+                const statusText = p.status === 'paid-card' ? 'Pagado (Tarjeta)' : p.status === 'paid-cash' ? 'Pagado (Efectivo)' : 'Pendiente';
+                const statusClass = p.status === 'paid-card' ? 'paid-card' : p.status === 'paid-cash' ? 'paid-cash' : 'pending';
+                
+                let actionsHTML = '';
+                if (!isPaid) {
+                  actionsHTML = `
+                    <div class="split-part-actions">
+                      <button class="split-part-pay-btn card-btn" data-part-id="${p.id}" data-pay-method="Tarjeta">Tarjeta</button>
+                      <button class="split-part-pay-btn cash-btn" data-part-id="${p.id}" data-pay-method="Efectivo">Efectivo</button>
+                    </div>
+                  `;
+                } else {
+                  actionsHTML = `
+                    <span style="color: #10b981; font-weight: bold; font-size: 1.1rem;">✓</span>
+                  `;
+                }
+
+                return `
+                  <div class="${rowClass}">
+                    <div class="split-part-info">
+                      <span class="split-part-title">Parte ${p.id}: ${p.amount.toFixed(2)}€</span>
+                      <span class="split-part-status ${statusClass}">${statusText}</span>
+                    </div>
+                    ${actionsHTML}
+                  </div>
+                `;
+              }).join('')}
+            </div>
           </div>
-          <p style="font-size: 0.78rem; color: var(--text-muted); margin-top: 8px; line-height:1.4;">El cobro parcial se registrará de forma secuencial. Función simplificada para ticket único.</p>
+        `;
+      } else if (splitType === 'libre') {
+        splitHTML = `
+          <div class="split-free-section" style="animation: fadeIn 0.15s ease;">
+            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; margin-bottom: 14px;">
+              <div style="background:var(--bg-panel); border:1px solid var(--border-color); padding:8px; border-radius:var(--border-radius-md); text-align:center;">
+                <div style="font-size:0.68rem; color:var(--text-muted); font-weight:700; text-transform:uppercase;">Total</div>
+                <div style="font-size:1.1rem; font-weight:700; color:var(--text-main); margin-top:2px;">${totalAmount.toFixed(2)}€</div>
+              </div>
+              <div style="background:var(--bg-panel); border:1px solid var(--border-color); padding:8px; border-radius:var(--border-radius-md); text-align:center;">
+                <div style="font-size:0.68rem; color:var(--text-muted); font-weight:700; text-transform:uppercase;">Cobrado</div>
+                <div style="font-size:1.1rem; font-weight:700; color:#10b981; margin-top:2px;">${getFreeTotalPaid().toFixed(2)}€</div>
+              </div>
+              <div style="background:var(--bg-panel); border:1px solid var(--border-color); padding:8px; border-radius:var(--border-radius-md); text-align:center;">
+                <div style="font-size:0.68rem; color:var(--text-muted); font-weight:700; text-transform:uppercase;">Restante</div>
+                <div style="font-size:1.1rem; font-weight:700; color:#f59e0b; margin-top:2px;">${getFreeRemaining().toFixed(2)}€</div>
+              </div>
+            </div>
+
+            <div class="editor-form-group" style="display:flex; flex-direction:column; gap:4px;">
+              <label class="editor-form-label">Importe a cobrar</label>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <input type="number" class="search-input" id="free-charge-amount" step="0.01" value="${(freeInputValue !== null ? freeInputValue : getFreeRemaining()).toFixed(2)}" style="font-size:1.2rem; text-align:right; font-weight:700; flex:1; height: 44px; padding-right:12px; background:var(--bg-panel); color:var(--text-main); border:1px solid var(--border-color); border-radius:var(--border-radius-md);">
+                <span style="font-size:1.2rem; font-weight:700;">€</span>
+              </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; margin-bottom:14px;">
+              <button class="split-part-pay-btn card-btn" id="free-charge-card-btn" style="height:40px; font-size:0.85rem; font-weight:700;">Cobrar Tarjeta</button>
+              <button class="split-part-pay-btn cash-btn" id="free-charge-cash-btn" style="height:40px; font-size:0.85rem; font-weight:700;">Cobrar Efectivo</button>
+            </div>
+
+            ${freePayments.length > 0 ? `
+              <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">Cobros realizados</div>
+              <div class="split-parts-list" style="max-height:110px;">
+                ${freePayments.map((p, idx) => `
+                  <div class="split-part-row pagado" style="padding: 8px 12px;">
+                    <span class="split-part-title" style="font-size:0.85rem; font-weight:600;">Pago #${idx + 1}: ${p.amount.toFixed(2)}€</span>
+                    <span style="font-size:0.75rem; font-weight:700; color:${p.method === 'Tarjeta' ? 'var(--secondary)' : '#10b981'}">${p.method}</span>
+                  </div>
+                `).join('')}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      } else if (splitType === 'articulos') {
+        const isSelectedAny = getSelectedArticlesTotal() > 0;
+        splitHTML = `
+          <div class="split-articles-container" style="animation: fadeIn 0.15s ease;">
+            <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">Selecciona lo que paga este cliente</div>
+            <div class="split-articles-scroll">
+              ${articleStocks.map(stock => {
+                const qtySelected = articleSelections[stock.ticketItemId] || 0;
+                const isAllPaid = stock.qtyRemaining === 0;
+                const rowClass = isAllPaid ? 'split-article-row all-paid' : 'split-article-row';
+                
+                let selectorHTML = '';
+                if (!isAllPaid) {
+                  selectorHTML = `
+                    <div class="split-article-selector">
+                      <button class="split-article-qty-btn art-minus" data-id="${stock.ticketItemId}" ${qtySelected === 0 ? 'disabled' : ''}>-</button>
+                      <span class="split-article-select-val">
+                        <span class="selected-qty">${qtySelected}</span><span class="total-qty">/${stock.qtyRemaining}</span>
+                      </span>
+                      <button class="split-article-qty-btn art-plus" data-id="${stock.ticketItemId}" ${qtySelected === stock.qtyRemaining ? 'disabled' : ''}>+</button>
+                    </div>
+                  `;
+                } else {
+                  selectorHTML = `
+                    <span style="font-size:0.72rem; color:#10b981; font-weight:700; text-transform:uppercase;">Pagado</span>
+                  `;
+                }
+
+                return `
+                  <div class="${rowClass}">
+                    <div class="split-article-info">
+                      <span class="split-article-name" style="word-break: break-all;">${stock.name}</span>
+                      <span class="split-article-price-qty">${stock.price.toFixed(2)}€ c/u • Total: ${stock.totalQty}</span>
+                    </div>
+                    ${selectorHTML}
+                  </div>
+                `;
+              }).join('')}
+            </div>
+
+            <div class="split-articles-actions">
+              <div>
+                <div style="font-size:0.7rem; color:var(--text-muted); font-weight:700; text-transform:uppercase;">Seleccionado</div>
+                <strong style="font-size:1.15rem; color:var(--secondary);">${getSelectedArticlesTotal().toFixed(2)}€</strong>
+              </div>
+              <div class="split-articles-actions-right">
+                <button class="split-part-pay-btn card-btn" id="art-pay-card-btn" style="height:36px; padding:0 12px;" ${!isSelectedAny ? 'disabled style="opacity:0.3; pointer-events:none;"' : ''}>Tarjeta</button>
+                <button class="split-part-pay-btn cash-btn" id="art-pay-cash-btn" style="height:36px; padding:0 12px;" ${!isSelectedAny ? 'disabled style="opacity:0.3; pointer-events:none;"' : ''}>Efectivo</button>
+              </div>
+            </div>
+
+            ${articlePayments.length > 0 ? `
+              <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">Historial de pagos parciales</div>
+              <div class="split-parts-list" style="max-height:90px;">
+                ${articlePayments.map((p, idx) => `
+                  <div class="split-part-row pagado" style="padding: 6px 12px; flex-direction:column; align-items:flex-start; gap:2px;">
+                    <div style="display:flex; justify-content:space-between; width:100%; font-size:0.8rem; font-weight:700;">
+                      <span>Pago #${idx + 1}: ${p.amount.toFixed(2)}€</span>
+                      <span style="color:${p.method === 'Tarjeta' ? 'var(--secondary)' : '#10b981'}">${p.method}</span>
+                    </div>
+                    <div style="font-size:0.68rem; color:var(--text-muted); line-height:1.2; word-break: break-all;">
+                      ${p.itemsText}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }
+
+      methodSpecificHTML = `
+        <div class="payment-split-section" style="margin-top: 14px;">
+          <div class="split-tabs-list">
+            <button class="split-tab-btn ${splitType === 'iguales' ? 'active' : ''}" data-split="iguales">Partes Iguales</button>
+            <button class="split-tab-btn ${splitType === 'articulos' ? 'active' : ''}" data-split="articulos">Por Artículos</button>
+            <button class="split-tab-btn ${splitType === 'libre' ? 'active' : ''}" data-split="libre">Cant. Libre</button>
+          </div>
+          ${splitHTML}
         </div>
       `;
     }
 
     modal.innerHTML = `
-      <div class="modal-dialog" style="max-width: 480px; width:95%;">
-        <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
-          <h3 style="margin:0; font-size:1.3rem; font-weight:700;">Procesar Cobro</h3>
+      <div class="modal-dialog" style="max-width: 500px; width:95%; max-height: 95vh; display:flex; flex-direction:column; padding: 20px;">
+        <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 10px; margin-bottom: 12px; flex-shrink:0;">
+          <h3 style="margin:0; font-size:1.2rem; font-weight:700;">Procesar Cobro</h3>
         </div>
-        <div class="modal-body">
-          <div class="payment-amount-box" style="background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: var(--border-radius-lg); padding: 16px; text-align: center; margin-bottom: 20px;">
-            <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Total a Cobrar</div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: var(--secondary);">${totalAmount.toFixed(2)}€</div>
+        <div class="modal-body" style="overflow-y:auto; flex:1; padding-right:2px;">
+          <div class="payment-amount-box" style="background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: var(--border-radius-md); padding: 12px; text-align: center; margin-bottom: 14px;">
+            <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;">Total a Cobrar</div>
+            <div style="font-size: 1.8rem; font-weight: 800; color: var(--secondary);">${totalAmount.toFixed(2)}€</div>
           </div>
 
-          <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">Método de Pago</div>
-          <div class="payment-methods-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;">
-            <button class="payment-method-card ${selectedMethod === 'Tarjeta' ? 'active' : ''}" data-method="Tarjeta" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:16px 8px; display:flex; flex-direction:column; align-items:center; gap:8px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.85rem; transition:all 0.2s ease;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:24px; height:24px; color:${selectedMethod === 'Tarjeta' ? 'var(--secondary)' : 'var(--text-muted)'};"><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></svg>
+          <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">Método de Pago</div>
+          <div class="payment-methods-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px;">
+            <button class="payment-method-card ${selectedMethod === 'Tarjeta' ? 'active' : ''}" data-method="Tarjeta" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:12px 6px; display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.8rem; transition:all 0.2s ease;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:20px; height:20px; color:${selectedMethod === 'Tarjeta' ? 'var(--secondary)' : 'var(--text-muted)'};"><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></svg>
               <span>Tarjeta</span>
             </button>
-            <button class="payment-method-card ${selectedMethod === 'Efectivo' ? 'active' : ''}" data-method="Efectivo" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:16px 8px; display:flex; flex-direction:column; align-items:center; gap:8px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.85rem; transition:all 0.2s ease;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:24px; height:24px; color:${selectedMethod === 'Efectivo' ? '#10b981' : 'var(--text-muted)'};"><rect x="2" y="6" width="20" height="12" rx="2" /><circle cx="12" cy="12" r="2" /><path d="M6 12h.01M18 12h.01" /></svg>
+            <button class="payment-method-card ${selectedMethod === 'Efectivo' ? 'active' : ''}" data-method="Efectivo" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:12px 6px; display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.8rem; transition:all 0.2s ease;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:20px; height:20px; color:${selectedMethod === 'Efectivo' ? '#10b981' : 'var(--text-muted)'};"><rect x="2" y="6" width="20" height="12" rx="2" /><circle cx="12" cy="12" r="2" /><path d="M6 12h.01M18 12h.01" /></svg>
               <span>Efectivo</span>
             </button>
-            <button class="payment-method-card ${selectedMethod === 'Dividir' ? 'active' : ''}" data-method="Dividir" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:16px 8px; display:flex; flex-direction:column; align-items:center; gap:8px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.85rem; transition:all 0.2s ease;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:24px; height:24px; color:${selectedMethod === 'Dividir' ? '#f59e0b' : 'var(--text-muted)'};"><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><circle cx="4" cy="12" r="2" /><circle cx="12" cy="10" r="2" /><circle cx="20" cy="14" r="2" /></svg>
+            <button class="payment-method-card ${selectedMethod === 'Dividir' ? 'active' : ''}" data-method="Dividir" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:12px 6px; display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.8rem; transition:all 0.2s ease;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:20px; height:20px; color:${selectedMethod === 'Dividir' ? '#f59e0b' : 'var(--text-muted)'};"><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><circle cx="4" cy="12" r="2" /><circle cx="12" cy="10" r="2" /><circle cx="20" cy="14" r="2" /></svg>
               <span>Dividir</span>
             </button>
           </div>
 
           ${methodSpecificHTML}
         </div>
-        <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:12px; margin-top:24px; border-top: 1px solid var(--border-color); padding-top: 16px;">
-          <button class="btn btn-secondary" id="payment-cancel-btn" style="height:44px; padding:0 20px; font-weight:600; border-radius:var(--border-radius-md); background:var(--bg-item); border:1px solid var(--border-color); color:var(--text-main); cursor:pointer;">Cancelar</button>
-          <button class="btn btn-primary" id="payment-confirm-btn" style="height:44px; padding:0 24px; font-weight:600; border-radius:var(--border-radius-md); background:var(--secondary); border:none; color:white; cursor:pointer;">Confirmar Pago</button>
+        <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px; border-top: 1px solid var(--border-color); padding-top: 12px; flex-shrink:0;">
+          <button class="btn btn-secondary" id="payment-cancel-btn" style="height:40px; padding:0 16px; font-weight:600; border-radius:var(--border-radius-md); background:var(--bg-item); border:1px solid var(--border-color); color:var(--text-main); cursor:pointer; font-size:0.85rem;">Cancelar</button>
+          ${!isDividir ? `<button class="btn btn-primary" id="payment-confirm-btn" style="height:40px; padding:0 20px; font-weight:600; border-radius:var(--border-radius-md); background:var(--secondary); border:none; color:white; cursor:pointer; font-size:0.85rem;">Confirmar Pago</button>` : ''}
         </div>
       </div>
     `;
 
-    // Reattach event listeners to selectors & inputs
-    const methodCards = modal.querySelectorAll('.payment-method-card');
-    methodCards.forEach(card => {
+    // ── Enlazar Eventos Generales
+    // Cambio de Método de Pago Principal
+    modal.querySelectorAll('.payment-method-card').forEach(card => {
       card.addEventListener('click', () => {
         selectedMethod = card.dataset.method;
         if (selectedMethod === 'Efectivo') {
@@ -1750,34 +1975,32 @@ function showPaymentModal(totalAmount) {
       });
     });
 
-    // Cancel Button
+    // Botón de Cancelar
     modal.querySelector('#payment-cancel-btn').addEventListener('click', () => {
       modal.remove();
     });
 
-    // Confirm Button
-    modal.querySelector('#payment-confirm-btn').addEventListener('click', () => {
-      if (selectedMethod === 'Efectivo') {
-        const change = getChangeAmount();
-        store.payActiveTicket('Efectivo');
-        isDrawerOpen = false;
-        modal.remove();
-        showToast(`Pago en efectivo registrado. Cambio: ${change.toFixed(2)}€.`, 'success');
-      } else if (selectedMethod === 'Tarjeta') {
-        store.payActiveTicket('Tarjeta');
-        isDrawerOpen = false;
-        modal.remove();
-        showToast('Pago con tarjeta procesado correctamente.', 'success');
-      } else if (selectedMethod === 'Dividir') {
-        const parts = parseInt(modal.querySelector('#split-parts-select').value, 10);
-        store.payActiveTicket(`Dividido x${parts}`);
-        isDrawerOpen = false;
-        modal.remove();
-        showToast(`Pago dividido en ${parts} partes registrado.`, 'success');
-      }
-    });
+    // Botón Confirmar Pago Directo (no dividido)
+    const confirmBtn = modal.querySelector('#payment-confirm-btn');
+    if (confirmBtn) {
+      confirmBtn.addEventListener('click', () => {
+        if (selectedMethod === 'Efectivo') {
+          const change = getChangeAmount();
+          store.payActiveTicket('Efectivo');
+          isDrawerOpen = false;
+          modal.remove();
+          showToast(`Pago en efectivo registrado. Cambio: ${change.toFixed(2)}€.`, 'success');
+        } else if (selectedMethod === 'Tarjeta') {
+          store.payActiveTicket('Tarjeta');
+          isDrawerOpen = false;
+          modal.remove();
+          showToast('Pago con tarjeta procesado correctamente.', 'success');
+        }
+      });
+    }
 
-    // Cash received inputs & quick buttons
+    // ── Enlazar Eventos de Métodos Directos
+    // Input de Efectivo entregado
     if (isEfectivo) {
       const cashInput = modal.querySelector('#cash-received-input');
       cashInput.addEventListener('input', (e) => {
@@ -1789,7 +2012,6 @@ function showPaymentModal(totalAmount) {
         }
       });
 
-      // Quick buttons
       modal.querySelectorAll('.cash-quick-btn').forEach(btn => {
         btn.addEventListener('click', () => {
           const val = parseFloat(btn.dataset.val);
@@ -1797,6 +2019,186 @@ function showPaymentModal(totalAmount) {
           renderPaymentContent();
         });
       });
+    }
+
+    // ── Enlazar Eventos de División
+    if (isDividir) {
+      // Cambio de Pestaña de División
+      modal.querySelectorAll('.split-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          splitType = btn.dataset.split;
+          renderPaymentContent();
+        });
+      });
+
+      // ── Eventos de Partes Iguales
+      if (splitType === 'iguales') {
+        const partsSelect = modal.querySelector('#split-parts-count');
+        partsSelect.addEventListener('change', (e) => {
+          numParts = parseInt(e.target.value, 10);
+          initParts();
+          renderPaymentContent();
+        });
+
+        modal.querySelectorAll('.split-part-pay-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const partId = parseInt(btn.dataset.partId, 10);
+            const method = btn.dataset.payMethod;
+            const partIndex = parts.findIndex(p => p.id === partId);
+            if (partIndex > -1) {
+              parts[partIndex].status = method === 'Tarjeta' ? 'paid-card' : 'paid-cash';
+              
+              // Verificar si ya se cobraron todas
+              const complete = checkPartsComplete();
+              if (!complete) {
+                renderPaymentContent();
+              }
+            }
+          });
+        });
+      }
+
+      // ── Eventos de División Libre
+      if (splitType === 'libre') {
+        const freeInput = modal.querySelector('#free-charge-amount');
+        freeInput.addEventListener('input', (e) => {
+          const val = parseFloat(e.target.value);
+          freeInputValue = isNaN(val) ? 0 : val;
+        });
+
+        const cardBtn = modal.querySelector('#free-charge-card-btn');
+        if (cardBtn) {
+          cardBtn.addEventListener('click', () => {
+            const amount = freeInputValue !== null ? freeInputValue : getFreeRemaining();
+            addFreePayment(amount, 'Tarjeta');
+          });
+        }
+
+        const cashBtn = modal.querySelector('#free-charge-cash-btn');
+        if (cashBtn) {
+          cashBtn.addEventListener('click', () => {
+            const amount = freeInputValue !== null ? freeInputValue : getFreeRemaining();
+            addFreePayment(amount, 'Efectivo');
+          });
+        }
+      }
+
+      // ── Eventos de División por Artículos
+      if (splitType === 'articulos') {
+        modal.querySelectorAll('.split-article-qty-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const stockId = btn.dataset.id;
+            const isPlus = btn.classList.contains('art-plus');
+            const stock = articleStocks.find(s => s.ticketItemId === stockId);
+            if (stock) {
+              let selected = articleSelections[stockId] || 0;
+              if (isPlus && selected < stock.qtyRemaining) {
+                selected++;
+              } else if (!isPlus && selected > 0) {
+                selected--;
+              }
+              articleSelections[stockId] = selected;
+              renderPaymentContent();
+            }
+          });
+        });
+
+        // Cobrar artículos seleccionados en Tarjeta o Efectivo
+        const artCardBtn = modal.querySelector('#art-pay-card-btn');
+        if (artCardBtn) {
+          artCardBtn.addEventListener('click', () => {
+            paySelectedArticles('Tarjeta');
+          });
+        }
+
+        const artCashBtn = modal.querySelector('#art-pay-cash-btn');
+        if (artCashBtn) {
+          artCashBtn.addEventListener('click', () => {
+            paySelectedArticles('Efectivo');
+          });
+        }
+      }
+    }
+  };
+
+  // Ayudante de cierre de partes iguales
+  const checkPartsComplete = () => {
+    if (parts.every(p => p.status !== 'pending')) {
+      const paymentMethodsUsed = [...new Set(parts.map(p => p.status === 'paid-card' ? 'Tarjeta' : 'Efectivo'))];
+      const methodText = paymentMethodsUsed.length > 1 ? 'Mixto (Partes)' : (paymentMethodsUsed[0] === 'paid-card' ? 'Tarjeta' : 'Efectivo');
+      
+      store.payActiveTicket(methodText);
+      isDrawerOpen = false;
+      modal.remove();
+      showToast('Cobro por partes completado con éxito.', 'success');
+      return true;
+    }
+    return false;
+  };
+
+  // Ayudante de cobro libre secuencial
+  const addFreePayment = (amount, method) => {
+    const remaining = getFreeRemaining();
+    if (amount <= 0 || amount > remaining + 0.009) {
+      showToast('Importe inválido o superior al restante.', 'error');
+      return;
+    }
+    
+    freePayments.push({
+      id: Date.now(),
+      amount: amount,
+      method: method
+    });
+    
+    freeInputValue = null;
+    
+    const newRemaining = getFreeRemaining();
+    if (newRemaining <= 0.009) {
+      const methodsUsed = [...new Set(freePayments.map(p => p.method))];
+      const methodText = methodsUsed.length > 1 ? 'Mixto (Libre)' : methodsUsed[0];
+      
+      store.payActiveTicket(methodText);
+      isDrawerOpen = false;
+      modal.remove();
+      showToast('Cobro libre completado con éxito.', 'success');
+    } else {
+      renderPaymentContent();
+    }
+  };
+
+  // Ayudante de cobro por selección de artículos
+  const paySelectedArticles = (method) => {
+    const selectedTotal = getSelectedArticlesTotal();
+    if (selectedTotal <= 0) return;
+
+    const paidItems = [];
+    articleStocks.forEach(stock => {
+      const qty = articleSelections[stock.ticketItemId] || 0;
+      if (qty > 0) {
+        stock.qtyRemaining -= qty;
+        paidItems.push(`${qty}x ${stock.name}`);
+        articleSelections[stock.ticketItemId] = 0;
+      }
+    });
+
+    articlePayments.push({
+      id: Date.now(),
+      amount: selectedTotal,
+      method: method,
+      itemsText: paidItems.join(', ')
+    });
+
+    const remainingCount = articleStocks.reduce((sum, s) => sum + s.qtyRemaining, 0);
+    if (remainingCount === 0) {
+      const methodsUsed = [...new Set(articlePayments.map(p => p.method))];
+      const methodText = methodsUsed.length > 1 ? 'Mixto (Artículos)' : methodsUsed[0];
+      
+      store.payActiveTicket(methodText);
+      isDrawerOpen = false;
+      modal.remove();
+      showToast('Cobro por artículos completado con éxito.', 'success');
+    } else {
+      renderPaymentContent();
     }
   };
 
