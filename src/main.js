@@ -441,12 +441,13 @@ function renderAjustesView(state) {
             <div class="settings-row" style="padding: 12px 0; border-bottom: 1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
               <div>
                 <div class="settings-row-title" style="font-weight:600;">Tema Visual</div>
-                <div class="settings-row-desc" style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Alternar apariencia claro/oscuro</div>
+                <div class="settings-row-desc" style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Elige la apariencia de la aplicación</div>
               </div>
-              <button class="theme-toggle" id="settings-theme-btn">
-                ${state.theme === 'dark' ? ICONS.sun : ICONS.moon}
-                <span>${state.theme === 'dark' ? 'Modo Claro' : 'Modo Oscuro'}</span>
-              </button>
+              <div class="theme-select-group">
+                <button class="theme-btn-opt ${state.theme === 'light' ? 'active' : ''}" data-theme="light">Claro</button>
+                <button class="theme-btn-opt ${state.theme === 'dark' ? 'active' : ''}" data-theme="dark">Oscuro</button>
+                <button class="theme-btn-opt ${state.theme === 'system' ? 'active' : ''}" data-theme="system">Sistema</button>
+              </div>
             </div>
 
             <div class="settings-row" style="padding: 12px 0; border-bottom: 1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
@@ -1273,7 +1274,13 @@ function render(state) {
   const isDesktop = window.innerWidth >= 768;
 
   // Sync Theme CSS
+  let isLight = false;
   if (state.theme === 'light') {
+    isLight = true;
+  } else if (state.theme === 'system') {
+    isLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+  }
+  if (isLight) {
     document.body.classList.add('light-theme');
   } else {
     document.body.classList.remove('light-theme');
@@ -2937,14 +2944,13 @@ function setupEventListeners(container) {
     });
   }
 
-  // Settings Theme button toggler
-  const settingsThemeBtn = container.querySelector('#settings-theme-btn');
-  if (settingsThemeBtn) {
-    settingsThemeBtn.addEventListener('click', () => {
-      const nextTheme = store.state.theme === 'dark' ? 'light' : 'dark';
-      store.setTheme(nextTheme);
+  // Settings Theme button group listeners
+  container.querySelectorAll('.theme-btn-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const selectedTheme = btn.dataset.theme;
+      store.setTheme(selectedTheme);
     });
-  }
+  });
 
   // Settings TPV Data Reset
   const settingsReset = container.querySelector('#settings-reset-btn');
@@ -3480,6 +3486,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Bind store event reactive updates
   store.subscribe((state) => {
     render(state);
+  });
+
+  // Watch system theme changes for System theme mode
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    if (store.state.theme === 'system') {
+      render(store.state);
+    }
   });
 
   // Load catalog from Supabase before first paint

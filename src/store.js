@@ -33,9 +33,14 @@ const createInitialTables = () => [
 // simple pub/sub store for state management
 class Store {
   constructor() {
+    let initialTheme = 'system';
+    if (typeof window !== 'undefined' && window.localStorage) {
+      initialTheme = window.localStorage.getItem('tpv-theme') || 'system';
+    }
+
     // Initial State — catalog data will be replaced by Supabase on loadFromSupabase()
     this.state = {
-      theme: 'dark',
+      theme: initialTheme,
       activeTab: 'inicio',           // 'mesas' | 'inicio' | 'transacciones' | 'ajustes'
       activePosTab: 'atajos',       // 'teclado' | 'atajos' | 'productos'
       selectedTableId: null,        // null = Venta Directa (Bar)
@@ -234,6 +239,9 @@ class Store {
   // Action Methods
   setTheme(theme) {
     this.state.theme = theme;
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem('tpv-theme', theme);
+    }
     this.notify();
   }
 

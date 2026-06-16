@@ -8,6 +8,7 @@
   --border-color: #2c2c2e;   /* Subtle divider border */
   --text-main: #ffffff;      /* High contrast white text */
   --text-muted: #8e8e93;     /* Muted gray text */
+  --bg-card: #1c1c1e;        /* Dark gray for modal dialog cards */
   
   --primary: #2563eb;        /* Classic Blue for Category buttons */
   --primary-hover: #1d4ed8;
@@ -30,15 +31,48 @@
   --transition-normal: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Light Theme Overrides */
+/* Light Theme Overrides & Premium Palette */
 body.light-theme {
-  --bg-app: #f2f2f7;
-  --bg-panel: #ffffff;
-  --bg-item: #e5e5ea;
-  --bg-item-active: #d1d1d6;
-  --border-color: #e5e5ea;
-  --text-main: #000000;
-  --text-muted: #8e8e93;
+  --bg-app: #f0f2f5;           /* Cool light gray base */
+  --bg-panel: #ffffff;         /* Pure white panels */
+  --bg-card: #ffffff;          /* Pure white cards */
+  --bg-item: #f1f5f9;          /* Slate 100 for button backgrounds */
+  --bg-item-active: #e2e8f0;   /* Slate 200 for active states */
+  --border-color: #e2e8f0;     /* Slate 200 borders */
+  --text-main: #0f172a;        /* Slate 900 for text */
+  --text-muted: #475569;       /* Slate 600 for muted text */
+  
+  /* Legible primary/secondary accents in light mode */
+  --primary: #1d4ed8;
+  --primary-hover: #1e40af;
+  --secondary: #059669;
+  --accent: #0284c7;
+  --danger: #dc2626;
+  --warning: #d97706;
+}
+
+/* Light Theme Card Gradients Overrides */
+body.light-theme .table-card.available {
+  background: linear-gradient(135deg, #ffffff, rgba(5, 150, 105, 0.06)) !important;
+}
+body.light-theme .table-card.occupied {
+  background: linear-gradient(135deg, #ffffff, rgba(29, 78, 216, 0.08)) !important;
+  border-color: rgba(29, 78, 216, 0.3) !important;
+}
+body.light-theme .table-card.pending {
+  background: linear-gradient(135deg, #ffffff, rgba(217, 119, 6, 0.08)) !important;
+  border-color: rgba(217, 119, 6, 0.3) !important;
+}
+body.light-theme .table-card.takeaway.available {
+  background: linear-gradient(135deg, #ffffff, rgba(13, 148, 136, 0.06)) !important;
+}
+body.light-theme .table-card.takeaway.occupied {
+  background: linear-gradient(135deg, #ffffff, rgba(13, 148, 136, 0.12)) !important;
+  border-color: rgba(13, 148, 136, 0.3) !important;
+}
+
+body.light-theme .modal-backdrop {
+  background: rgba(15, 23, 42, 0.45);
 }
 
 /* Global Reset */
@@ -2142,5 +2176,45 @@ body.light-theme .btn-quick-pay {
 
 .modal-table-btn.available {
   border-color: var(--border-color);
+}
+
+/* ── Theme Select Segmented Control ───────────────────────── */
+.theme-select-group {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-item);
+  border: 1px solid var(--border-color);
+  padding: 3px;
+  border-radius: var(--border-radius-md);
+}
+.theme-btn-opt {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: var(--border-radius-sm);
+  cursor: pointer;
+  font-family: var(--font-family);
+  font-size: 0.8rem;
+  transition: all 0.15s;
+}
+.theme-btn-opt:hover {
+  color: var(--text-main);
+}
+.theme-btn-opt.active {
+  background: var(--primary) !important;
+  color: #ffffff !important;
+}
+
+/* ── Article Card Theme Adaptation (No Image) ─────────────── */
+.article-card:not(.has-image) .article-card-overlay {
+  background: none;
+}
+.article-card:not(.has-image) .article-card-name {
+  color: var(--text-main);
+}
+.article-card:not(.has-image) .article-card-price {
+  color: var(--text-muted);
 }
 
