@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KDS — Esencia Café</title>
+  <meta name="description" content="Kitchen Display System para visualizar las comandas activas en barra o cocina.">
+  <meta name="theme-color" content="#0d1117">
+
+  <!-- Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="/src/kds.css">
+</head>
+<body>
+  <div id="kds-root">
+    <div class="kds-loading" id="kds-loading">
+      <div class="kds-loading-spinner"></div>
+      <p>Conectando con el sistema...</p>
+    </div>
+  </div>
+  <script type="module" src="/src/kds.js"></script>
+</body>
+</html>
