@@ -51,24 +51,58 @@ body.light-theme {
   --warning: #d97706;
 }
 
-/* Light Theme Card Gradients Overrides */
+/* Light Theme Card Overrides: distinct colored background, crisp borders & drop shadow */
+body.light-theme .table-card {
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05), 0 1px 3px rgba(15, 23, 42, 0.03) !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+body.light-theme .table-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08) !important;
+}
+body.light-theme .table-card.selected {
+  border-color: #059669 !important;
+  box-shadow: 0 0 0 2px rgba(5, 150, 105, 0.4) !important;
+}
+
 body.light-theme .table-card.available {
-  background: linear-gradient(135deg, #ffffff, rgba(5, 150, 105, 0.06)) !important;
+  background: #ecfdf5 !important;
+  border-color: #a7f3d0 !important;
 }
+body.light-theme .table-card.available .table-card-status {
+  color: #047857 !important;
+}
+
 body.light-theme .table-card.occupied {
-  background: linear-gradient(135deg, #ffffff, rgba(29, 78, 216, 0.08)) !important;
-  border-color: rgba(29, 78, 216, 0.3) !important;
+  background: #eff6ff !important;
+  border-color: #bfdbfe !important;
 }
+body.light-theme .table-card.occupied .table-card-status {
+  color: #1d4ed8 !important;
+}
+
 body.light-theme .table-card.pending {
-  background: linear-gradient(135deg, #ffffff, rgba(217, 119, 6, 0.08)) !important;
-  border-color: rgba(217, 119, 6, 0.3) !important;
+  background: #fffbeb !important;
+  border-color: #fde68a !important;
 }
+body.light-theme .table-card.pending .table-card-status {
+  color: #b45309 !important;
+}
+
 body.light-theme .table-card.takeaway.available {
-  background: linear-gradient(135deg, #ffffff, rgba(13, 148, 136, 0.06)) !important;
+  background: #f0fdfa !important;
+  border-color: #99f6e4 !important;
 }
+body.light-theme .table-card.takeaway.available .table-card-status {
+  color: #0f766e !important;
+}
+
 body.light-theme .table-card.takeaway.occupied {
-  background: linear-gradient(135deg, #ffffff, rgba(13, 148, 136, 0.12)) !important;
-  border-color: rgba(13, 148, 136, 0.3) !important;
+  background: #f0fdfa !important;
+  border-color: #2dd4bf !important;
+}
+body.light-theme .table-card.takeaway.occupied .table-card-status {
+  color: #0d9488 !important;
 }
 
 body.light-theme .modal-backdrop {
