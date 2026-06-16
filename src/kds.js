@@ -1,32 +1,34 @@
 /**
- * kds.js — Kitchen Display System
+ * kds.js — Kitchen Display System v3
  *
  * Features:
  * - Realtime Supabase sync
- * - Per-table order status: waiting (yellow) → urgent (red) → ready (green)
- * - LISTO button to mark table as done; items stored as delivered
- * - New items on a ready table → reverts to waiting, old delivered items shown strikethrough
- * - Configurable time thresholds, grid columns, font size, sounds, table visibility
+ * - Color states: green (empty or ready) → yellow (new order) → red (exceeded threshold)
+ * - LISTO button: saves delivered items; new items revert to yellow + strikethrough old ones
+ * - Collapsed card height for empty/ready tables (configurable max items shown)
+ * - Custom numeric keypad (no system keyboard) for all number inputs
+ * - Full configurable settings panel
  */
 
 import { createClient } from '@supabase/supabase-js';
 
-// ── Supabase ─────────────────────────────────────────────────────────────────
+// ── Supabase ──────────────────────────────────────────────────────────────────
 const supabaseUrl     = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabase        = createClient(supabaseUrl, supabaseAnonKey);
 
-// ── Config (persisted per device in localStorage) ────────────────────────────
-const CONFIG_KEY = 'kds-config-v2';
+// ── Config ────────────────────────────────────────────────────────────────────
+const CONFIG_KEY = 'kds-config-v3';
 const DEFAULT_CONFIG = {
-  columns: 3,
-  showOnlyOccupied: true,
-  visibleTableIds: null,         // null = all tables
-  yellowToRedMinutes: 10,        // minutes until a waiting order turns red
-  fontSize: 'md',               // 'sm' | 'md' | 'lg'
-  showPrices: false,            // show price per line item
-  soundOnNew: false,            // play beep when a new order arrives
-  autoResetReady: false,        // auto-clear "ready" status when table is cleared by TPV
+  columns:             3,
+  showOnlyOccupied:    false,      // false = show all tables (empty = green)
+  visibleTableIds:     null,       // null = all
+  yellowToRedMinutes:  10,
+  collapsedItemCount:  4,          // max items shown when card is collapsed
+  fontSize:            'md',
+  showPrices:          false,
+  soundOnNew:          false,
+  autoResetReady:      false,
 };
 
 function loadConfig() {
@@ -36,20 +38,12 @@ function loadConfig() {
   } catch {}
   return { ...DEFAULT_CONFIG };
 }
-function saveConfig(cfg) {
-  localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
-}
+function saveConfig(cfg) { localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg)); }
 
-// ── Table KDS State (per-device, persisted) ──────────────────────────────────
-// tableKdsState[tableId] = { status: 'waiting'|'ready', readyAt: ts|null,
-//                            deliveredItems: [{ticketItemId, qty}] }
+// ── Table KDS state ───────────────────────────────────────────────────────────
 const TABLE_KDS_KEY = 'kds-table-state-v1';
-
 function loadTableKdsState() {
-  try {
-    const raw = localStorage.getItem(TABLE_KDS_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
+  try { const r = localStorage.getItem(TABLE_KDS_KEY); if (r) return JSON.parse(r); } catch {}
   return {};
 }
 function saveTableKdsState() {
@@ -58,32 +52,143 @@ function saveTableKdsState() {
 
 // ── App State ─────────────────────────────────────────────────────────────────
 let state = {
-  tables: [],
-  connected: false,
-  config: loadConfig(),
-  settingsOpen: false,
-  tableStartTimes: {},    // tableId → ms when first occupied
-  tableKdsState: loadTableKdsState(),  // per-table KDS status
-  allTableDefs: [],
+  tables:         [],
+  connected:      false,
+  config:         loadConfig(),
+  settingsOpen:   false,
+  tableStartTimes: {},
+  tableKdsState:  loadTableKdsState(),
+  allTableDefs:   [],
 };
 
 let channel = null;
 const root = document.getElementById('kds-root');
 
-// ── Audio ─────────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// CUSTOM NUMPAD
+// ══════════════════════════════════════════════════════════════════════════════
+
+let numpad = {
+  open: false,
+  value: '',
+  targetInput: null,
+  label: '',
+  min: 1,
+  max: 99,
+  onConfirm: null,
+};
+
+function openNumpad(inputEl, label, onConfirm) {
+  numpad.open = true;
+  numpad.targetInput = inputEl;
+  numpad.value = String(parseInt(inputEl.value, 10) || '');
+  numpad.label = label || '';
+  numpad.min = parseInt(inputEl.min || '1', 10);
+  numpad.max = parseInt(inputEl.max || '99', 10);
+  numpad.onConfirm = onConfirm;
+  renderNumpad();
+}
+
+function closeNumpad() {
+  numpad.open = false;
+  const el = document.getElementById('kds-numpad-overlay');
+  if (el) { el.style.animation = 'numpadFadeOut 0.15s ease forwards'; setTimeout(() => el.remove(), 150); }
+}
+
+function renderNumpad() {
+  const existing = document.getElementById('kds-numpad-overlay');
+  if (existing) existing.remove();
+
+  const el = document.createElement('div');
+  el.id = 'kds-numpad-overlay';
+  el.className = 'kds-numpad-overlay';
+  el.innerHTML = `
+    <div class="kds-numpad" id="kds-numpad-panel">
+      <div class="kds-numpad-display">
+        <span class="kds-numpad-label">${numpad.label}</span>
+        <span class="kds-numpad-value" id="kds-numpad-disp">${numpad.value || '<span style="opacity:.3">—</span>'}</span>
+      </div>
+      <div class="kds-numpad-grid">
+        ${[7,8,9,4,5,6,1,2,3].map(n =>
+          `<button class="kds-numpad-btn" data-digit="${n}">${n}</button>`
+        ).join('')}
+        <button class="kds-numpad-btn kds-numpad-clear" data-action="clear">C</button>
+        <button class="kds-numpad-btn" data-digit="0">0</button>
+        <button class="kds-numpad-btn kds-numpad-del"  data-action="del">⌫</button>
+      </div>
+      <button class="kds-numpad-confirm" data-action="confirm">Confirmar</button>
+    </div>
+  `;
+  document.body.appendChild(el);
+
+  // Close on overlay click (outside panel)
+  el.addEventListener('click', (e) => {
+    if (!e.target.closest('#kds-numpad-panel')) closeNumpad();
+  });
+
+  el.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-digit], [data-action]');
+    if (!btn) return;
+
+    const digit  = btn.dataset.digit;
+    const action = btn.dataset.action;
+
+    if (digit !== undefined) {
+      if (numpad.value === '0') numpad.value = digit;
+      else numpad.value = (numpad.value + digit).slice(0, 3); // max 3 digits
+      // Clamp at max
+      if (parseInt(numpad.value, 10) > numpad.max) numpad.value = String(numpad.max);
+    } else if (action === 'del') {
+      numpad.value = numpad.value.slice(0, -1);
+    } else if (action === 'clear') {
+      numpad.value = '';
+    } else if (action === 'confirm') {
+      let finalVal = parseInt(numpad.value, 10);
+      if (isNaN(finalVal)) finalVal = numpad.min;
+      finalVal = Math.max(numpad.min, Math.min(numpad.max, finalVal));
+      if (numpad.targetInput) {
+        numpad.targetInput.value = String(finalVal);
+        numpad.targetInput.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      if (numpad.onConfirm) numpad.onConfirm(finalVal);
+      closeNumpad();
+      return;
+    }
+
+    // Update display
+    const disp = document.getElementById('kds-numpad-disp');
+    if (disp) disp.innerHTML = numpad.value || '<span style="opacity:.3">—</span>';
+  });
+}
+
+// Attach numpad to any input[type=number] that is readonly
+function attachNumpadListeners() {
+  document.querySelectorAll('input[type="number"].kds-numpad-trigger').forEach(input => {
+    input.addEventListener('click', (e) => {
+      e.preventDefault();
+      const label = input.dataset.label ||
+        input.closest('.kds-threshold-row')?.querySelector('.kds-toggle-label')?.textContent ||
+        'Valor';
+      openNumpad(input, label);
+    });
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AUDIO
+// ══════════════════════════════════════════════════════════════════════════════
+
 function playBeep() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
+    osc.connect(gain); gain.connect(ctx.destination);
     osc.type = 'sine';
     osc.frequency.setValueAtTime(880, ctx.currentTime);
     gain.gain.setValueAtTime(0.3, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.4);
+    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.4);
   } catch {}
 }
 
@@ -95,19 +200,16 @@ function getItemTotal(item) {
   const opts = (item.selectedOptions || []).reduce((s, o) => s + (o.price || 0) * (o.qty || 1), 0);
   return ((item.price || 0) + opts) * (item.qty || 1);
 }
-function getTableTotal(table) {
-  return (table.items || []).reduce((s, i) => s + getItemTotal(i), 0);
-}
+function getTableTotal(t) { return (t.items || []).reduce((s, i) => s + getItemTotal(i), 0); }
 function getElapsedMinutes(tableId) {
-  const start = state.tableStartTimes[tableId];
-  if (!start) return 0;
-  return Math.floor((Date.now() - start) / 60000);
+  const s = state.tableStartTimes[tableId];
+  return s ? Math.floor((Date.now() - s) / 60000) : 0;
 }
 function formatElapsed(minutes) {
-  if (minutes < 1) return '< 1 min';
+  if (minutes < 1)  return '< 1 min';
   if (minutes < 60) return `${minutes} min`;
   const h = Math.floor(minutes / 60), m = minutes % 60;
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  return m ? `${h}h ${m}m` : `${h}h`;
 }
 function formatClock() {
   return new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -116,51 +218,55 @@ function formatDate() {
   return new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
-// ── Table start time tracking ─────────────────────────────────────────────────
-function updateTableStartTimes(newTables) {
-  newTables.forEach(table => {
-    const id = table.id;
-    const isOccupied = (table.items || []).length > 0;
-    if (isOccupied && !state.tableStartTimes[id]) {
-      state.tableStartTimes[id] = Date.now();
-    } else if (!isOccupied) {
-      delete state.tableStartTimes[id];
-    }
+// ── Table start times ──────────────────────────────────────────────────────────
+function updateTableStartTimes(tables) {
+  tables.forEach(t => {
+    const occupied = (t.items || []).length > 0;
+    if (occupied && !state.tableStartTimes[t.id]) state.tableStartTimes[t.id] = Date.now();
+    else if (!occupied) delete state.tableStartTimes[t.id];
   });
 }
 
-// ── KDS Status helpers ────────────────────────────────────────────────────────
+// ── KDS status ────────────────────────────────────────────────────────────────
 function getTableKds(tableId) {
   return state.tableKdsState[tableId] || { status: 'waiting', readyAt: null, deliveredItems: [] };
 }
 
-/** Get the CSS class for a card based on its KDS status and elapsed time */
+/**
+ * Card color class:
+ *  'empty'   → green  (table has no items)
+ *  'ready'   → green  (marked LISTO)
+ *  'waiting' → yellow (has items, within threshold)
+ *  'urgent'  → red    (has items, exceeded threshold)
+ */
 function getCardClass(tableId) {
+  const table = state.tables.find(t => t.id === tableId);
+  const hasItems = (table?.items || []).length > 0;
+  if (!hasItems) return 'empty';
   const kds = getTableKds(tableId);
   if (kds.status === 'ready') return 'ready';
   const elapsed = getElapsedMinutes(tableId);
-  const threshold = state.config.yellowToRedMinutes;
-  return elapsed >= threshold ? 'urgent' : 'waiting';
+  return elapsed >= state.config.yellowToRedMinutes ? 'urgent' : 'waiting';
 }
 
-/** When "LISTO" is clicked on a table */
+/** Should this card be collapsed (max N items shown)? */
+function isCollapsed(tableId) {
+  const cls = getCardClass(tableId);
+  return cls === 'empty' || cls === 'ready';
+}
+
 function markTableReady(tableId) {
   const table = state.tables.find(t => t.id === tableId);
   if (!table) return;
   state.tableKdsState[tableId] = {
     status: 'ready',
     readyAt: Date.now(),
-    deliveredItems: (table.items || []).map(i => ({
-      ticketItemId: i.ticketItemId,
-      id: i.id,
-      qty: i.qty
-    }))
+    deliveredItems: (table.items || []).map(i => ({ ticketItemId: i.ticketItemId, id: i.id, qty: i.qty }))
   };
   saveTableKdsState();
   render();
 }
 
-/** Reopen a ready table (undo LISTO) */
 function reopenTable(tableId) {
   const kds = getTableKds(tableId);
   state.tableKdsState[tableId] = { ...kds, status: 'waiting', readyAt: null };
@@ -168,75 +274,37 @@ function reopenTable(tableId) {
   render();
 }
 
-/**
- * When realtime arrives for a table that was 'ready':
- * - Check if any new items appeared or any qty increased beyond delivered
- * - If yes → revert to 'waiting', keep deliveredItems for strikethrough display
- * - Play sound if configured
- */
 function checkForNewItemsOnReadyTable(tableId, newItems) {
   const kds = getTableKds(tableId);
   if (kds.status !== 'ready') return false;
-
   const delivered = kds.deliveredItems || [];
-  let hasNew = false;
-
   for (const item of newItems) {
     const del = delivered.find(d => d.ticketItemId === item.ticketItemId);
-    if (!del) {
-      hasNew = true; break;
+    if (!del || item.qty > del.qty) {
+      state.tableKdsState[tableId] = { ...kds, status: 'waiting', readyAt: null };
+      saveTableKdsState();
+      return true;
     }
-    if (item.qty > del.qty) {
-      hasNew = true; break;
-    }
-  }
-
-  if (hasNew) {
-    // Revert to waiting but keep deliveredItems
-    state.tableKdsState[tableId] = { ...kds, status: 'waiting', readyAt: null };
-    saveTableKdsState();
-    if (state.config.soundOnNew) playBeep();
-    return true;
   }
   return false;
 }
 
-/**
- * Check if this is a brand-new occupied table (no KDS state yet or was cleared)
- */
-function checkForNewTable(tableId, newItems) {
-  if (!state.tableKdsState[tableId] && newItems.length > 0) {
-    if (state.config.soundOnNew) playBeep();
-  }
-}
-
 // ══════════════════════════════════════════════════════════════════════════════
-// RENDER
+// RENDER — Items
 // ══════════════════════════════════════════════════════════════════════════════
 
-function getVisibleTables() {
-  const { showOnlyOccupied, visibleTableIds } = state.config;
-  let tables = state.tables;
-  if (visibleTableIds !== null) {
-    tables = tables.filter(t => visibleTableIds.includes(t.id));
-  }
-  if (showOnlyOccupied) {
-    tables = tables.filter(t => (t.items || []).length > 0);
-  }
-  return tables;
-}
-
-/** Render one item line, accounting for delivered qty (strikethrough) */
 function renderItem(item, deliveredItems) {
-  const del = deliveredItems.find(d => d.ticketItemId === item.ticketItemId);
+  const del          = deliveredItems.find(d => d.ticketItemId === item.ticketItemId);
   const deliveredQty = del?.qty || 0;
-  const currentQty = item.qty;
-  const priceHtml = state.config.showPrices
-    ? `<span class="kds-item-price">${getItemTotal(item).toFixed(2)}€</span>`
+  const currentQty   = item.qty;
+  const showPrice    = state.config.showPrices;
+
+  const opts = (item.selectedOptions || []).length > 0
+    ? `<div class="kds-item-opts">${item.selectedOptions.map(o => `+ ${o.name}${o.qty > 1 ? ` ×${o.qty}` : ''}`).join(' · ')}</div>`
     : '';
 
-  const opts = item.selectedOptions && item.selectedOptions.length > 0
-    ? `<div class="kds-item-opts">${item.selectedOptions.map(o => `+ ${o.name}${o.qty > 1 ? ` ×${o.qty}` : ''}`).join(' · ')}</div>`
+  const priceSpan = (qty) => showPrice
+    ? `<span class="kds-item-price">${getItemTotal({ ...item, qty }).toFixed(2)}€</span>`
     : '';
 
   // All delivered → strikethrough
@@ -244,114 +312,125 @@ function renderItem(item, deliveredItems) {
     return `
       <div class="kds-item delivered">
         <span class="kds-item-qty">${currentQty}×</span>
-        <div style="flex:1; min-width:0;">
-          <div class="kds-item-name">${item.name}</div>
-          ${opts}
-        </div>
-        ${priceHtml}
-      </div>
-    `;
+        <div class="kds-item-body"><div class="kds-item-name">${item.name}</div>${opts}</div>
+        ${priceSpan(currentQty)}
+      </div>`;
   }
 
-  // Partially delivered → show delivered qty strikethrough + pending qty normal
+  // Partially delivered → show delivered strikethrough + pending normal
   if (deliveredQty > 0) {
     const pendingQty = currentQty - deliveredQty;
     return `
       <div class="kds-item delivered">
         <span class="kds-item-qty">${deliveredQty}×</span>
-        <div style="flex:1; min-width:0;">
-          <div class="kds-item-name">${item.name}</div>
-          ${opts}
-        </div>
-        ${state.config.showPrices ? `<span class="kds-item-price">${(getItemTotal({...item, qty: deliveredQty})).toFixed(2)}€</span>` : ''}
+        <div class="kds-item-body"><div class="kds-item-name">${item.name}</div>${opts}</div>
+        ${priceSpan(deliveredQty)}
       </div>
       <div class="kds-item new-item">
         <span class="kds-item-qty">${pendingQty}×</span>
-        <div style="flex:1; min-width:0;">
-          <div class="kds-item-name">${item.name}</div>
-          ${opts}
-        </div>
-        ${state.config.showPrices ? `<span class="kds-item-price">${(getItemTotal({...item, qty: pendingQty})).toFixed(2)}€</span>` : ''}
-      </div>
-    `;
+        <div class="kds-item-body"><div class="kds-item-name">${item.name}</div>${opts}</div>
+        ${priceSpan(pendingQty)}
+      </div>`;
   }
 
-  // Not delivered at all
+  // Normal
   return `
     <div class="kds-item">
       <span class="kds-item-qty">${currentQty}×</span>
-      <div style="flex:1; min-width:0;">
-        <div class="kds-item-name">${item.name}</div>
-        ${opts}
-      </div>
-      ${priceHtml}
-    </div>
-  `;
+      <div class="kds-item-body"><div class="kds-item-name">${item.name}</div>${opts}</div>
+      ${priceSpan(currentQty)}
+    </div>`;
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// RENDER — Card
+// ══════════════════════════════════════════════════════════════════════════════
+
 function renderCard(table) {
-  const kds = getTableKds(table.id);
-  const cardClass = getCardClass(table.id);
-  const elapsed = getElapsedMinutes(table.id);
-  const total = getTableTotal(table);
-  const totalQty = (table.items || []).reduce((s, i) => s + i.qty, 0);
+  const kds          = getTableKds(table.id);
+  const cardClass    = getCardClass(table.id);
+  const elapsed      = getElapsedMinutes(table.id);
+  const total        = getTableTotal(table);
   const deliveredItems = kds.deliveredItems || [];
+  const hasItems     = (table.items || []).length > 0;
+  const collapsed    = isCollapsed(table.id);
+  const maxItems     = collapsed ? state.config.collapsedItemCount : Infinity;
+  const fontClass    = `font-${state.config.fontSize}`;
+  const allItems     = table.items || [];
+  const shownItems   = allItems.slice(0, maxItems);
+  const hiddenCount  = allItems.length - shownItems.length;
+  const totalQty     = allItems.reduce((s, i) => s + i.qty, 0);
 
-  const itemsHtml = (table.items || [])
-    .map(item => renderItem(item, deliveredItems))
-    .join('');
-
-  // Status badge
+  // Time badge
   let timeBadge;
-  if (cardClass === 'ready') {
-    timeBadge = `<span class="kds-card-time ready">✓ Listo</span>`;
-  } else {
-    timeBadge = `<span class="kds-card-time ${cardClass}">${formatElapsed(elapsed)}</span>`;
+  if (cardClass === 'ready')   timeBadge = `<span class="kds-card-time ready-badge">✓ Listo</span>`;
+  else if (cardClass === 'empty') timeBadge = `<span class="kds-card-time empty-badge">Libre</span>`;
+  else timeBadge = `<span class="kds-card-time ${cardClass}-badge">${formatElapsed(elapsed)}</span>`;
+
+  // LISTO / REABRIR button (only when occupied)
+  let actionBtn = '';
+  if (hasItems) {
+    actionBtn = kds.status === 'ready'
+      ? `<button class="kds-ready-btn reopen" data-table-id="${table.id}">↩ Reabrir</button>`
+      : `<button class="kds-ready-btn" data-table-id="${table.id}">✓ Listo</button>`;
   }
 
-  // LISTO / REABRIR button
-  const actionBtn = kds.status === 'ready'
-    ? `<button class="kds-ready-btn reopen" data-table-id="${table.id}">↩ Reabrir</button>`
-    : `<button class="kds-ready-btn" data-table-id="${table.id}">✓ Listo</button>`;
+  // Items
+  const itemsHtml = hasItems
+    ? shownItems.map(item => renderItem(item, deliveredItems)).join('')
+    : `<div class="kds-card-empty-label">Sin pedidos</div>`;
 
-  const fontSizeClass = `font-${state.config.fontSize}`;
+  const hiddenHint = hiddenCount > 0
+    ? `<div class="kds-card-collapsed-hint">+${hiddenCount} artículo${hiddenCount > 1 ? 's' : ''} más</div>`
+    : '';
 
   return `
-    <div class="kds-card ${cardClass} ${fontSizeClass}" data-table-id="${table.id}">
+    <div class="kds-card ${cardClass} ${fontClass}" data-table-id="${table.id}">
       <div class="kds-card-header">
         <span class="kds-card-name">${table.name}</span>
         ${timeBadge}
       </div>
       <div class="kds-card-items">
         ${itemsHtml}
+        ${hiddenHint}
       </div>
-      <div class="kds-card-footer">
-        <span class="kds-card-count">${totalQty} artículo${totalQty !== 1 ? 's' : ''}</span>
-        <span class="kds-card-total">${total.toFixed(2)}€</span>
-        ${actionBtn}
-      </div>
+      ${hasItems ? `
+        <div class="kds-card-footer">
+          <span class="kds-card-count">${totalQty} artículo${totalQty !== 1 ? 's' : ''}</span>
+          <span class="kds-card-total">${total.toFixed(2)}€</span>
+          ${actionBtn}
+        </div>
+      ` : ''}
     </div>
   `;
 }
 
 function renderGrid() {
   const visible = getVisibleTables();
-
   if (visible.length === 0) {
     return `
       <div class="kds-empty">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:56px;height:56px;">
           <path d="M4 10h16M6 10V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3M7 10l-2 9M17 10l2 9M9 14h6"/>
         </svg>
-        <p>No hay comandas activas</p>
-      </div>
-    `;
+        <p>No hay mesas configuradas</p>
+      </div>`;
   }
-
   return visible.map(renderCard).join('');
 }
 
-// ── Settings panel ────────────────────────────────────────────────────────────
+function getVisibleTables() {
+  const { showOnlyOccupied, visibleTableIds } = state.config;
+  let tables = state.tables;
+  if (visibleTableIds !== null) tables = tables.filter(t => visibleTableIds.includes(t.id));
+  if (showOnlyOccupied)         tables = tables.filter(t => (t.items || []).length > 0);
+  return tables;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RENDER — Settings
+// ══════════════════════════════════════════════════════════════════════════════
+
 function renderToggleRow(id, label, sub, checked) {
   return `
     <div class="kds-toggle-row">
@@ -363,17 +442,31 @@ function renderToggleRow(id, label, sub, checked) {
         <input type="checkbox" id="${id}" ${checked ? 'checked' : ''}>
         <span class="kds-toggle-slider"></span>
       </label>
-    </div>
-  `;
+    </div>`;
+}
+
+function renderNumInput(id, label, value, min, max) {
+  return `
+    <div class="kds-numfield-row">
+      <div class="kds-toggle-label">${label}</div>
+      <div class="kds-numfield-wrap">
+        <button class="kds-threshold-btn" data-target="${id}" data-delta="-1">−</button>
+        <input class="kds-threshold-input kds-numpad-trigger"
+               id="${id}" type="number"
+               min="${min}" max="${max}" value="${value}"
+               data-label="${label}" readonly>
+        <button class="kds-threshold-btn" data-target="${id}" data-delta="1">+</button>
+      </div>
+    </div>`;
 }
 
 function renderSettingsPanel() {
   const { columns, showOnlyOccupied, visibleTableIds, yellowToRedMinutes,
-          fontSize, showPrices, soundOnNew, autoResetReady } = state.config;
+          collapsedItemCount, fontSize, showPrices, soundOnNew, autoResetReady } = state.config;
 
-  const diningTables = state.allTableDefs.filter(t => (t.type || 'table') === 'table');
+  const diningTables   = state.allTableDefs.filter(t => (t.type || 'table') === 'table');
   const takeawayTables = state.allTableDefs.filter(t => t.type === 'takeaway');
-  const isVisible = (id) => visibleTableIds === null || visibleTableIds.includes(id);
+  const isVisible      = (id) => visibleTableIds === null || visibleTableIds.includes(id);
 
   const tableCheckboxes = (list) => list.map(t => {
     const occupied = (t.items || []).length > 0;
@@ -381,22 +474,20 @@ function renderSettingsPanel() {
       <label class="kds-table-checkbox">
         <input type="checkbox" data-table-id="${t.id}" ${isVisible(t.id) ? 'checked' : ''}>
         <span class="kds-table-checkbox-label">${t.name}</span>
-        <span class="kds-table-checkbox-status ${occupied ? 'occupied' : ''}">${occupied ? '● Ocupada' : 'Libre'}</span>
-      </label>
-    `;
+        <span class="kds-table-checkbox-status ${occupied ? 'occupied' : ''}">
+          ${occupied ? '● Ocupada' : 'Libre'}
+        </span>
+      </label>`;
   }).join('');
 
   const colOptions = [2, 3, 4, 5].map(n => `
-    <button class="kds-col-btn ${n === columns ? 'active' : ''}" data-cols="${n}">
-      ${n}<span>${['','','2×4','3×4','4×3','5×2+'][n] || ''}</span>
-    </button>
+    <button class="kds-col-btn ${n === columns ? 'active' : ''}" data-cols="${n}">${n}</button>
   `).join('');
 
   const fontButtons = ['sm', 'md', 'lg'].map(s => `
     <button class="kds-font-btn ${fontSize === s ? 'active' : ''}" data-font="${s}">
-      ${{sm:'Pequeño', md:'Normal', lg:'Grande'}[s]}
-    </button>
-  `).join('');
+      ${{ sm: 'Pequeño', md: 'Normal', lg: 'Grande' }[s]}
+    </button>`).join('');
 
   return `
     <div class="kds-settings-overlay" id="kds-settings-overlay">
@@ -408,7 +499,7 @@ function renderSettingsPanel() {
         <div class="kds-settings-body">
 
           <div class="kds-settings-section">
-            <h3>Columnas de la cuadrícula</h3>
+            <h3>Cuadrícula — columnas</h3>
             <div class="kds-cols-grid">${colOptions}</div>
           </div>
 
@@ -418,28 +509,22 @@ function renderSettingsPanel() {
           </div>
 
           <div class="kds-settings-section">
-            <h3>Tiempos de alerta</h3>
-            <div class="kds-threshold-row">
-              <label class="kds-toggle-label" for="kds-threshold">Amarillo → Rojo (minutos)</label>
-              <div class="kds-threshold-controls">
-                <button class="kds-threshold-btn" data-delta="-1">−</button>
-                <input class="kds-threshold-input" id="kds-threshold" type="number"
-                  min="1" max="60" value="${yellowToRedMinutes}">
-                <button class="kds-threshold-btn" data-delta="1">+</button>
-              </div>
-            </div>
+            <h3>Temporizadores</h3>
+            ${renderNumInput('kds-threshold', 'Amarillo → Rojo (min)', yellowToRedMinutes, 1, 60)}
+            ${renderNumInput('kds-collapsed-count', 'Artículos en tarjetas reducidas', collapsedItemCount, 1, 20)}
             <div class="kds-threshold-hint">
-              Después de <strong>${yellowToRedMinutes} min</strong> sin marcar como listo,
-              la comanda se pondrá en rojo y parpadeará.
+              Las tarjetas <strong>vacías</strong> y <strong>listas</strong> muestran un máximo
+              de <strong>${collapsedItemCount} artículos</strong>. Las <strong>en preparación</strong>
+              muestran todos.
             </div>
           </div>
 
           <div class="kds-settings-section">
-            <h3>Opciones</h3>
+            <h3>Visualización y comportamiento</h3>
             ${renderToggleRow('kds-toggle-occupied', 'Solo mesas ocupadas', 'Oculta las mesas sin pedidos', showOnlyOccupied)}
             ${renderToggleRow('kds-toggle-prices', 'Mostrar precios por artículo', '', showPrices)}
-            ${renderToggleRow('kds-toggle-sound', 'Sonido al recibir comanda', 'Emite un pitido al llegar pedido nuevo', soundOnNew)}
-            ${renderToggleRow('kds-toggle-autoreset', 'Limpiar estado "Listo" automáticamente', 'Cuando el TPV cierra la comanda', autoResetReady)}
+            ${renderToggleRow('kds-toggle-sound', 'Sonido al recibir comanda', 'Pitido al llegar un pedido nuevo', soundOnNew)}
+            ${renderToggleRow('kds-toggle-autoreset', 'Limpiar "Listo" al cerrar comanda', 'Cuando el TPV cierra la mesa', autoResetReady)}
           </div>
 
           <div class="kds-settings-section">
@@ -462,28 +547,29 @@ function renderSettingsPanel() {
 
         </div>
       </div>
-    </div>
-  `;
+    </div>`;
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RENDER — Header
+// ══════════════════════════════════════════════════════════════════════════════
 
 function renderHeader() {
   const occupiedCount = state.tables.filter(t => (t.items || []).length > 0).length;
-  const readyCount = Object.values(state.tableKdsState).filter(s => s.status === 'ready').length;
-  const totalItems = state.tables.reduce((s, t) => s + (t.items || []).reduce((ss, i) => ss + i.qty, 0), 0);
+  const readyCount    = Object.values(state.tableKdsState).filter(s => s.status === 'ready').length;
+  const totalItems    = state.tables.reduce((s, t) => s + (t.items || []).reduce((ss, i) => ss + i.qty, 0), 0);
 
   return `
     <header class="kds-header">
       <div class="kds-logo">
         <svg class="kds-logo-icon" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M160 180H320C320 250 280 290 220 290H200C160 290 160 250 160 180Z" fill="url(#kdsGrad)"/>
-          <path d="M320 200H345C365 200 365 240 345 240H320" stroke="url(#kdsGrad)" stroke-width="20" stroke-linecap="round"/>
-          <path d="M195 140Q205 120 195 100" stroke="#10b981" stroke-width="12" stroke-linecap="round"/>
-          <path d="M240 135Q250 115 240 95" stroke="#10b981" stroke-width="12" stroke-linecap="round"/>
-          <path d="M285 140Q295 120 285 100" stroke="#10b981" stroke-width="12" stroke-linecap="round"/>
+          <path d="M160 180H320C320 250 280 290 220 290H200C160 290 160 250 160 180Z" fill="url(#kG)"/>
+          <path d="M320 200H345C365 200 365 240 345 240H320" stroke="url(#kG)" stroke-width="20" stroke-linecap="round"/>
+          <path d="M195 140Q205 120 195 100M240 135Q250 115 240 95M285 140Q295 120 285 100"
+                stroke="#10b981" stroke-width="12" stroke-linecap="round"/>
           <defs>
-            <linearGradient id="kdsGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#10b981"/>
-              <stop offset="100%" stop-color="#2563eb"/>
+            <linearGradient id="kG" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#2563eb"/>
             </linearGradient>
           </defs>
         </svg>
@@ -501,7 +587,7 @@ function renderHeader() {
           <span class="kds-stat ready-stat">Listos <strong>${readyCount}</strong></span>
           <span class="kds-stat">Artículos <strong>${totalItems}</strong></span>
         </div>
-        <div style="display:flex; align-items:center; gap:6px;">
+        <div style="display:flex;align-items:center;gap:6px;">
           <div class="kds-status-dot ${state.connected ? '' : 'disconnected'}" id="kds-status-dot"></div>
           <span class="kds-status-label">${state.connected ? 'En línea' : 'Reconectando...'}</span>
         </div>
@@ -509,16 +595,21 @@ function renderHeader() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;">
             <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33
+                     1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33
+                     l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1
+                     0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65
+                     1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0
+                     0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51
+                     1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
       </div>
-    </header>
-  `;
+    </header>`;
 }
 
+// ── Full render ───────────────────────────────────────────────────────────────
 function render() {
-  const settingsHtml = state.settingsOpen ? renderSettingsPanel() : '';
   root.innerHTML = `
     ${renderHeader()}
     <main class="kds-main">
@@ -526,22 +617,15 @@ function render() {
         ${renderGrid()}
       </div>
     </main>
-    ${settingsHtml}
+    ${state.settingsOpen ? renderSettingsPanel() : ''}
   `;
   bindEvents();
 }
 
-// ── Partial grid refresh (no settings panel rerender) ─────────────────────────
+// ── Partial grid refresh (keeps settings panel open) ──────────────────────────
 function refreshGrid() {
   const grid = document.getElementById('kds-grid');
-  if (grid) {
-    grid.style.setProperty('--kds-cols', state.config.columns);
-    grid.innerHTML = renderGrid();
-    bindCardEvents();
-  }
-  // Also refresh header stats
-  const header = document.querySelector('.kds-header');
-  if (header) header.outerHTML = renderHeader();
+  if (grid) { grid.innerHTML = renderGrid(); bindCardEvents(); }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -553,11 +637,7 @@ function bindCardEvents() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const tableId = parseInt(btn.dataset.tableId, 10);
-      if (btn.classList.contains('reopen')) {
-        reopenTable(tableId);
-      } else {
-        markTableReady(tableId);
-      }
+      btn.classList.contains('reopen') ? reopenTable(tableId) : markTableReady(tableId);
     });
   });
 }
@@ -569,7 +649,6 @@ function bindSettingsEvents() {
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) { state.settingsOpen = false; render(); }
   });
-
   document.getElementById('kds-settings-close')?.addEventListener('click', () => {
     state.settingsOpen = false; render();
   });
@@ -590,32 +669,39 @@ function bindSettingsEvents() {
     });
   });
 
-  // Threshold +/- buttons
-  overlay.querySelectorAll('.kds-threshold-btn').forEach(btn => {
+  // Stepper buttons (±) for numpad-trigger inputs
+  overlay.querySelectorAll('.kds-threshold-btn[data-target]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const delta = parseInt(btn.dataset.delta, 10);
-      const input = document.getElementById('kds-threshold');
-      let val = parseInt(input?.value || '10', 10) + delta;
-      val = Math.max(1, Math.min(60, val));
-      state.config.yellowToRedMinutes = val;
-      saveConfig(state.config); render();
+      const targetId = btn.dataset.target;
+      const input = document.getElementById(targetId);
+      if (!input) return;
+      let val = parseInt(input.value, 10) + parseInt(btn.dataset.delta, 10);
+      val = Math.max(parseInt(input.min, 10), Math.min(parseInt(input.max, 10), val));
+      input.value = String(val);
+      input.dispatchEvent(new Event('change', { bubbles: true }));
     });
   });
 
-  // Threshold direct input
+  // Numeric input changes
   document.getElementById('kds-threshold')?.addEventListener('change', (e) => {
     let val = parseInt(e.target.value, 10);
     val = Math.max(1, Math.min(60, val));
     state.config.yellowToRedMinutes = val;
     saveConfig(state.config); render();
   });
+  document.getElementById('kds-collapsed-count')?.addEventListener('change', (e) => {
+    let val = parseInt(e.target.value, 10);
+    val = Math.max(1, Math.min(20, val));
+    state.config.collapsedItemCount = val;
+    saveConfig(state.config); render();
+  });
 
   // Toggles
   const toggleMap = {
-    'kds-toggle-occupied':  'showOnlyOccupied',
-    'kds-toggle-prices':    'showPrices',
-    'kds-toggle-sound':     'soundOnNew',
-    'kds-toggle-autoreset': 'autoResetReady',
+    'kds-toggle-occupied':   'showOnlyOccupied',
+    'kds-toggle-prices':     'showPrices',
+    'kds-toggle-sound':      'soundOnNew',
+    'kds-toggle-autoreset':  'autoResetReady',
   };
   Object.entries(toggleMap).forEach(([id, key]) => {
     document.getElementById(id)?.addEventListener('change', (e) => {
@@ -643,25 +729,27 @@ function bindSettingsEvents() {
     });
   });
 
-  // Select all / none links
+  // Select all / none
   overlay.querySelectorAll('[data-select]').forEach(link => {
     link.addEventListener('click', () => {
-      const action = link.dataset.select;
+      const action    = link.dataset.select;
       const diningIds = state.allTableDefs.filter(t => (t.type || 'table') === 'table').map(t => t.id);
-      const takeawayIds = state.allTableDefs.filter(t => t.type === 'takeaway').map(t => t.id);
+      const takIds    = state.allTableDefs.filter(t => t.type === 'takeaway').map(t => t.id);
       let current = state.config.visibleTableIds === null
-        ? state.allTableDefs.map(t => t.id)
-        : [...state.config.visibleTableIds];
+        ? state.allTableDefs.map(t => t.id) : [...state.config.visibleTableIds];
 
-      if (action === 'all-dining')      diningIds.forEach(id => { if (!current.includes(id)) current.push(id); });
-      else if (action === 'none-dining')   current = current.filter(id => !diningIds.includes(id));
-      else if (action === 'all-takeaway')  takeawayIds.forEach(id => { if (!current.includes(id)) current.push(id); });
-      else if (action === 'none-takeaway') current = current.filter(id => !takeawayIds.includes(id));
+      if      (action === 'all-dining')     diningIds.forEach(id => { if (!current.includes(id)) current.push(id); });
+      else if (action === 'none-dining')    current = current.filter(id => !diningIds.includes(id));
+      else if (action === 'all-takeaway')   takIds.forEach(id => { if (!current.includes(id)) current.push(id); });
+      else if (action === 'none-takeaway')  current = current.filter(id => !takIds.includes(id));
 
       state.config.visibleTableIds = current.length === state.allTableDefs.length ? null : current;
       saveConfig(state.config); render();
     });
   });
+
+  // Attach numpad to all number inputs
+  attachNumpadListeners();
 }
 
 function bindEvents() {
@@ -677,12 +765,8 @@ function bindEvents() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function buildAllTableDefs() {
-  const dining = Array.from({ length: 12 }, (_, i) => ({
-    id: i + 1, name: `Mesa ${i + 1}`, type: 'table', items: []
-  }));
-  const takeaway = Array.from({ length: 8 }, (_, i) => ({
-    id: 101 + i, name: `Take Away ${i + 1}`, type: 'takeaway', items: []
-  }));
+  const dining   = Array.from({ length: 12 }, (_, i) => ({ id: i+1,     name: `Mesa ${i+1}`,      type: 'table',    items: [] }));
+  const takeaway = Array.from({ length: 8  }, (_, i) => ({ id: 101+i,   name: `Take Away ${i+1}`, type: 'takeaway', items: [] }));
   return [...dining, ...takeaway];
 }
 
@@ -704,45 +788,34 @@ async function loadInitialState() {
       updateTableStartTimes(merged);
       state.tables = merged;
     }
-  } catch (err) {
-    console.warn('[KDS] Error cargando estado inicial:', err);
-  }
+  } catch (err) { console.warn('[KDS] Error cargando estado:', err); }
 }
 
 function onRealtimeUpdate(newTables) {
   const merged = mergeTablesWithDefs(newTables);
-
-  // Check new/updated tables for status changes
   let needSound = false;
-  merged.forEach(table => {
-    const prevTable = state.tables.find(t => t.id === table.id);
-    const wasEmpty = !prevTable || (prevTable.items || []).length === 0;
-    const isOccupied = (table.items || []).length > 0;
 
-    if (isOccupied) {
-      const kds = getTableKds(table.id);
-      // Brand new order
+  merged.forEach(table => {
+    const prev     = state.tables.find(t => t.id === table.id);
+    const wasEmpty = !prev || (prev.items || []).length === 0;
+    const hasItems = (table.items || []).length > 0;
+
+    if (hasItems) {
       if (wasEmpty && state.config.soundOnNew) needSound = true;
-      // New items on a ready table
-      const reverted = checkForNewItemsOnReadyTable(table.id, table.items || []);
-      if (reverted) needSound = true;
-      // Auto-reset if table cleared and config says so
-    } else if (!isOccupied && state.config.autoResetReady) {
+      const reverted = checkForNewItemsOnReadyTable(table.id, table.items);
+      if (reverted && state.config.soundOnNew) needSound = true;
+    } else if (!hasItems && state.config.autoResetReady) {
       delete state.tableKdsState[table.id];
       saveTableKdsState();
     }
   });
 
   if (needSound) playBeep();
-
   updateTableStartTimes(merged);
   state.tables = merged;
 
-  if (!state.settingsOpen) {
-    render();
-  } else {
-    refreshGrid();
-  }
+  if (!state.settingsOpen) render();
+  else refreshGrid();
 }
 
 function subscribeRealtime() {
@@ -752,30 +825,18 @@ function subscribeRealtime() {
     .on('postgres_changes', {
       event: 'UPDATE', schema: 'public', table: 'tpv_state', filter: 'id=eq.global'
     }, (payload) => {
-      if (!payload.new) return;
-      const { tables } = payload.new;
-      if (Array.isArray(tables)) onRealtimeUpdate(tables);
+      if (payload.new && Array.isArray(payload.new.tables)) onRealtimeUpdate(payload.new.tables);
     })
     .subscribe((status) => {
       const wasConnected = state.connected;
       state.connected = status === 'SUBSCRIBED';
       if (wasConnected !== state.connected) {
-        const dot = document.getElementById('kds-status-dot');
+        const dot   = document.getElementById('kds-status-dot');
         const label = dot?.nextElementSibling;
-        if (dot) dot.className = `kds-status-dot ${state.connected ? '' : 'disconnected'}`;
+        if (dot)   dot.className = `kds-status-dot ${state.connected ? '' : 'disconnected'}`;
         if (label) label.textContent = state.connected ? 'En línea' : 'Reconectando...';
       }
     });
-}
-
-// Refresh card colors every 15s (time class can change)
-function startTimeRefresh() {
-  setInterval(() => {
-    if (!state.settingsOpen) {
-      const grid = document.getElementById('kds-grid');
-      if (grid) { grid.innerHTML = renderGrid(); bindCardEvents(); }
-    }
-  }, 15_000);
 }
 
 function startClock() {
@@ -783,6 +844,15 @@ function startClock() {
     const el = document.getElementById('kds-clock');
     if (el) el.textContent = formatClock();
   }, 1000);
+}
+
+function startTimeRefresh() {
+  setInterval(() => {
+    if (!state.settingsOpen) {
+      const grid = document.getElementById('kds-grid');
+      if (grid) { grid.innerHTML = renderGrid(); bindCardEvents(); }
+    }
+  }, 15_000);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
