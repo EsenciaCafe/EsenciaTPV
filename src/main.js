@@ -1085,7 +1085,7 @@ function renderQuickPayBar() {
 // 10. Active Ticket Panel (used in Tablet Split View)
 function renderInlineTicketPanel() {
   const table = store.getSelectedTable();
-  const tableName = table ? table.name : 'Venta Directa';
+  const tableName = table ? table.name : 'Nueva Comanda';
   const items = store.getActiveItems();
 
   const itemsList = items.map(item => `
@@ -1162,7 +1162,7 @@ function renderDrawerOverlay() {
   if (!isDrawerOpen) return '';
 
   const table = store.getSelectedTable();
-  const tableName = table ? table.name : 'Venta Directa';
+  const tableName = table ? table.name : 'Nueva Comanda';
   const items = store.getActiveItems();
 
   const itemsList = items.map(item => `
@@ -1250,8 +1250,6 @@ function render(state) {
   // Workspace Area
   let workspaceHTML = '';
   if (state.activeTab === 'mesas') {
-    workspaceHTML = renderTablesView(state);
-  } else if (state.activeTab === 'inicio' && state.selectedTableId === null) {
     workspaceHTML = renderTablesView(state);
   } else if (state.activeTab === 'inicio') {
     // POS View
@@ -1624,6 +1622,96 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
     }
 
     modal.remove();
+  });
+}
+
+// Modal para elegir en qué mesa guardar la comanda
+function showTableSelectionModal() {
+  const activeItems = store.getActiveItems();
+  if (activeItems.length === 0) {
+    showToast('No hay artículos en la comanda para guardar.', 'warning');
+    return;
+  }
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.id = 'table-selection-modal';
+
+  const tables = store.state.tables;
+  const diningTables = tables.filter(t => (t.type || 'table') === 'table');
+  const takeawayTables = tables.filter(t => t.type === 'takeaway');
+
+  const renderTableButtons = (tableList) => {
+    return tableList.map(table => {
+      const total = store.getTableTotal(table);
+      const itemCount = table.items.reduce((sum, item) => sum + item.qty, 0);
+      const isOccupied = itemCount > 0;
+      const statusClass = isOccupied ? 'occupied' : 'available';
+
+      return `
+        <button class="modal-table-btn ${statusClass}" data-table-id="${table.id}">
+          <span style="font-size: 0.95rem; font-weight: 700;">${table.name}</span>
+          ${isOccupied 
+            ? `<span class="table-badge" style="font-size: 0.7rem; font-weight: 700; color: var(--warning);">${total.toFixed(2)}€</span>` 
+            : `<span class="table-badge" style="font-size: 0.7rem; font-weight: 600; color: var(--text-muted);">Libre</span>`
+          }
+        </button>
+      `;
+    }).join('');
+  };
+
+  modal.innerHTML = `
+    <div class="modal-dialog" style="max-width: 520px; width:95%; max-height: 90vh; display:flex; flex-direction:column; padding: 20px;">
+      <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px; flex-shrink:0;">
+        <h3 style="margin:0; font-size:1.2rem; font-weight:700;">Guardar en Mesa</h3>
+      </div>
+      <div class="modal-body" style="overflow-y:auto; flex:1; padding-right:2px; display:flex; flex-direction:column; gap:16px;">
+        <div>
+          <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">Sala</div>
+          <div class="modal-table-grid">
+            ${renderTableButtons(diningTables)}
+          </div>
+        </div>
+        
+        <div>
+          <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">Para Llevar</div>
+          <div class="modal-table-grid">
+            ${renderTableButtons(takeawayTables)}
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px; border-top: 1px solid var(--border-color); padding-top: 12px; flex-shrink:0;">
+        <button class="btn btn-secondary" id="table-select-cancel-btn" style="height:40px; padding:0 16px; font-weight:600; border-radius:var(--border-radius-md); background:var(--bg-item); border:1px solid var(--border-color); color:var(--text-main); cursor:pointer; font-size:0.85rem;">Cancelar</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  // Bind cancel button
+  modal.querySelector('#table-select-cancel-btn').addEventListener('click', () => {
+    modal.remove();
+  });
+
+  // Bind table selection buttons
+  modal.querySelectorAll('.modal-table-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tableId = parseInt(btn.dataset.tableId, 10);
+      const table = store.state.tables.find(t => t.id === tableId);
+      const isOccupied = table && table.items.length > 0;
+
+      if (isOccupied) {
+        if (confirm(`La ${table.name} ya tiene una comanda activa. ¿Deseas añadir estos artículos a la cuenta existente?`)) {
+          store.saveActiveOrderToTable(tableId);
+          modal.remove();
+          showToast(`Comanda añadida a la ${table.name}.`, 'success');
+        }
+      } else {
+        store.saveActiveOrderToTable(tableId);
+        modal.remove();
+        showToast(`Comanda guardada en la ${table.name}.`, 'success');
+      }
+    });
   });
 }
 
@@ -2528,8 +2616,13 @@ function setupEventListeners(container) {
   const drawerSaveOrder = container.querySelector('#drawer-save-order-btn');
   if (drawerSaveOrder) {
     drawerSaveOrder.addEventListener('click', () => {
-      store.saveActiveOrder();
-      isDrawerOpen = false;
+      if (store.state.selectedTableId !== null) {
+        store.saveActiveOrder();
+        isDrawerOpen = false;
+      } else {
+        isDrawerOpen = false;
+        showTableSelectionModal();
+      }
     });
   }
 
@@ -2562,7 +2655,11 @@ function setupEventListeners(container) {
   const splitSaveOrder = container.querySelector('#split-save-order-btn');
   if (splitSaveOrder) {
     splitSaveOrder.addEventListener('click', () => {
-      store.saveActiveOrder();
+      if (store.state.selectedTableId !== null) {
+        store.saveActiveOrder();
+      } else {
+        showTableSelectionModal();
+      }
     });
   }
 

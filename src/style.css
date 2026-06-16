@@ -2057,3 +2057,60 @@ body.light-theme .btn-quick-pay {
   gap: 6px;
 }
 
+/* Modal Table Grid Selection Styles */
+.modal-table-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  max-height: 250px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+@media (max-width: 600px) {
+  .modal-table-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.modal-table-btn {
+  background: var(--bg-item);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  padding: 12px 6px;
+  color: var(--text-main);
+  font-family: var(--font-family);
+  font-weight: 600;
+  font-size: 0.82rem;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 68px;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+
+.modal-table-btn:active {
+  transform: scale(0.95);
+  background-color: var(--bg-item-active);
+}
+
+.modal-table-btn.occupied {
+  border-color: var(--warning);
+  background: rgba(255, 159, 10, 0.05);
+}
+
+.modal-table-btn.occupied .table-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--warning) !important;
+}
+
+.modal-table-btn.available {
+  border-color: var(--border-color);
+}
+

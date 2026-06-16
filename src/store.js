@@ -33,7 +33,7 @@ class Store {
     // Initial State — catalog data will be replaced by Supabase on loadFromSupabase()
     this.state = {
       theme: 'dark',
-      activeTab: 'mesas',           // 'mesas' | 'inicio' | 'transacciones' | 'ajustes'
+      activeTab: 'inicio',           // 'mesas' | 'inicio' | 'transacciones' | 'ajustes'
       activePosTab: 'atajos',       // 'teclado' | 'atajos' | 'productos'
       selectedTableId: null,        // null = Venta Directa (Bar)
       gridPath: ['root'],          // Navigation path for the 3x3 grid
@@ -696,7 +696,46 @@ class Store {
     }
 
     this.state.selectedTableId = null;
-    this.state.activeTab = 'mesas';
+    this.state.activeTab = 'inicio';
+    this.state.gridPath = ['root'];
+    this.notify();
+  }
+
+  saveActiveOrderToTable(tableId) {
+    const tableIndex = this.state.tables.findIndex(t => t.id === tableId);
+    if (tableIndex === -1) return;
+    const table = this.state.tables[tableIndex];
+
+    const tableItems = [...table.items];
+    const sourceItems = this.state.directSaleTicket.items;
+
+    sourceItems.forEach(sourceItem => {
+      const sortedOptions = [...(sourceItem.selectedOptions || [])].sort((a, b) => a.id.localeCompare(b.id));
+      const existingIdx = tableItems.findIndex(i => 
+        i.id === sourceItem.id && 
+        JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions)
+      );
+
+      if (existingIdx > -1) {
+        tableItems[existingIdx] = { 
+          ...tableItems[existingIdx], 
+          qty: tableItems[existingIdx].qty + sourceItem.qty 
+        };
+      } else {
+        tableItems.push({ ...sourceItem });
+      }
+    });
+
+    const status = tableItems.length > 0 ? 'occupied' : 'available';
+    this.state.tables[tableIndex] = { 
+      ...table, 
+      items: tableItems, 
+      status: status 
+    };
+
+    this.state.directSaleTicket.items = [];
+    this.state.selectedTableId = null;
+    this.state.activeTab = 'inicio';
     this.state.gridPath = ['root'];
     this.notify();
   }
@@ -732,7 +771,7 @@ class Store {
     } else {
       this.state.directSaleTicket.items = [];
     }
-    this.state.activeTab = 'mesas';
+    this.state.activeTab = 'inicio';
     this.state.gridPath = ['root'];
     this.notify();
   }
