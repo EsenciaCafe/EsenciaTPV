@@ -746,8 +746,21 @@ class Store {
     const table = this.state.tables[tableIndex];
 
     const tableItems = [...table.items];
-    const sourceItems = this.state.directSaleTicket.items;
+    
+    // Get source items (either from the current selected table or from the direct sale ticket)
+    let sourceItems = [];
+    const previousTableId = this.state.selectedTableId;
+    
+    if (previousTableId !== null) {
+      const prevTable = this.state.tables.find(t => t.id === previousTableId);
+      if (prevTable) {
+        sourceItems = [...prevTable.items];
+      }
+    } else {
+      sourceItems = [...this.state.directSaleTicket.items];
+    }
 
+    // Merge source items into target table items
     sourceItems.forEach(sourceItem => {
       const sortedOptions = [...(sourceItem.selectedOptions || [])].sort((a, b) => a.id.localeCompare(b.id));
       const existingIdx = tableItems.findIndex(i => 
@@ -765,6 +778,7 @@ class Store {
       }
     });
 
+    // Save target table state
     const status = tableItems.length > 0 ? 'occupied' : 'available';
     this.state.tables[tableIndex] = { 
       ...table, 
@@ -772,7 +786,23 @@ class Store {
       status: status 
     };
 
-    this.state.directSaleTicket.items = [];
+    // Clear source items (if target is different)
+    if (previousTableId !== null) {
+      if (previousTableId !== tableId) {
+        const prevTableIndex = this.state.tables.findIndex(t => t.id === previousTableId);
+        if (prevTableIndex > -1) {
+          this.state.tables[prevTableIndex] = {
+            ...this.state.tables[prevTableIndex],
+            items: [],
+            status: 'available'
+          };
+        }
+      }
+    } else {
+      this.state.directSaleTicket.items = [];
+    }
+
+    // Set selected table
     this.state.selectedTableId = tableId;
     this.state.activeTab = 'inicio';
     this.state.gridPath = ['root'];

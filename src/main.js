@@ -2353,9 +2353,11 @@ function setupEventListeners(container) {
       if (!Number.isNaN(tableId)) {
         isDrawerOpen = false;
         
-        const hasUnassignedItems = store.state.selectedTableId === null && store.state.directSaleTicket.items.length > 0;
+        const currentTableId = store.state.selectedTableId;
+        const activeItems = store.getActiveItems();
+        const hasActiveItems = activeItems.length > 0;
         
-        if (hasUnassignedItems) {
+        if (hasActiveItems && tableId !== currentTableId) {
           const table = store.state.tables.find(t => t.id === tableId);
           const isOccupied = table && table.items.length > 0;
           
@@ -2369,12 +2371,18 @@ function setupEventListeners(container) {
               }
             );
           } else {
-            // Assign automatically without prompt for empty table
-            store.assignActiveOrderToTable(tableId);
-            showToast(`Comanda asignada a la ${table.name}.`, 'success');
+            // Target table is empty
+            if (currentTableId === null) {
+              // Direct sale to empty table: move items automatically
+              store.assignActiveOrderToTable(tableId);
+              showToast(`Comanda asignada a la ${table.name}.`, 'success');
+            } else {
+              // Switch tables normally (leave items on the current table)
+              store.selectTable(tableId);
+            }
           }
         } else {
-          // Normal selection when cart is empty or we are already editing another table
+          // Normal selection when cart is empty or same table clicked
           store.selectTable(tableId);
         }
       }
@@ -2746,13 +2754,15 @@ function setupEventListeners(container) {
   if (settingTableSelect) {
     settingTableSelect.addEventListener('change', (e) => {
       const val = e.target.value;
+      const currentTableId = store.state.selectedTableId;
       if (val === 'direct') {
         store.selectTable(null);
       } else {
         const tableId = parseInt(val, 10);
-        const hasUnassignedItems = store.state.selectedTableId === null && store.state.directSaleTicket.items.length > 0;
+        const activeItems = store.getActiveItems();
+        const hasActiveItems = activeItems.length > 0;
         
-        if (hasUnassignedItems) {
+        if (hasActiveItems && tableId !== currentTableId) {
           const table = store.state.tables.find(t => t.id === tableId);
           const isOccupied = table && table.items.length > 0;
           
@@ -2765,14 +2775,22 @@ function setupEventListeners(container) {
                 showToast(`Comanda combinada con la ${table.name}.`, 'success');
               },
               () => {
-                settingTableSelect.value = 'direct';
+                settingTableSelect.value = currentTableId === null ? 'direct' : currentTableId;
               }
             );
           } else {
-            store.assignActiveOrderToTable(tableId);
-            showToast(`Comanda asignada a la ${table.name}.`, 'success');
+            // Target table is empty
+            if (currentTableId === null) {
+              // Direct sale to empty table: move items automatically
+              store.assignActiveOrderToTable(tableId);
+              showToast(`Comanda asignada a la ${table.name}.`, 'success');
+            } else {
+              // Switch tables normally (leave items on the current table)
+              store.selectTable(tableId);
+            }
           }
         } else {
+          // Normal selection when cart is empty or same table clicked
           store.selectTable(tableId);
         }
       }
