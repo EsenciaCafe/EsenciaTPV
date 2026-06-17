@@ -48,8 +48,12 @@ create table if not exists tpv_state (
   tables       jsonb not null default '[]',
   direct_sale  jsonb not null default '{}',
   transactions jsonb not null default '[]',
+  legal_data   jsonb not null default '{}',
   updated_at   timestamptz default now()
 );
+
+-- Asegurar columna legal_data si la tabla ya existía
+alter table tpv_state add column if not exists legal_data jsonb not null default '{}';
 
 -- Tickets públicos accesibles por token para QR
 create table if not exists receipt_tickets (

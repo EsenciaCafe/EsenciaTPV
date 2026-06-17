@@ -60,6 +60,16 @@ class Store {
       // Completed transactions history (in-memory, not persisted)
       transactions: [],
 
+      // Fiscal / Legal Details (Default to Tenerife IGIC 7%)
+      legal: {
+        businessName: "Esencia Café",
+        companyName: "Esencia Café S.L.",
+        nif: "B-87654321",
+        address: "Calle del Grano 12, 38001 Santa Cruz de Tenerife",
+        taxName: "IGIC",
+        taxRate: 7
+      },
+
       // ── CATALOG DATA (loaded from Supabase) ─────────────────
       categories: [],
       modifiers: [],
@@ -110,6 +120,10 @@ class Store {
       if (Array.isArray(savedState.transactions)) {
         this.state.transactions = savedState.transactions;
       }
+
+      if (savedState.legal) {
+        this.state.legal = { ...this.state.legal, ...savedState.legal };
+      }
     } catch (err) {
       console.warn('[Store] No se pudo restaurar el estado de mesas.', err);
     }
@@ -122,7 +136,8 @@ class Store {
         window.localStorage.setItem(DINING_STATE_STORAGE_KEY, JSON.stringify({
           tables: this.state.tables,
           directSaleTicket: this.state.directSaleTicket,
-          transactions: this.state.transactions
+          transactions: this.state.transactions,
+          legal: this.state.legal
         }));
       } catch (err) {
         console.warn('[Store] No se pudo guardar el estado de mesas en LocalStorage.', err);
@@ -130,7 +145,7 @@ class Store {
     }
 
     // 2. Save to Supabase (Realtime Sync)
-    saveTPVState(this.state.tables, this.state.directSaleTicket, this.state.transactions);
+    saveTPVState(this.state.tables, this.state.directSaleTicket, this.state.transactions, this.state.legal);
   }
 
   // Subscribe components
@@ -204,9 +219,15 @@ class Store {
           }
           if (tpvState.direct_sale) {
             this.state.directSaleTicket = tpvState.direct_sale;
+            if (tpvState.direct_sale.legal_data) {
+              this.state.legal = { ...this.state.legal, ...tpvState.direct_sale.legal_data };
+            }
           }
           if (Array.isArray(tpvState.transactions)) {
             this.state.transactions = tpvState.transactions;
+          }
+          if (tpvState.legal_data) {
+            this.state.legal = { ...this.state.legal, ...tpvState.legal_data };
           }
         }
       } catch (err) {
@@ -251,10 +272,17 @@ class Store {
             }
             if (newState.direct_sale && JSON.stringify(this.state.directSaleTicket) !== JSON.stringify(newState.direct_sale)) {
               this.state.directSaleTicket = newState.direct_sale;
+              if (newState.direct_sale.legal_data && JSON.stringify(this.state.legal) !== JSON.stringify(newState.direct_sale.legal_data)) {
+                this.state.legal = newState.direct_sale.legal_data;
+              }
               changed = true;
             }
             if (Array.isArray(newState.transactions) && JSON.stringify(this.state.transactions) !== JSON.stringify(newState.transactions)) {
               this.state.transactions = newState.transactions;
+              changed = true;
+            }
+            if (newState.legal_data && JSON.stringify(this.state.legal) !== JSON.stringify(newState.legal_data)) {
+              this.state.legal = newState.legal_data;
               changed = true;
             }
 
@@ -273,6 +301,15 @@ class Store {
     if (typeof window !== 'undefined' && window.localStorage) {
       window.localStorage.setItem('tpv-theme', theme);
     }
+    this.notify();
+  }
+
+  updateLegalSettings(legalData) {
+    this.state.legal = {
+      ...this.state.legal,
+      ...legalData,
+      taxRate: parseFloat(legalData.taxRate || 0)
+    };
     this.notify();
   }
 
@@ -1019,7 +1056,8 @@ class Store {
       itemsCount: itemsCount,
       items: transactionItems,
       createdAt: dateNow.toISOString(),
-      receiptToken: this.createReceiptToken()
+      receiptToken: this.createReceiptToken(),
+      legalData: { ...this.state.legal }
     };
 
     this.state.transactions.unshift(transaction);

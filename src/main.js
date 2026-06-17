@@ -467,8 +467,18 @@ function showTransactionDetailModal(transactionId) {
   if (!tx) return;
 
   const total = Number(tx.total || 0);
-  const baseImponible = total / 1.10;
-  const cuotaIva = total - baseImponible;
+  const legal = tx.legalData || {
+    businessName: "Esencia Café",
+    companyName: "Esencia Café S.L.",
+    nif: "B-87654321",
+    address: "Calle del Grano 12, 38001 Santa Cruz de Tenerife",
+    taxName: "IGIC",
+    taxRate: 7
+  };
+  const taxRate = Number(legal.taxRate || 0);
+  const taxName = legal.taxName || "IGIC";
+  const baseImponible = total / (1 + (taxRate / 100));
+  const cuotaImpuesto = total - baseImponible;
 
   const items = Array.isArray(tx.items) ? tx.items : [];
   const itemsHTML = items.length > 0 ? items.map(item => `
@@ -512,8 +522,9 @@ function showTransactionDetailModal(transactionId) {
           </button>
         </div>
         <div class="tx-detail-emitter" style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.4;">
-          Esencia Café S.L. · NIF: B-87654321<br>
-          Calle del Grano 12, 28001 Madrid
+          <strong>${legal.businessName || 'Esencia Café'}</strong><br>
+          ${legal.companyName || 'Esencia Café S.L.'} · NIF: ${legal.nif || 'B-87654321'}<br>
+          ${legal.address || 'Calle del Grano 12, 38001 Santa Cruz de Tenerife'}
         </div>
       </div>
       <div class="tx-detail-body">
@@ -541,12 +552,12 @@ function showTransactionDetailModal(transactionId) {
         
         <div class="tx-detail-tax-breakdown" style="padding: 12px 0; border-bottom: 1px dashed var(--border-color); display: grid; gap: 6px; font-size: 0.85rem; color: var(--text-muted);">
           <div style="display:flex; justify-content:space-between;">
-            <span>Base Imponible (10%)</span>
+            <span>Base Imponible (${taxRate}%)</span>
             <strong>${baseImponible.toFixed(2)}€</strong>
           </div>
           <div style="display:flex; justify-content:space-between;">
-            <span>IVA (10% Incluido)</span>
-            <strong>${cuotaIva.toFixed(2)}€</strong>
+            <span>${taxName} (${taxRate}% Incluido)</span>
+            <strong>${cuotaImpuesto.toFixed(2)}€</strong>
           </div>
         </div>
 
@@ -594,6 +605,10 @@ function renderAjustesView(state) {
         <div class="settings-tree-list">
           <button class="settings-tree-item" id="settings-to-articulos">
             <span>Artículos</span>
+            ${chevron}
+          </button>
+          <button class="settings-tree-item" id="settings-to-legal">
+            <span>Datos Fiscales</span>
             ${chevron}
           </button>
           
@@ -649,6 +664,54 @@ function renderAjustesView(state) {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Datos Fiscales Form
+  if (path.length === 1 && path[0] === 'legal') {
+    const legal = state.legal || {};
+    return `
+      <div class="view-container">
+        <div class="settings-nav-header">
+          <button class="settings-back-arrow-btn" id="settings-back-btn">
+            ${backArrow} Ajustes
+          </button>
+        </div>
+        <h2 class="settings-nav-title">Datos Fiscales</h2>
+        <div class="settings-editor-container">
+          <form id="settings-legal-form" style="display: grid; gap: 16px;">
+            <div class="editor-form-group">
+              <label class="editor-form-label">Nombre Comercial (Marca)</label>
+              <input type="text" class="editor-form-input" id="legal-business-name" value="${legal.businessName || ''}" required placeholder="Ej. Esencia Café">
+            </div>
+            <div class="editor-form-group">
+              <label class="editor-form-label">Razón Social</label>
+              <input type="text" class="editor-form-input" id="legal-company-name" value="${legal.companyName || ''}" required placeholder="Ej. Esencia Café S.L.">
+            </div>
+            <div class="editor-form-group">
+              <label class="editor-form-label">NIF / CIF</label>
+              <input type="text" class="editor-form-input" id="legal-nif" value="${legal.nif || ''}" required placeholder="Ej. B-87654321">
+            </div>
+            <div class="editor-form-group">
+              <label class="editor-form-label">Dirección</label>
+              <input type="text" class="editor-form-input" id="legal-address" value="${legal.address || ''}" required placeholder="Ej. Calle del Grano 12, 38001 Santa Cruz de Tenerife">
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+              <div class="editor-form-group">
+                <label class="editor-form-label">Nombre del Impuesto</label>
+                <input type="text" class="editor-form-input" id="legal-tax-name" value="${legal.taxName || ''}" required placeholder="Ej. IGIC">
+              </div>
+              <div class="editor-form-group">
+                <label class="editor-form-label">Porcentaje (%)</label>
+                <input type="number" step="0.01" min="0" class="editor-form-input" id="legal-tax-rate" value="${legal.taxRate ?? ''}" required placeholder="Ej. 7.00">
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary" style="margin-top: 16px; height: 44px; font-weight: 600; background-color: var(--secondary);">
+              Guardar Cambios
+            </button>
+          </form>
         </div>
       </div>
     `;
@@ -3239,6 +3302,43 @@ function setupEventListeners(container) {
   if (toArticulosBtn) {
     toArticulosBtn.addEventListener('click', () => {
       store.navigateSettings(['articulos']);
+    });
+  }
+
+  const toLegalBtn = container.querySelector('#settings-to-legal');
+  if (toLegalBtn) {
+    toLegalBtn.addEventListener('click', () => {
+      store.navigateSettings(['legal']);
+    });
+  }
+
+  const legalForm = container.querySelector('#settings-legal-form');
+  if (legalForm) {
+    legalForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const businessName = (container.querySelector('#legal-business-name')?.value || '').trim();
+      const companyName = (container.querySelector('#legal-company-name')?.value || '').trim();
+      const nif = (container.querySelector('#legal-nif')?.value || '').trim();
+      const address = (container.querySelector('#legal-address')?.value || '').trim();
+      const taxName = (container.querySelector('#legal-tax-name')?.value || '').trim();
+      const taxRate = parseFloat(container.querySelector('#legal-tax-rate')?.value || '0');
+
+      if (!businessName || !companyName || !nif || !address || !taxName || isNaN(taxRate)) {
+        showToast('Por favor, rellena todos los campos correctamente.', 'error');
+        return;
+      }
+
+      store.updateLegalSettings({
+        businessName,
+        companyName,
+        nif,
+        address,
+        taxName,
+        taxRate
+      });
+
+      store.navigateSettings([]);
+      showToast('Datos fiscales guardados y sincronizados.', 'success');
     });
   }
 

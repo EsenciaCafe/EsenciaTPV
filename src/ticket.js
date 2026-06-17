@@ -9,18 +9,28 @@ function formatMoney(value) {
 function renderTicket(tx) {
   const items = Array.isArray(tx.items) ? tx.items : [];
   const total = Number(tx.total || 0);
-  const baseImponible = total / 1.10;
-  const cuotaIva = total - baseImponible;
+  const legal = tx.legalData || {
+    businessName: "Esencia Café",
+    companyName: "Esencia Café S.L.",
+    nif: "B-87654321",
+    address: "Calle del Grano 12, 38001 Santa Cruz de Tenerife",
+    taxName: "IGIC",
+    taxRate: 7
+  };
+  const taxRate = Number(legal.taxRate || 0);
+  const taxName = legal.taxName || "IGIC";
+  const baseImponible = total / (1 + (taxRate / 100));
+  const cuotaImpuesto = total - baseImponible;
 
   root.innerHTML = `
     <section class="receipt-card" id="receipt-card">
       <header class="receipt-header">
-        <div class="receipt-brand">Esencia Café</div>
+        <div class="receipt-brand">${legal.businessName || 'Esencia Café'}</div>
         <div class="receipt-subtitle" style="font-size: 1.1rem; font-weight: 700; color: var(--text);">Factura Simplificada</div>
         <div class="receipt-emitter" style="font-size: 0.85rem; color: var(--muted); margin-top: 6px; line-height: 1.4;">
-          Esencia Café S.L.<br>
-          NIF: B-87654321<br>
-          Calle del Grano 12, 28001 Madrid
+          ${legal.companyName || 'Esencia Café S.L.'}<br>
+          NIF: ${legal.nif || 'B-87654321'}<br>
+          ${legal.address || 'Calle del Grano 12, 38001 Santa Cruz de Tenerife'}
         </div>
       </header>
 
@@ -69,12 +79,12 @@ function renderTicket(tx) {
 
       <div class="receipt-tax-breakdown" style="margin-top: 18px; padding-bottom: 14px; border-bottom: 1px dashed var(--border); display: grid; gap: 8px; font-size: 0.9rem; color: var(--muted); font-weight: 600;">
         <div style="display:flex; justify-content:space-between;">
-          <span>Base Imponible (10%)</span>
+          <span>Base Imponible (${taxRate}%)</span>
           <span>${formatMoney(baseImponible)}</span>
         </div>
         <div style="display:flex; justify-content:space-between;">
-          <span>IVA (10% Incluido)</span>
-          <span>${formatMoney(cuotaIva)}</span>
+          <span>${taxName} (${taxRate}% Incluido)</span>
+          <span>${formatMoney(cuotaImpuesto)}</span>
         </div>
       </div>
 
@@ -143,10 +153,21 @@ function buildReceiptImageCanvas(tx) {
     ctx.stroke();
   };
 
-  drawText('Esencia Café', width / 2, 42, 42, '800', 'center');
+  const legal = tx.legalData || {
+    businessName: "Esencia Café",
+    companyName: "Esencia Café S.L.",
+    nif: "B-87654321",
+    address: "Calle del Grano 12, 38001 Santa Cruz de Tenerife",
+    taxName: "IGIC",
+    taxRate: 7
+  };
+  const taxRate = Number(legal.taxRate || 0);
+  const taxName = legal.taxName || "IGIC";
+
+  drawText(legal.businessName || 'Esencia Café', width / 2, 42, 42, '800', 'center');
   drawText('Factura Simplificada', width / 2, 94, 22, '700', 'center', '#555555');
-  drawText('Esencia Café S.L. · NIF: B-87654321', width / 2, 126, 18, '500', 'center', '#666666');
-  drawText('Calle del Grano 12, 28001 Madrid', width / 2, 152, 18, '500', 'center', '#666666');
+  drawText(`${legal.companyName || 'Esencia Café S.L.'} · NIF: ${legal.nif || 'B-87654321'}`, width / 2, 126, 18, '500', 'center', '#666666');
+  drawText(legal.address || 'Calle del Grano 12, 38001 Santa Cruz de Tenerife', width / 2, 152, 18, '500', 'center', '#666666');
   drawRule(190);
 
   let y = 220;
@@ -180,19 +201,19 @@ function buildReceiptImageCanvas(tx) {
   }
 
   const total = Number(tx.total || 0);
-  const baseImponible = total / 1.10;
-  const cuotaIva = total - baseImponible;
+  const baseImponible = total / (1 + (taxRate / 100));
+  const cuotaImpuesto = total - baseImponible;
 
   y += 18;
   drawRule(y);
   y += 28;
 
-  drawText('Base Imponible (10%)', padding, y, 20, '600', 'left', '#666666');
+  drawText(`Base Imponible (${taxRate}%)`, padding, y, 20, '600', 'left', '#666666');
   drawText(formatMoney(baseImponible), width - padding, y, 20, '600', 'right', '#666666');
   y += 32;
 
-  drawText('IVA (10% Incluido)', padding, y, 20, '600', 'left', '#666666');
-  drawText(formatMoney(cuotaIva), width - padding, y, 20, '600', 'right', '#666666');
+  drawText(`${taxName} (${taxRate}% Incluido)`, padding, y, 20, '600', 'left', '#666666');
+  drawText(formatMoney(cuotaImpuesto), width - padding, y, 20, '600', 'right', '#666666');
   y += 32;
 
   drawRule(y);

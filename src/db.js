@@ -262,18 +262,41 @@ export async function loadTPVState() {
   return data;
 }
 
-export async function saveTPVState(tables, directSale, transactions) {
+export async function saveTPVState(tables, directSale, transactions, legal) {
+  const directSaleWithFallback = {
+    ...directSale,
+    legal_data: legal
+  };
+
   const { error } = await supabase
     .from('tpv_state')
     .upsert({
       id: 'global',
       tables,
-      direct_sale: directSale,
+      direct_sale: directSaleWithFallback,
       transactions,
+      legal_data: legal,
       updated_at: new Date().toISOString()
     }, { onConflict: 'id' });
 
   if (error) {
-    console.warn('[DB] Error saving TPV state to Supabase:', error.message);
+    // 42703: undefined_column (legal_data column doesn't exist yet on remote db)
+    if (error.code === '42703') {
+      const { error: fallbackError } = await supabase
+        .from('tpv_state')
+        .upsert({
+          id: 'global',
+          tables,
+          direct_sale: directSaleWithFallback,
+          transactions,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'id' });
+
+      if (fallbackError) {
+        console.warn('[DB] Error saving TPV state to Supabase (fallback):', fallbackError.message);
+      }
+    } else {
+      console.warn('[DB] Error saving TPV state to Supabase:', error.message);
+    }
   }
 }

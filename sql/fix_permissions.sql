@@ -33,6 +33,7 @@ union all
 select 'grid_items',    count(*) from grid_items;
 
 -- Deshabilitar RLS y dar permisos para el estado del TPV
+alter table if exists tpv_state add column if not exists legal_data jsonb not null default '{}';
 alter table if exists tpv_state disable row level security;
 grant all on tpv_state to anon;
 
