@@ -8,7 +8,8 @@ import {
   upsertGridItems,
   deleteGridItems,
   loadTPVState,
-  saveTPVState
+  saveTPVState,
+  upsertReceiptTicket
 } from './db.js';
 import { supabase } from './supabase.js';
 
@@ -143,6 +144,36 @@ class Store {
   notify() {
     this.persistDiningState();
     this.listeners.forEach(listener => listener(this.state));
+  }
+
+  createReceiptToken() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      return crypto.randomUUID().replace(/-/g, '');
+    }
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+  }
+
+  publishReceiptTicket(transaction) {
+    upsertReceiptTicket(transaction).catch(err => {
+      console.warn('[Store] No se pudo publicar el ticket público.', err);
+    });
+  }
+
+  ensureTransactionReceiptToken(transactionId) {
+    const txIndex = this.state.transactions.findIndex(tx => tx.id === transactionId);
+    if (txIndex === -1) return null;
+
+    if (!this.state.transactions[txIndex].receiptToken) {
+      this.state.transactions[txIndex] = {
+        ...this.state.transactions[txIndex],
+        receiptToken: this.createReceiptToken()
+      };
+      this.notify();
+    }
+
+    this.publishReceiptTicket(this.state.transactions[txIndex]);
+
+    return this.state.transactions[txIndex];
   }
 
   // ─────────────────────────────────────────
@@ -964,19 +995,35 @@ class Store {
     const itemsCount = items.reduce((sum, i) => sum + i.qty, 0);
     const selectedTable = this.getSelectedTable();
     const tableName = selectedTable ? selectedTable.name : 'Venta Directa';
+    const transactionItems = items.map(item => ({
+      ticketItemId: item.ticketItemId,
+      id: item.id,
+      name: item.name,
+      price: item.price,
+      qty: item.qty,
+      selectedOptions: (item.selectedOptions || []).map(opt => ({ ...opt })),
+      total: parseFloat(this.getItemTotal(item).toFixed(2))
+    }));
 
     const txId = `TX-${1000 + this.state.transactions.length + 1}`;
     const dateNow = new Date();
+    const dateStr = `${String(dateNow.getDate()).padStart(2, '0')}/${String(dateNow.getMonth() + 1).padStart(2, '0')}/${dateNow.getFullYear()}`;
     const timeStr = `${String(dateNow.getHours()).padStart(2, '0')}:${String(dateNow.getMinutes()).padStart(2, '0')}`;
     
-    this.state.transactions.unshift({
+    const transaction = {
       id: txId,
-      date: `Hoy, ${timeStr}`,
+      date: `${dateStr}, ${timeStr}`,
       table: tableName,
       total: parseFloat(total.toFixed(2)),
       paymentMethod: paymentMethod,
-      itemsCount: itemsCount
-    });
+      itemsCount: itemsCount,
+      items: transactionItems,
+      createdAt: dateNow.toISOString(),
+      receiptToken: this.createReceiptToken()
+    };
+
+    this.state.transactions.unshift(transaction);
+    this.publishReceiptTicket(transaction);
 
     if (this.state.selectedTableId !== null) {
       const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);

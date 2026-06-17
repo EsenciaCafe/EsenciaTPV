@@ -1,4 +1,5 @@
 import { store } from './store.js';
+import QRCode from 'qrcode';
 
 // SVG Icons
 const ICONS = {
@@ -376,7 +377,7 @@ function renderTablesView(state) {
 // 7. Transacciones View
 function renderTransaccionesView(state) {
   const rows = state.transactions.map(tx => `
-    <div class="tx-card">
+    <button class="tx-card" data-transaction-id="${tx.id}">
       <div class="tx-meta">
         <span class="tx-table-name">${tx.table}</span>
         <span class="tx-date-method">${tx.date} • ${tx.paymentMethod}</span>
@@ -385,7 +386,7 @@ function renderTransaccionesView(state) {
         <span class="tx-amount">${tx.total.toFixed(2)}€</span>
         <div class="tx-qty">${tx.itemsCount} art.</div>
       </div>
-    </div>
+    </button>
   `).join('');
 
   return `
@@ -396,6 +397,178 @@ function renderTransaccionesView(state) {
       </div>
     </div>
   `;
+}
+
+async function showReceiptQrModal(transactionId) {
+  const tx = store.ensureTransactionReceiptToken(transactionId);
+  if (!tx?.receiptToken) {
+    showToast('No se pudo generar el enlace del ticket.', 'error');
+    return;
+  }
+
+  const ticketUrl = `${window.location.origin}/ticket.html?t=${encodeURIComponent(tx.receiptToken)}`;
+  let qrDataUrl = '';
+
+  try {
+    qrDataUrl = await QRCode.toDataURL(ticketUrl, {
+      width: 280,
+      margin: 1,
+      color: {
+        dark: '#111111',
+        light: '#ffffff'
+      }
+    });
+  } catch (err) {
+    showToast('No se pudo generar el QR del ticket.', 'error');
+    return;
+  }
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.innerHTML = `
+    <div class="modal-dialog receipt-qr-dialog">
+      <div class="modal-header">
+        <h3>Ticket para cliente</h3>
+        <button class="modal-close-btn tx-detail-close-btn" id="receipt-qr-close-btn" aria-label="Cerrar QR">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <path d="M6 6l12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+      <div class="receipt-qr-body">
+        <img class="receipt-qr-image" src="${qrDataUrl}" alt="QR del ticket ${tx.id}">
+        <div class="receipt-qr-meta">
+          <strong>${tx.id}</strong>
+          <span>${tx.date} • ${Number(tx.total || 0).toFixed(2)}€</span>
+        </div>
+        <p>El cliente puede escanear este QR para ver el ticket en su móvil y descargarlo si lo necesita.</p>
+        <button class="pay-btn-opt" id="receipt-copy-link-btn">Copiar enlace</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+  modal.querySelector('#receipt-qr-close-btn').addEventListener('click', () => modal.remove());
+  modal.querySelector('#receipt-copy-link-btn').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(ticketUrl);
+      showToast('Enlace del ticket copiado.', 'success');
+    } catch (err) {
+      window.prompt('Copia el enlace del ticket:', ticketUrl);
+    }
+  });
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) modal.remove();
+  });
+}
+
+function showTransactionDetailModal(transactionId) {
+  const tx = store.state.transactions.find(item => item.id === transactionId);
+  if (!tx) return;
+
+  const total = Number(tx.total || 0);
+  const baseImponible = total / 1.10;
+  const cuotaIva = total - baseImponible;
+
+  const items = Array.isArray(tx.items) ? tx.items : [];
+  const itemsHTML = items.length > 0 ? items.map(item => `
+    <div class="tx-detail-item">
+      <div class="tx-detail-item-main">
+        <div>
+          <span class="tx-detail-item-name">${item.name}</span>
+          <span class="tx-detail-item-unit">${Number(item.price || 0).toFixed(2)}€ x ud.</span>
+          ${(item.selectedOptions || []).length > 0 ? `
+            <div class="tx-detail-options">
+              ${(item.selectedOptions || []).map(opt => `
+                <div class="tx-detail-option-row">
+                  <span>+ ${opt.name} (x${opt.qty})</span>
+                  <span>+${(Number(opt.price || 0) * Number(opt.qty || 1)).toFixed(2)}€</span>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+        <span class="tx-detail-qty">x${item.qty}</span>
+      </div>
+      <strong>${Number(item.total || 0).toFixed(2)}€</strong>
+    </div>
+  `).join('') : `
+    <div class="tx-detail-empty">
+      Esta transacción se registró antes de guardar el detalle de artículos.
+    </div>
+  `;
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.innerHTML = `
+    <div class="modal-dialog tx-detail-dialog">
+      <div class="modal-header" style="flex-direction: column; align-items: flex-start; gap: 8px;">
+        <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+          <h3 style="margin:0;">Factura Simplificada</h3>
+          <button class="modal-close-btn tx-detail-close-btn" id="tx-detail-close-btn" aria-label="Cerrar detalle" style="margin:0;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
+        </div>
+        <div class="tx-detail-emitter" style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.4;">
+          Esencia Café S.L. · NIF: B-87654321<br>
+          Calle del Grano 12, 28001 Madrid
+        </div>
+      </div>
+      <div class="tx-detail-body">
+        <div class="tx-detail-summary">
+          <div>
+            <span>Factura Nº</span>
+            <strong>${tx.id}</strong>
+          </div>
+          <div>
+            <span>Fecha</span>
+            <strong>${tx.date}</strong>
+          </div>
+          <div>
+            <span>Método de pago</span>
+            <strong>${tx.paymentMethod}</strong>
+          </div>
+          <div>
+            <span>Artículos</span>
+            <strong>${tx.itemsCount} art.</strong>
+          </div>
+        </div>
+        <div class="tx-detail-list">
+          ${itemsHTML}
+        </div>
+        
+        <div class="tx-detail-tax-breakdown" style="padding: 12px 0; border-bottom: 1px dashed var(--border-color); display: grid; gap: 6px; font-size: 0.85rem; color: var(--text-muted);">
+          <div style="display:flex; justify-content:space-between;">
+            <span>Base Imponible (10%)</span>
+            <strong>${baseImponible.toFixed(2)}€</strong>
+          </div>
+          <div style="display:flex; justify-content:space-between;">
+            <span>IVA (10% Incluido)</span>
+            <strong>${cuotaIva.toFixed(2)}€</strong>
+          </div>
+        </div>
+
+        <div class="tx-detail-total">
+          <span>Total cobrado</span>
+          <strong>${total.toFixed(2)}€</strong>
+        </div>
+        <button class="pay-btn-opt primary tx-detail-share-btn" id="tx-detail-share-btn">
+          Mostrar QR del ticket
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+  modal.querySelector('#tx-detail-close-btn').addEventListener('click', () => modal.remove());
+  modal.querySelector('#tx-detail-share-btn').addEventListener('click', () => {
+    showReceiptQrModal(tx.id);
+  });
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) modal.remove();
+  });
 }
 
 // 8. Ajustes View
@@ -2587,6 +2760,12 @@ function setupEventListeners(container) {
           store.selectTable(tableId);
         }
       }
+    });
+  });
+
+  container.querySelectorAll('[data-transaction-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      showTransactionDetailModal(btn.dataset.transactionId);
     });
   });
 

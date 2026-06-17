@@ -50,3 +50,11 @@ create table if not exists tpv_state (
   transactions jsonb not null default '[]',
   updated_at   timestamptz default now()
 );
+
+-- Tickets públicos accesibles por token para QR
+create table if not exists receipt_tickets (
+  token          text primary key,
+  transaction_id text not null,
+  payload        jsonb not null,
+  created_at     timestamptz default now()
+);

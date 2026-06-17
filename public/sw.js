@@ -1,8 +1,11 @@
-const CACHE_NAME = 'tpv-cache-v14';
+const CACHE_NAME = 'tpv-cache-v18';
 const ASSETS = [
   '/',
   '/index.html',
+  '/ticket.html',
   '/src/main.js',
+  '/src/ticket.js',
+  '/src/ticket.css',
   '/src/style.css',
   '/src/store.js',
   '/manifest.webmanifest',

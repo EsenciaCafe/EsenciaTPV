@@ -210,6 +210,30 @@ export async function deleteGridItems(gridKey) {
 // TPV STATE (Realtime Sync)
 // ─────────────────────────────────────────
 
+export async function upsertReceiptTicket(transaction) {
+  if (!transaction?.receiptToken) return;
+
+  const { error } = await supabase.from('receipt_tickets').upsert({
+    token: transaction.receiptToken,
+    transaction_id: transaction.id,
+    payload: transaction,
+    created_at: transaction.createdAt || new Date().toISOString()
+  }, { onConflict: 'token' });
+
+  if (error) notifyDbError('upsertReceiptTicket', error.message);
+}
+
+export async function loadReceiptTicket(token) {
+  const { data, error } = await supabase
+    .from('receipt_tickets')
+    .select('payload')
+    .eq('token', token)
+    .single();
+
+  if (error) throw error;
+  return data?.payload || null;
+}
+
 export async function loadTPVState() {
   const { data, error } = await supabase
     .from('tpv_state')

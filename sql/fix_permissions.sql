@@ -36,6 +36,10 @@ select 'grid_items',    count(*) from grid_items;
 alter table if exists tpv_state disable row level security;
 grant all on tpv_state to anon;
 
+-- Permisos para tickets públicos por QR
+alter table if exists receipt_tickets disable row level security;
+grant all on receipt_tickets to anon;
+
 -- Habilitar tiempo real para esta tabla de forma segura
 do $$
 begin

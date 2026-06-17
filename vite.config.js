@@ -14,7 +14,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
-        kds: resolve(__dirname, 'kds.html')
+        kds: resolve(__dirname, 'kds.html'),
+        ticket: resolve(__dirname, 'ticket.html')
       }
     }
   }
