@@ -1081,6 +1081,16 @@ function renderAjustesView(state) {
             </div>
           </div>
 
+          <!-- Export Actions -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 16px 16px 16px;">
+            <button class="btn btn-secondary" id="btn-export-diario" style="height: 40px; font-size: 0.85rem; font-weight: 600;">
+              📄 Exportar Diario (CSV)
+            </button>
+            <button class="btn btn-secondary" id="btn-export-mensual" style="height: 40px; font-size: 0.85rem; font-weight: 600;">
+              📅 Exportar Mensual (CSV)
+            </button>
+          </div>
+
           <!-- 2. Time-Period Tabs -->
           <div class="reports-tabs-bar">
             <button class="reports-tab-btn ${selectedReportsTab === 'horas' ? 'active' : ''}" data-tab="horas">Por Horas</button>
@@ -3166,6 +3176,116 @@ function showPaymentModal(totalAmount) {
   document.body.appendChild(modal);
 }
 
+// Helper functions for sales reports export
+function aggregateDailyData(transactions, getTxDate) {
+  const groups = {};
+  transactions.forEach(tx => {
+    const d = getTxDate(tx);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const key = `${yyyy}-${mm}-${dd}`;
+    
+    if (!groups[key]) {
+      groups[key] = {
+        dateStr: `${dd}/${mm}/${yyyy}`,
+        count: 0,
+        base: 0,
+        tax: 0,
+        cash: 0,
+        card: 0,
+        total: 0
+      };
+    }
+    
+    const total = Number(tx.total || 0);
+    const legal = tx.legalData || { taxRate: 7 };
+    const rate = Number(legal.taxRate || 0);
+    const base = total / (1 + (rate / 100));
+    const tax = total - base;
+    
+    groups[key].count += 1;
+    groups[key].base += base;
+    groups[key].tax += tax;
+    groups[key].total += total;
+    
+    const method = (tx.paymentMethod || '').toLowerCase().trim();
+    if (method.includes('efectivo')) {
+      groups[key].cash += total;
+    } else {
+      groups[key].card += total;
+    }
+  });
+  
+  return Object.keys(groups).sort().map(k => groups[k]);
+}
+
+function aggregateMonthlyData(transactions, getTxDate) {
+  const groups = {};
+  transactions.forEach(tx => {
+    const d = getTxDate(tx);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const key = `${yyyy}-${mm}`;
+    
+    if (!groups[key]) {
+      const monthLabel = d.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+      groups[key] = {
+        monthStr: monthLabel,
+        count: 0,
+        base: 0,
+        tax: 0,
+        cash: 0,
+        card: 0,
+        total: 0
+      };
+    }
+    
+    const total = Number(tx.total || 0);
+    const legal = tx.legalData || { taxRate: 7 };
+    const rate = Number(legal.taxRate || 0);
+    const base = total / (1 + (rate / 100));
+    const tax = total - base;
+    
+    groups[key].count += 1;
+    groups[key].base += base;
+    groups[key].tax += tax;
+    groups[key].total += total;
+    
+    const method = (tx.paymentMethod || '').toLowerCase().trim();
+    if (method.includes('efectivo')) {
+      groups[key].cash += total;
+    } else {
+      groups[key].card += total;
+    }
+  });
+  
+  return Object.keys(groups).sort().map(k => groups[k]);
+}
+
+function triggerCSVDownload(filename, headers, rows) {
+  const csvRows = [headers.join(';')];
+  rows.forEach(row => {
+    const formattedRow = row.map(val => {
+      if (typeof val === 'number') {
+        return val.toFixed(2).replace('.', ',');
+      }
+      return `"${String(val).replace(/"/g, '""')}"`;
+    });
+    csvRows.push(formattedRow.join(';'));
+  });
+  
+  const csvContent = '\ufeff' + csvRows.join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 // Event bindings
 function setupEventListeners(container) {
   // Bottom Nav tabs
@@ -3751,6 +3871,68 @@ function setupEventListeners(container) {
       store.notify();
     });
   });
+
+  const btnExportDiario = container.querySelector('#btn-export-diario');
+  if (btnExportDiario) {
+    btnExportDiario.addEventListener('click', () => {
+      const getTxDate = (tx) => {
+        if (tx.createdAt) return new Date(tx.createdAt);
+        if (tx.date) {
+          const [datePart, timePart] = tx.date.split(', ');
+          const [day, month, year] = datePart.split('/').map(Number);
+          const [hour, minute] = timePart.split(':').map(Number);
+          return new Date(year, month - 1, day, hour, minute);
+        }
+        return new Date();
+      };
+
+      const dailyData = aggregateDailyData(store.state.transactions, getTxDate);
+      const headers = ['Fecha', 'Pedidos', 'Base Imponible (EUR)', 'Impuesto (EUR)', 'Efectivo (EUR)', 'Tarjeta (EUR)', 'Total Facturado (EUR)'];
+      const rows = dailyData.map(d => [
+        d.dateStr,
+        d.count,
+        d.base,
+        d.tax,
+        d.cash,
+        d.card,
+        d.total
+      ]);
+      
+      triggerCSVDownload('informe_diario_facturacion.csv', headers, rows);
+      showToast('Informe Diario exportado con éxito.', 'success');
+    });
+  }
+
+  const btnExportMensual = container.querySelector('#btn-export-mensual');
+  if (btnExportMensual) {
+    btnExportMensual.addEventListener('click', () => {
+      const getTxDate = (tx) => {
+        if (tx.createdAt) return new Date(tx.createdAt);
+        if (tx.date) {
+          const [datePart, timePart] = tx.date.split(', ');
+          const [day, month, year] = datePart.split('/').map(Number);
+          const [hour, minute] = timePart.split(':').map(Number);
+          return new Date(year, month - 1, day, hour, minute);
+        }
+        return new Date();
+      };
+
+      const monthlyData = aggregateMonthlyData(store.state.transactions, getTxDate);
+      const headers = ['Mes', 'Pedidos', 'Base Imponible (EUR)', 'Impuesto (EUR)', 'Efectivo (EUR)', 'Tarjeta (EUR)', 'Total Facturado (EUR)'];
+      const rows = monthlyData.map(d => [
+        d.monthStr,
+        d.count,
+        d.base,
+        d.tax,
+        d.cash,
+        d.card,
+        d.total
+      ]);
+      
+      triggerCSVDownload('informe_mensual_facturacion.csv', headers, rows);
+      showToast('Informe Mensual exportado con éxito.', 'success');
+    });
+  }
 
   const toTodosArticulosBtn = container.querySelector('#settings-to-todos-articulos');
   if (toTodosArticulosBtn) {
