@@ -1084,10 +1084,10 @@ function renderAjustesView(state) {
           <!-- Export Actions -->
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 16px 16px 16px;">
             <button class="btn btn-secondary" id="btn-export-diario" style="height: 40px; font-size: 0.85rem; font-weight: 600;">
-              📄 Exportar Diario (CSV)
+              📄 Exportar Diario (PDF)
             </button>
             <button class="btn btn-secondary" id="btn-export-mensual" style="height: 40px; font-size: 0.85rem; font-weight: 600;">
-              📅 Exportar Mensual (CSV)
+              📅 Exportar Mensual (PDF)
             </button>
           </div>
 
@@ -3286,6 +3286,169 @@ function triggerCSVDownload(filename, headers, rows) {
   document.body.removeChild(link);
 }
 
+function printReportPDF(title, headers, rows, legal) {
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    showToast('Por favor, permite las ventanas emergentes para descargar el PDF.', 'warning');
+    return;
+  }
+  
+  const headersHTML = headers.map(h => `<th style="text-align:left; border-bottom: 2px solid #333; padding: 10px 8px; font-size: 0.85rem; font-weight: 700; text-transform: uppercase;">${h}</th>`).join('');
+  const rowsHTML = rows.map((row, index) => {
+    const cells = row.map((val, cellIndex) => {
+      // Formatter: keep first column (period label) clean, second column (orders count) formatted as integer, format euros for others
+      let displayVal = val;
+      if (cellIndex === 1 && typeof val === 'number') {
+        displayVal = new Intl.NumberFormat('es-ES').format(val);
+      } else if (cellIndex > 1 && typeof val === 'number') {
+        displayVal = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(val);
+      }
+      return `<td style="border-bottom: 1px solid #ddd; padding: 8px; font-size: 0.85rem;">${displayVal}</td>`;
+    }).join('');
+    const background = index % 2 === 0 ? 'background-color: #fafafa;' : '';
+    return `<tr style="${background}">${cells}</tr>`;
+  }).join('');
+
+  // Calculate totals
+  let totalCount = 0;
+  let totalBase = 0;
+  let totalTax = 0;
+  let totalCash = 0;
+  let totalCard = 0;
+  let totalRevenue = 0;
+
+  rows.forEach(r => {
+    totalCount += Number(r[1] || 0);
+    totalBase += Number(r[2] || 0);
+    totalTax += Number(r[3] || 0);
+    totalCash += Number(r[4] || 0);
+    totalCard += Number(r[5] || 0);
+    totalRevenue += Number(r[6] || 0);
+  });
+
+  const totalsHTML = `
+    <tr style="background-color: #f1f5f9; font-weight: bold; border-top: 2px solid #333;">
+      <td style="padding: 10px 8px; font-size: 0.85rem;">TOTALES</td>
+      <td style="padding: 10px 8px; font-size: 0.85rem;">${new Intl.NumberFormat('es-ES').format(totalCount)}</td>
+      <td style="padding: 10px 8px; font-size: 0.85rem;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalBase)}</td>
+      <td style="padding: 10px 8px; font-size: 0.85rem;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalTax)}</td>
+      <td style="padding: 10px 8px; font-size: 0.85rem;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalCash)}</td>
+      <td style="padding: 10px 8px; font-size: 0.85rem;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalCard)}</td>
+      <td style="padding: 10px 8px; font-size: 0.85rem; color: #059669;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalRevenue)}</td>
+    </tr>
+  `;
+
+  const dateNow = new Date();
+  const dateString = dateNow.toLocaleString('es-ES');
+
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>${title}</title>
+        <meta charset="utf-8">
+        <style>
+          body {
+            font-family: Arial, Helvetica, sans-serif;
+            color: #1e293b;
+            padding: 40px;
+            margin: 0;
+            line-height: 1.5;
+          }
+          .header-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+          }
+          .title-area h1 {
+            margin: 0 0 6px 0;
+            font-size: 1.8rem;
+            color: #0f172a;
+          }
+          .title-area p {
+            margin: 0;
+            font-size: 0.9rem;
+            color: #64748b;
+          }
+          .legal-area {
+            text-align: right;
+            font-size: 0.85rem;
+            color: #475569;
+            line-height: 1.4;
+          }
+          .legal-area strong {
+            color: #0f172a;
+            font-size: 1rem;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+          }
+          tr {
+            page-break-inside: avoid;
+          }
+          .footer-info {
+            margin-top: 40px;
+            font-size: 0.75rem;
+            color: #94a3b8;
+            display: flex;
+            justify-content: space-between;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 15px;
+          }
+          @media print {
+            body { padding: 0; }
+            @page { margin: 1.5cm; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header-container">
+          <div class="title-area">
+            <h1>${title}</h1>
+            <p>Generado el ${dateString}</p>
+          </div>
+          <div class="legal-area">
+            <strong>${legal.businessName || 'Esencia Café'}</strong><br>
+            ${legal.companyName || 'Esencia Café S.L.'}<br>
+            NIF: ${legal.nif || 'B-87654321'}<br>
+            ${legal.address || 'Santa Cruz de Tenerife'}
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>${headersHTML}</tr>
+          </thead>
+          <tbody>
+            ${rowsHTML}
+            ${totalsHTML}
+          </tbody>
+        </table>
+
+        <div class="footer-info">
+          <span>Esencia TPV - Sistema de Gestión de Ventas</span>
+          <span>Página 1 de 1</span>
+        </div>
+
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+              window.close();
+            }, 300);
+          };
+        </script>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+}
+
 // Event bindings
 function setupEventListeners(container) {
   // Bottom Nav tabs
@@ -3887,7 +4050,7 @@ function setupEventListeners(container) {
       };
 
       const dailyData = aggregateDailyData(store.state.transactions, getTxDate);
-      const headers = ['Fecha', 'Pedidos', 'Base Imponible (EUR)', 'Impuesto (EUR)', 'Efectivo (EUR)', 'Tarjeta (EUR)', 'Total Facturado (EUR)'];
+      const headers = ['Fecha', 'Pedidos', 'Base Imponible', 'Impuestos', 'Efectivo', 'Tarjeta', 'Total Facturado'];
       const rows = dailyData.map(d => [
         d.dateStr,
         d.count,
@@ -3898,8 +4061,8 @@ function setupEventListeners(container) {
         d.total
       ]);
       
-      triggerCSVDownload('informe_diario_facturacion.csv', headers, rows);
-      showToast('Informe Diario exportado con éxito.', 'success');
+      printReportPDF('Informe Diario de Facturación', headers, rows, store.state.legal);
+      showToast('Informe Diario generado para imprimir (PDF).', 'success');
     });
   }
 
@@ -3918,7 +4081,7 @@ function setupEventListeners(container) {
       };
 
       const monthlyData = aggregateMonthlyData(store.state.transactions, getTxDate);
-      const headers = ['Mes', 'Pedidos', 'Base Imponible (EUR)', 'Impuesto (EUR)', 'Efectivo (EUR)', 'Tarjeta (EUR)', 'Total Facturado (EUR)'];
+      const headers = ['Mes', 'Pedidos', 'Base Imponible', 'Impuestos', 'Efectivo', 'Tarjeta', 'Total Facturado'];
       const rows = monthlyData.map(d => [
         d.monthStr,
         d.count,
@@ -3929,8 +4092,8 @@ function setupEventListeners(container) {
         d.total
       ]);
       
-      triggerCSVDownload('informe_mensual_facturacion.csv', headers, rows);
-      showToast('Informe Mensual exportado con éxito.', 'success');
+      printReportPDF('Informe Mensual de Facturación', headers, rows, store.state.legal);
+      showToast('Informe Mensual generado para imprimir (PDF).', 'success');
     });
   }
 
