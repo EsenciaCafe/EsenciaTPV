@@ -3286,14 +3286,20 @@ function triggerCSVDownload(filename, headers, rows) {
   document.body.removeChild(link);
 }
 
-function printReportPDF(title, headers, rows, legal) {
-  const printWindow = window.open('', '_blank');
-  if (!printWindow) {
-    showToast('Por favor, permite las ventanas emergentes para descargar el PDF.', 'warning');
-    return;
-  }
-  
-  const headersHTML = headers.map(h => `<th style="text-align:left; border-bottom: 2px solid #333; padding: 10px 8px; font-size: 0.85rem; font-weight: 700; text-transform: uppercase;">${h}</th>`).join('');
+function downloadReportPDF(title, headers, rows, legal, filename) {
+  const container = document.createElement('div');
+  container.style.position = 'fixed';
+  container.style.top = '-9999px';
+  container.style.left = '-9999px';
+  container.style.width = '790px';
+  container.style.padding = '40px';
+  container.style.backgroundColor = '#ffffff';
+  container.style.color = '#1e293b';
+  container.style.fontFamily = 'Arial, Helvetica, sans-serif';
+  container.style.lineHeight = '1.5';
+  container.style.boxSizing = 'border-box';
+
+  const headersHTML = headers.map(h => `<th style="text-align:left; border-bottom: 2px solid #333; padding: 10px 8px; font-size: 0.85rem; font-weight: 700; text-transform: uppercase; color: #0f172a;">${h}</th>`).join('');
   const rowsHTML = rows.map((row, index) => {
     const cells = row.map((val, cellIndex) => {
       // Formatter: keep first column (period label) clean, second column (orders count) formatted as integer, format euros for others
@@ -3303,9 +3309,9 @@ function printReportPDF(title, headers, rows, legal) {
       } else if (cellIndex > 1 && typeof val === 'number') {
         displayVal = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(val);
       }
-      return `<td style="border-bottom: 1px solid #ddd; padding: 8px; font-size: 0.85rem;">${displayVal}</td>`;
+      return `<td style="border-bottom: 1px solid #ddd; padding: 8px; font-size: 0.85rem; color: #334155;">${displayVal}</td>`;
     }).join('');
-    const background = index % 2 === 0 ? 'background-color: #fafafa;' : '';
+    const background = index % 2 === 0 ? 'background-color: #fafafa;' : 'background-color: #ffffff;';
     return `<tr style="${background}">${cells}</tr>`;
   }).join('');
 
@@ -3328,12 +3334,12 @@ function printReportPDF(title, headers, rows, legal) {
 
   const totalsHTML = `
     <tr style="background-color: #f1f5f9; font-weight: bold; border-top: 2px solid #333;">
-      <td style="padding: 10px 8px; font-size: 0.85rem;">TOTALES</td>
-      <td style="padding: 10px 8px; font-size: 0.85rem;">${new Intl.NumberFormat('es-ES').format(totalCount)}</td>
-      <td style="padding: 10px 8px; font-size: 0.85rem;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalBase)}</td>
-      <td style="padding: 10px 8px; font-size: 0.85rem;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalTax)}</td>
-      <td style="padding: 10px 8px; font-size: 0.85rem;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalCash)}</td>
-      <td style="padding: 10px 8px; font-size: 0.85rem;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalCard)}</td>
+      <td style="padding: 10px 8px; font-size: 0.85rem; color: #0f172a;">TOTALES</td>
+      <td style="padding: 10px 8px; font-size: 0.85rem; color: #0f172a;">${new Intl.NumberFormat('es-ES').format(totalCount)}</td>
+      <td style="padding: 10px 8px; font-size: 0.85rem; color: #0f172a;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalBase)}</td>
+      <td style="padding: 10px 8px; font-size: 0.85rem; color: #0f172a;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalTax)}</td>
+      <td style="padding: 10px 8px; font-size: 0.85rem; color: #0f172a;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalCash)}</td>
+      <td style="padding: 10px 8px; font-size: 0.85rem; color: #0f172a;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalCard)}</td>
       <td style="padding: 10px 8px; font-size: 0.85rem; color: #059669;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalRevenue)}</td>
     </tr>
   `;
@@ -3341,112 +3347,55 @@ function printReportPDF(title, headers, rows, legal) {
   const dateNow = new Date();
   const dateString = dateNow.toLocaleString('es-ES');
 
-  printWindow.document.write(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>${title}</title>
-        <meta charset="utf-8">
-        <style>
-          body {
-            font-family: Arial, Helvetica, sans-serif;
-            color: #1e293b;
-            padding: 40px;
-            margin: 0;
-            line-height: 1.5;
-          }
-          .header-container {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            border-bottom: 2px solid #e2e8f0;
-            padding-bottom: 20px;
-            margin-bottom: 30px;
-          }
-          .title-area h1 {
-            margin: 0 0 6px 0;
-            font-size: 1.8rem;
-            color: #0f172a;
-          }
-          .title-area p {
-            margin: 0;
-            font-size: 0.9rem;
-            color: #64748b;
-          }
-          .legal-area {
-            text-align: right;
-            font-size: 0.85rem;
-            color: #475569;
-            line-height: 1.4;
-          }
-          .legal-area strong {
-            color: #0f172a;
-            font-size: 1rem;
-          }
-          table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-          }
-          tr {
-            page-break-inside: avoid;
-          }
-          .footer-info {
-            margin-top: 40px;
-            font-size: 0.75rem;
-            color: #94a3b8;
-            display: flex;
-            justify-content: space-between;
-            border-top: 1px solid #e2e8f0;
-            padding-top: 15px;
-          }
-          @media print {
-            body { padding: 0; }
-            @page { margin: 1.5cm; }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="header-container">
-          <div class="title-area">
-            <h1>${title}</h1>
-            <p>Generado el ${dateString}</p>
-          </div>
-          <div class="legal-area">
-            <strong>${legal.businessName || 'Esencia Café'}</strong><br>
-            ${legal.companyName || 'Esencia Café S.L.'}<br>
-            NIF: ${legal.nif || 'B-87654321'}<br>
-            ${legal.address || 'Santa Cruz de Tenerife'}
-          </div>
-        </div>
+  container.innerHTML = `
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 30px; box-sizing: border-box;">
+      <div style="text-align: left;">
+        <h1 style="margin: 0 0 6px 0; font-size: 1.8rem; color: #0f172a; font-family: Arial, Helvetica, sans-serif;">${title}</h1>
+        <p style="margin: 0; font-size: 0.9rem; color: #64748b;">Generado el ${dateString}</p>
+      </div>
+      <div style="text-align: right; font-size: 0.85rem; color: #475569; line-height: 1.4;">
+        <strong style="color: #0f172a; font-size: 1rem;">${legal.businessName || 'Esencia Café'}</strong><br>
+        ${legal.companyName || 'Esencia Café S.L.'}<br>
+        NIF: ${legal.nif || 'B-87654321'}<br>
+        ${legal.address || 'Santa Cruz de Tenerife'}
+      </div>
+    </div>
 
-        <table>
-          <thead>
-            <tr>${headersHTML}</tr>
-          </thead>
-          <tbody>
-            ${rowsHTML}
-            ${totalsHTML}
-          </tbody>
-        </table>
+    <table style="width: 100%; border-collapse: collapse; margin-top: 10px; box-sizing: border-box;">
+      <thead>
+        <tr>${headersHTML}</tr>
+      </thead>
+      <tbody>
+        ${rowsHTML}
+        ${totalsHTML}
+      </tbody>
+    </table>
 
-        <div class="footer-info">
-          <span>Esencia TPV - Sistema de Gestión de Ventas</span>
-          <span>Página 1 de 1</span>
-        </div>
+    <div style="margin-top: 40px; font-size: 0.75rem; color: #94a3b8; display: flex; justify-content: space-between; border-top: 1px solid #e2e8f0; padding-top: 15px; box-sizing: border-box;">
+      <span>Esencia TPV - Sistema de Gestión de Ventas</span>
+      <span>Generado en formato PDF</span>
+    </div>
+  `;
 
-        <script>
-          window.onload = function() {
-            setTimeout(function() {
-              window.print();
-              window.close();
-            }, 300);
-          };
-        </script>
-      </body>
-    </html>
-  `);
-  printWindow.document.close();
+  document.body.appendChild(container);
+
+  const opt = {
+    margin:       [10, 10, 10, 10],
+    filename:     filename,
+    image:        { type: 'jpeg', quality: 0.98 },
+    html2canvas:  { scale: 2, useCORS: true, logging: false },
+    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+  };
+
+  html2pdf().from(container).set(opt).save()
+    .then(() => {
+      document.body.removeChild(container);
+    })
+    .catch(err => {
+      console.error('Error generando PDF:', err);
+      showToast('Error al generar el PDF. Inténtalo de nuevo.', 'error');
+      document.body.removeChild(container);
+    });
 }
 
 // Event bindings
@@ -4061,8 +4010,12 @@ function setupEventListeners(container) {
         d.total
       ]);
       
-      printReportPDF('Informe Diario de Facturación', headers, rows, store.state.legal);
-      showToast('Informe Diario generado para imprimir (PDF).', 'success');
+      const dNow = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const filename = `${dNow.getFullYear()}-${pad(dNow.getMonth() + 1)}-${pad(dNow.getDate())}.pdf`;
+
+      downloadReportPDF('Informe Diario de Facturación', headers, rows, store.state.legal, filename);
+      showToast('Descargando Informe Diario (PDF)...', 'success');
     });
   }
 
@@ -4092,8 +4045,12 @@ function setupEventListeners(container) {
         d.total
       ]);
       
-      printReportPDF('Informe Mensual de Facturación', headers, rows, store.state.legal);
-      showToast('Informe Mensual generado para imprimir (PDF).', 'success');
+      const dNow = new Date();
+      const months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+      const filename = `${dNow.getFullYear()}-${months[dNow.getMonth()]}.pdf`;
+
+      downloadReportPDF('Informe Mensual de Facturación', headers, rows, store.state.legal, filename);
+      showToast('Descargando Informe Mensual (PDF)...', 'success');
     });
   }
 
