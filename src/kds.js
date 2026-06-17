@@ -641,126 +641,222 @@ function renderHeader() {
     </header>`;
 }
 
-// ── Full render ───────────────────────────────────────────────────────────────
-function render() {
+// ── Base Layout Rendering (drawn once to prevent full-screen flickering) ──────
+function renderBaseLayout() {
   root.innerHTML = `
-    ${renderHeader()}
+    <div id="kds-header-container"></div>
     <main class="kds-main">
-      <div class="kds-grid" id="kds-grid" style="--kds-cols:${state.config.columns}">
-        ${renderGrid()}
-      </div>
+      <div class="kds-grid" id="kds-grid" style="--kds-cols:${state.config.columns}"></div>
     </main>
-    ${state.settingsOpen ? renderSettingsPanel() : ''}
+    <div id="kds-settings-container"></div>
   `;
-  bindEvents();
 }
 
-// ── Partial grid refresh (keeps settings panel open) ──────────────────────────
+// ── Full render (smart DOM diffing update) ────────────────────────────────────
+function render() {
+  if (!document.getElementById('kds-header-container')) {
+    renderBaseLayout();
+  }
+
+  // Update grid columns CSS variable
+  const grid = document.getElementById('kds-grid');
+  if (grid) {
+    grid.style.setProperty('--kds-cols', state.config.columns);
+  }
+
+  // Target header update if changed
+  const headerContainer = document.getElementById('kds-header-container');
+  if (headerContainer) {
+    const newHeaderHTML = renderHeader();
+    if (headerContainer.innerHTML !== newHeaderHTML) {
+      headerContainer.innerHTML = newHeaderHTML;
+    }
+  }
+
+  // Target grid update if changed
+  if (grid) {
+    const newGridHTML = renderGrid();
+    if (grid.innerHTML !== newGridHTML) {
+      grid.innerHTML = newGridHTML;
+    }
+  }
+
+  // Target settings update
+  const settingsContainer = document.getElementById('kds-settings-container');
+  if (settingsContainer) {
+    const newSettingsHTML = state.settingsOpen ? renderSettingsPanel() : '';
+    if (settingsContainer.innerHTML !== newSettingsHTML) {
+      settingsContainer.innerHTML = newSettingsHTML;
+    }
+  }
+}
+
+// ── Partial grid refresh (keeps settings panel open, updates only if changed) ──
 function refreshGrid() {
   const grid = document.getElementById('kds-grid');
-  if (grid) { grid.innerHTML = renderGrid(); bindCardEvents(); }
+  if (grid) {
+    const newGridHTML = renderGrid();
+    if (grid.innerHTML !== newGridHTML) {
+      grid.innerHTML = newGridHTML;
+    }
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 // EVENTS
 // ══════════════════════════════════════════════════════════════════════════════
 
-function bindCardEvents() {
-  document.querySelectorAll('.kds-ready-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const tableId = parseInt(btn.dataset.tableId, 10);
-      btn.classList.contains('reopen') ? reopenTable(tableId) : markTableReady(tableId);
-    });
-  });
-}
+function setupGlobalEventListeners() {
+  document.body.addEventListener('click', (e) => {
+    // 1. Open settings
+    const openSettings = e.target.closest('#kds-open-settings');
+    if (openSettings) {
+      state.settingsOpen = true;
+      render();
+      return;
+    }
 
-function bindSettingsEvents() {
-  const overlay = document.getElementById('kds-settings-overlay');
-  if (!overlay) return;
+    // 2. Close settings or overlay click
+    const closeSettings = e.target.closest('#kds-settings-close');
+    const overlay = document.getElementById('kds-settings-overlay');
+    if (closeSettings || e.target === overlay) {
+      state.settingsOpen = false;
+      render();
+      return;
+    }
 
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) { state.settingsOpen = false; render(); }
-  });
-  document.getElementById('kds-settings-close')?.addEventListener('click', () => {
-    state.settingsOpen = false; render();
-  });
+    // 3. Grid Columns buttons
+    const colBtn = e.target.closest('.kds-col-btn');
+    if (colBtn) {
+      state.config.columns = parseInt(colBtn.dataset.cols, 10);
+      saveConfig(state.config);
+      render();
+      return;
+    }
 
-  // Columns
-  overlay.querySelectorAll('.kds-col-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.config.columns = parseInt(btn.dataset.cols, 10);
-      saveConfig(state.config); render();
-    });
-  });
+    // 4. Font size buttons
+    const fontBtn = e.target.closest('.kds-font-btn');
+    if (fontBtn) {
+      state.config.fontSize = fontBtn.dataset.font;
+      saveConfig(state.config);
+      render();
+      return;
+    }
 
-  // Font size
-  overlay.querySelectorAll('.kds-font-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.config.fontSize = btn.dataset.font;
-      saveConfig(state.config); render();
-    });
-  });
-
-  // Theme selector
-  overlay.querySelectorAll('.kds-theme-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.config.theme = btn.dataset.theme;
+    // 5. Theme buttons
+    const themeBtn = e.target.closest('.kds-theme-btn');
+    if (themeBtn) {
+      state.config.theme = themeBtn.dataset.theme;
       saveConfig(state.config);
       applyTheme();
       render();
-    });
-  });
+      return;
+    }
 
-  // Stepper buttons (±) for numpad-trigger inputs
-  overlay.querySelectorAll('.kds-threshold-btn[data-target]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const targetId = btn.dataset.target;
+    // 6. Stepper buttons
+    const stepBtn = e.target.closest('.kds-threshold-btn[data-target]');
+    if (stepBtn) {
+      const targetId = stepBtn.dataset.target;
       const input = document.getElementById(targetId);
-      if (!input) return;
-      let val = parseInt(input.value, 10) + parseInt(btn.dataset.delta, 10);
-      val = Math.max(parseInt(input.min, 10), Math.min(parseInt(input.max, 10), val));
-      input.value = String(val);
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    });
+      if (input) {
+        let val = parseInt(input.value, 10) + parseInt(stepBtn.dataset.delta, 10);
+        val = Math.max(parseInt(input.min, 10), Math.min(parseInt(input.max, 10), val));
+        input.value = String(val);
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return;
+    }
+
+    // 7. Ready / Reopen card buttons
+    const readyBtn = e.target.closest('.kds-ready-btn');
+    if (readyBtn) {
+      e.stopPropagation();
+      const tableId = parseInt(readyBtn.dataset.tableId, 10);
+      readyBtn.classList.contains('reopen') ? reopenTable(tableId) : markTableReady(tableId);
+      return;
+    }
+
+    // 8. Dining/takeaway bulk links
+    const selectLink = e.target.closest('[data-select]');
+    if (selectLink) {
+      const action = selectLink.dataset.select;
+      const diningIds = state.allTableDefs.filter(t => (t.type || 'table') === 'table').map(t => t.id);
+      const takIds = state.allTableDefs.filter(t => t.type === 'takeaway').map(t => t.id);
+      let current = state.config.visibleTableIds === null
+        ? state.allTableDefs.map(t => t.id) : [...state.config.visibleTableIds];
+
+      if (action === 'all-dining') {
+        diningIds.forEach(id => { if (!current.includes(id)) current.push(id); });
+      } else if (action === 'none-dining') {
+        current = current.filter(id => !diningIds.includes(id));
+      } else if (action === 'all-takeaway') {
+        takIds.forEach(id => { if (!current.includes(id)) current.push(id); });
+      } else if (action === 'none-takeaway') {
+        current = current.filter(id => !takIds.includes(id));
+      }
+
+      state.config.visibleTableIds = current.length === state.allTableDefs.length ? null : current;
+      saveConfig(state.config);
+      render();
+      return;
+    }
+
+    // 9. Numpad trigger inputs click
+    const numInput = e.target.closest('input[type="number"].kds-numpad-trigger');
+    if (numInput) {
+      e.preventDefault();
+      const label = numInput.dataset.label ||
+        numInput.closest('.kds-threshold-row')?.querySelector('.kds-toggle-label')?.textContent ||
+        'Valor';
+      openNumpad(numInput, label);
+      return;
+    }
   });
 
-  // Numeric input changes
-  document.getElementById('kds-threshold')?.addEventListener('change', (e) => {
-    let val = parseInt(e.target.value, 10);
-    val = Math.max(1, Math.min(60, val));
-    state.config.yellowToRedMinutes = val;
-    saveConfig(state.config); render();
-  });
-  document.getElementById('kds-collapsed-count')?.addEventListener('change', (e) => {
-    let val = parseInt(e.target.value, 10);
-    val = Math.max(1, Math.min(20, val));
-    state.config.collapsedItemCount = val;
-    saveConfig(state.config); render();
-  });
+  // Change event listeners (e.g. for settings input and checkboxes)
+  document.body.addEventListener('change', (e) => {
+    // 1. Threshold input
+    if (e.target.id === 'kds-threshold') {
+      let val = parseInt(e.target.value, 10);
+      val = Math.max(1, Math.min(60, val));
+      state.config.yellowToRedMinutes = val;
+      saveConfig(state.config);
+      render();
+      return;
+    }
 
-  // Toggles
-  const toggleMap = {
-    'kds-toggle-occupied':   'showOnlyOccupied',
-    'kds-toggle-prices':     'showPrices',
-    'kds-toggle-sound':      'soundOnNew',
-    'kds-toggle-autoreset':  'autoResetReady',
-  };
-  Object.entries(toggleMap).forEach(([id, key]) => {
-    document.getElementById(id)?.addEventListener('change', (e) => {
+    // 2. Collapsed count input
+    if (e.target.id === 'kds-collapsed-count') {
+      let val = parseInt(e.target.value, 10);
+      val = Math.max(1, Math.min(20, val));
+      state.config.collapsedItemCount = val;
+      saveConfig(state.config);
+      render();
+      return;
+    }
+
+    // 3. Toggles
+    const toggleMap = {
+      'kds-toggle-occupied':   'showOnlyOccupied',
+      'kds-toggle-prices':     'showPrices',
+      'kds-toggle-sound':      'soundOnNew',
+      'kds-toggle-autoreset':  'autoResetReady',
+    };
+    if (toggleMap[e.target.id]) {
+      const key = toggleMap[e.target.id];
       state.config[key] = e.target.checked;
-      saveConfig(state.config); render();
-    });
-  });
+      saveConfig(state.config);
+      render();
+      return;
+    }
 
-  // Table checkboxes
-  overlay.querySelectorAll('input[data-table-id]').forEach(cb => {
-    cb.addEventListener('change', () => {
-      const id = parseInt(cb.dataset.tableId, 10);
+    // 4. Individual table checkboxes
+    if (e.target.hasAttribute('data-table-id')) {
+      const id = parseInt(e.target.dataset.tableId, 10);
       if (state.config.visibleTableIds === null) {
         state.config.visibleTableIds = state.allTableDefs.map(t => t.id);
       }
-      if (cb.checked) {
+      if (e.target.checked) {
         if (!state.config.visibleTableIds.includes(id)) state.config.visibleTableIds.push(id);
       } else {
         state.config.visibleTableIds = state.config.visibleTableIds.filter(i => i !== id);
@@ -768,39 +864,11 @@ function bindSettingsEvents() {
       if (state.config.visibleTableIds.length === state.allTableDefs.length) {
         state.config.visibleTableIds = null;
       }
-      saveConfig(state.config); render();
-    });
+      saveConfig(state.config);
+      render();
+      return;
+    }
   });
-
-  // Select all / none
-  overlay.querySelectorAll('[data-select]').forEach(link => {
-    link.addEventListener('click', () => {
-      const action    = link.dataset.select;
-      const diningIds = state.allTableDefs.filter(t => (t.type || 'table') === 'table').map(t => t.id);
-      const takIds    = state.allTableDefs.filter(t => t.type === 'takeaway').map(t => t.id);
-      let current = state.config.visibleTableIds === null
-        ? state.allTableDefs.map(t => t.id) : [...state.config.visibleTableIds];
-
-      if      (action === 'all-dining')     diningIds.forEach(id => { if (!current.includes(id)) current.push(id); });
-      else if (action === 'none-dining')    current = current.filter(id => !diningIds.includes(id));
-      else if (action === 'all-takeaway')   takIds.forEach(id => { if (!current.includes(id)) current.push(id); });
-      else if (action === 'none-takeaway')  current = current.filter(id => !takIds.includes(id));
-
-      state.config.visibleTableIds = current.length === state.allTableDefs.length ? null : current;
-      saveConfig(state.config); render();
-    });
-  });
-
-  // Attach numpad to all number inputs
-  attachNumpadListeners();
-}
-
-function bindEvents() {
-  document.getElementById('kds-open-settings')?.addEventListener('click', () => {
-    state.settingsOpen = true; render();
-  });
-  bindCardEvents();
-  bindSettingsEvents();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -892,8 +960,7 @@ function startClock() {
 function startTimeRefresh() {
   setInterval(() => {
     if (!state.settingsOpen) {
-      const grid = document.getElementById('kds-grid');
-      if (grid) { grid.innerHTML = renderGrid(); bindCardEvents(); }
+      refreshGrid();
     }
   }, 15_000);
 }
@@ -905,6 +972,7 @@ function startTimeRefresh() {
 async function init() {
   state.allTableDefs = buildAllTableDefs();
   applyTheme();
+  setupGlobalEventListeners();
   await loadInitialState();
   render();
   subscribeRealtime();

@@ -1011,12 +1011,10 @@ body.light-theme .btn-quick-pay {
   to { transform: translateY(0); }
 }
 
-/* Re-styled Ticket components for drawer */
-.drawer .ticket-list {
+.drawer-content .ticket-list {
   flex-grow: 1;
   overflow-y: auto;
   margin-bottom: 16px;
-  max-height: 300px;
 }
 
 /* Checkout payment selection grid */
@@ -1760,6 +1758,80 @@ body.light-theme .btn-quick-pay {
   border-color: var(--secondary);
   color: var(--text-main);
   background-color: rgba(16, 185, 129, 0.05);
+}
+
+/* ── Modifier Option Rows ──────────────────────────────────── */
+.mod-option-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  padding: 10px 14px;
+  border-radius: var(--border-radius-sm);
+  margin-bottom: 6px;
+  transition: border-color 0.15s;
+}
+
+.mod-option-row:hover {
+  border-color: var(--secondary);
+}
+
+.mod-option-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mod-option-name {
+  color: var(--text-main);
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mod-option-price {
+  color: var(--secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.mod-option-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.mod-option-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s;
+  padding: 0;
+}
+
+.mod-option-btn:hover:not(:disabled) {
+  background: var(--bg-card);
+  color: var(--text-main);
+  border-color: var(--text-muted);
+}
+
+.mod-option-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 /* ── Supabase Loading Overlay ─────────────────────────────── */

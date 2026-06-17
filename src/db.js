@@ -69,6 +69,7 @@ export async function loadCatalog() {
     assignedItems: mod.assigned_items || [],
     options: modifierOptions
       .filter(opt => opt.modifier_id === mod.id)
+      .sort((a, b) => a.id.localeCompare(b.id))
       .map(opt => ({
         id: opt.id,
         name: opt.name,

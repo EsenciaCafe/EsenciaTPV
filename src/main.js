@@ -100,7 +100,7 @@ function renderHeader(state) {
   const title = state.activeTab === 'mesas' ? 'Mesas' : table ? table.name : 'Selecciona una mesa';
 
   const dbDot = dbStatus === 'connected'
-    ? '<div class="status-dot" title="Supabase conectado"></div>'
+    ? '<div class="status-dot" title="Base de Datos conectada"></div>'
     : dbStatus === 'fallback'
     ? '<div class="status-dot status-dot--warn" title="Modo sin conexión — datos locales"></div>'
     : dbStatus === 'error'
@@ -116,7 +116,7 @@ function renderHeader(state) {
       <div class="header-meta">
         <div class="status-badge">
           ${dbDot}
-          <span>${dbStatus === 'connected' ? 'Supabase' : dbStatus === 'fallback' ? 'Sin BD' : 'Comandero'}</span>
+          <span>${dbStatus === 'connected' ? 'Base de Datos' : dbStatus === 'fallback' ? 'Sin BD' : 'Comandero'}</span>
         </div>
       </div>
     </header>
@@ -615,6 +615,20 @@ function renderAjustesView(state) {
             </div>
           </div>
 
+          <div class="editor-form-group">
+            <label class="editor-form-label">Imagen del artículo</label>
+            <div style="display: flex; align-items: center; gap: 16px;">
+              <div id="article-image-preview" data-image-base64="" style="width: 80px; height: 80px; border-radius: var(--border-radius-sm); border: 1px solid var(--border-color); background-size: cover; background-position: center; background-color: var(--bg-item); display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0;">
+                <span style="font-size: 1.5rem; color: var(--text-muted);">📷</span>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <button type="button" class="btn btn-secondary" id="btn-select-article-image" style="height: 36px; font-size: 0.85rem; padding: 0 12px; font-weight:600;">Elegir foto de mi móvil</button>
+                <button type="button" class="btn btn-secondary" id="btn-remove-article-image" style="height: 36px; font-size: 0.85rem; padding: 0 12px; color: var(--danger); border-color: rgba(239, 68, 68, 0.2); background: rgba(239, 68, 68, 0.05); display: none; font-weight:600;">Quitar foto</button>
+                <input type="file" id="article-image-file-input" accept="image/*" style="display: none;">
+              </div>
+            </div>
+          </div>
+
           <div class="editor-form-actions">
             <button class="btn btn-secondary" id="create-article-cancel-btn">Cancelar</button>
             <button class="btn btn-primary" id="create-article-save-btn" style="background-color: var(--secondary);">Guardar</button>
@@ -681,9 +695,28 @@ function renderAjustesView(state) {
             </div>
           </div>
 
-          <div class="editor-form-actions">
-            <button class="btn btn-secondary" id="edit-item-cancel-btn">Cancelar</button>
-            <button class="btn btn-primary" id="edit-item-save-btn" data-save-item-id="${item.id}" style="background-color: var(--secondary);">Guardar</button>
+          <div class="editor-form-group">
+            <label class="editor-form-label">Imagen del artículo</label>
+            <div style="display: flex; align-items: center; gap: 16px;">
+              <div id="article-image-preview" data-image-base64="${item.image || ''}" style="width: 80px; height: 80px; border-radius: var(--border-radius-sm); border: 1px solid var(--border-color); background-size: cover; background-position: center; background-color: var(--bg-item); display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0; ${item.image ? `background-image: url('${item.image}');` : ''}">
+                ${item.image ? '' : '<span style="font-size: 1.5rem; color: var(--text-muted);">📷</span>'}
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <button type="button" class="btn btn-secondary" id="btn-select-article-image" style="height: 36px; font-size: 0.85rem; padding: 0 12px; font-weight:600;">Elegir foto de mi móvil</button>
+                <button type="button" class="btn btn-secondary" id="btn-remove-article-image" style="height: 36px; font-size: 0.85rem; padding: 0 12px; color: var(--danger); border-color: rgba(239, 68, 68, 0.2); background: rgba(239, 68, 68, 0.05); ${item.image ? '' : 'display: none;'} font-weight:600;">Quitar foto</button>
+                <input type="file" id="article-image-file-input" accept="image/*" style="display: none;">
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; margin-top:24px;">
+            <button class="btn btn-secondary" id="edit-item-delete-btn" data-delete-item-id="${item.id}" style="background-color: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.2); color: var(--danger); display:flex; align-items:center; justify-content:center; gap:6px;">
+              ${ICONS.trash} Eliminar
+            </button>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-secondary" id="edit-item-cancel-btn">Cancelar</button>
+              <button class="btn btn-primary" id="edit-item-save-btn" data-save-item-id="${item.id}" style="background-color: var(--secondary);">Guardar</button>
+            </div>
           </div>
         </div>
       </div>
@@ -990,18 +1023,23 @@ function renderAjustesView(state) {
       return `<div class="view-container"><p style="padding:20px; text-align:center;">Modificador no encontrado.</p></div>`;
     }
 
-    const optionsList = (mod.options || []).map((opt, idx) => `
-      <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-panel); border:1px solid var(--border-color); padding:10px 14px; border-radius:var(--border-radius-sm); margin-bottom:8px;">
-        <div>
-          <strong style="color:var(--text-main);">${opt.name}</strong>
-          <span style="color:var(--text-muted); font-size:0.85rem; margin-left:8px;">(+${opt.price.toFixed(2)}€)</span>
+    const options = mod.options || [];
+    const optionsList = options.map((opt, idx) => `
+      <div class="mod-option-row" data-option-index="${idx}">
+        <div class="mod-option-info">
+          <strong class="mod-option-name">${opt.name}</strong>
+          <span class="mod-option-price">+${opt.price.toFixed(2)}€</span>
         </div>
-        <button class="btn-delete-option" data-option-index="${idx}" style="background:none; border:none; color:var(--danger); cursor:pointer; font-size:1.2rem; font-weight:bold; width:24px; height:24px; display:flex; align-items:center; justify-content:center;">
-          &times;
-        </button>
+        <div class="mod-option-actions">
+          <button class="mod-option-btn btn-move-up-option" data-option-index="${idx}" title="Subir" ${idx === 0 ? 'disabled' : ''}>↑</button>
+          <button class="mod-option-btn btn-move-down-option" data-option-index="${idx}" title="Bajar" ${idx === options.length - 1 ? 'disabled' : ''}>↓</button>
+          <button class="mod-option-btn btn-edit-option" data-option-index="${idx}" title="Editar">✏️</button>
+          <button class="mod-option-btn btn-delete-option" data-option-index="${idx}" title="Eliminar" style="color:var(--danger);">✕</button>
+        </div>
       </div>
     `).join('');
 
+    const assignedCount = (mod.assignedItems || []).length;
     const assignedChecklist = state.menuItems.map(item => {
       const isAssigned = (mod.assignedItems || []).includes(item.id);
       return `
@@ -1029,25 +1067,37 @@ function renderAjustesView(state) {
           <!-- Options Section -->
           <div class="editor-form-group" style="margin-top:16px;">
             <label class="editor-form-label">Opciones y Precios</label>
-            <div id="edit-mod-options-container" style="max-height:220px; overflow-y:auto; margin-bottom:8px;">
-              ${optionsList.length > 0 ? optionsList : '<p style="font-size:0.85rem; color:var(--text-muted); padding:4px 0;">No hay opciones creadas.</p>'}
+            <div id="edit-mod-options-container" style="max-height:260px; overflow-y:auto; margin-bottom:8px;">
+              ${options.length > 0 ? optionsList : '<p style="font-size:0.85rem; color:var(--text-muted); padding:4px 0;">No hay opciones creadas.</p>'}
             </div>
             
-            <!-- Quick Add Option Form -->
-            <div style="display:grid; grid-template-columns: 2fr 1fr auto; gap:8px; margin-top:8px;">
-              <input type="text" class="editor-form-input" id="new-opt-name" placeholder="Nombre opción" style="height:38px; padding:8px; font-size:0.9rem;">
-              <input type="number" step="0.01" class="editor-form-input" id="new-opt-price" placeholder="0.00" style="height:38px; padding:8px; font-size:0.9rem;">
-              <button class="btn btn-primary" id="btn-add-mod-option" style="height:38px; background-color:var(--secondary); border-color:var(--secondary); font-size:0.85rem; padding:0 12px;">
-                Añadir
-              </button>
+            <!-- Add/Edit Option Form -->
+            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:var(--border-radius-sm); padding:10px; margin-top:4px;">
+              <div style="font-size:0.78rem; font-weight:600; text-transform:uppercase; color:var(--text-muted); margin-bottom:8px;" id="option-form-label">Nueva opción</div>
+              <input type="hidden" id="edit-opt-index" value="">
+              <div style="display:grid; grid-template-columns: 2fr 1fr auto auto; gap:8px;">
+                <input type="text" class="editor-form-input" id="new-opt-name" placeholder="Nombre opción" style="height:38px; padding:8px; font-size:0.9rem;">
+                <input type="number" step="0.01" class="editor-form-input" id="new-opt-price" placeholder="0.00" style="height:38px; padding:8px; font-size:0.9rem;">
+                <button class="btn btn-primary" id="btn-add-mod-option" style="height:38px; background-color:var(--secondary); border-color:var(--secondary); font-size:0.85rem; padding:0 12px; white-space:nowrap;">
+                  Guardar
+                </button>
+                <button class="btn btn-secondary" id="btn-cancel-edit-option" style="height:38px; font-size:0.85rem; padding:0 10px; display:none;">
+                  Cancelar
+                </button>
+              </div>
             </div>
           </div>
 
-          <!-- Assignment Section -->
+          <!-- Assignment Section (collapsible) -->
           <div class="editor-form-group" style="margin-top:24px;">
-            <label class="editor-form-label">Artículos Asignados</label>
-            <div class="assigned-items-grid" id="edit-mod-assignment-grid">
-              ${assignedChecklist}
+            <button type="button" id="toggle-assigned-items-btn" style="display:flex; align-items:center; justify-content:space-between; width:100%; background:var(--bg-card); border:1px solid var(--border-color); border-radius:var(--border-radius-sm); padding:10px 14px; cursor:pointer; font-size:0.9rem; font-weight:600; color:var(--text-main);">
+              <span>Artículos asignados <span style="font-weight:400; color:var(--text-muted); font-size:0.82rem;">(${assignedCount} asignado${assignedCount !== 1 ? 's' : ''})</span></span>
+              <span id="assigned-toggle-icon" style="transition:transform 0.2s;">▼</span>
+            </button>
+            <div id="assigned-items-panel" style="display:none; margin-top:8px;">
+              <div class="assigned-items-grid" id="edit-mod-assignment-grid">
+                ${assignedChecklist}
+              </div>
             </div>
           </div>
 
@@ -1097,7 +1147,7 @@ function renderInlineTicketPanel() {
     <div class="ticket-item" style="margin-bottom: 8px;" data-item-id="${item.id}" data-ticket-item-id="${item.ticketItemId}">
       <div class="ticket-item-details">
         <span class="ticket-item-name">${item.name}</span>
-        <span class="ticket-item-modifiers">${item.price.toFixed(2)}€ x ud.</span>
+        <span class="ticket-item-modifiers ticket-item-base-price" style="cursor: pointer; text-decoration: underline dashed 1px; text-underline-offset: 2px;" title="Editar precio base">${item.price.toFixed(2)}€ x ud.</span>
         ${item.selectedOptions && item.selectedOptions.length > 0 ? `
           <div class="ticket-item-options">
             ${item.selectedOptions.map(opt => `
@@ -1114,7 +1164,7 @@ function renderInlineTicketPanel() {
         <span class="ticket-item-qty">${item.qty}</span>
         <button class="qty-btn qty-plus-btn" data-ticket-item-id="${item.ticketItemId}">+</button>
       </div>
-      <span class="ticket-item-total">${store.getItemTotal(item).toFixed(2)}€</span>
+      <span class="ticket-item-total ticket-item-total-price" style="cursor: pointer; text-decoration: underline dashed 1px; text-underline-offset: 2px;" title="Editar precio base">${store.getItemTotal(item).toFixed(2)}€</span>
     </div>
   `).join('');
 
@@ -1188,7 +1238,7 @@ function renderDrawerOverlay() {
     <div class="ticket-item" style="margin-bottom: 8px;" data-item-id="${item.id}" data-ticket-item-id="${item.ticketItemId}">
       <div class="ticket-item-details">
         <span class="ticket-item-name">${item.name}</span>
-        <span class="ticket-item-modifiers">${item.price.toFixed(2)}€ x ud.</span>
+        <span class="ticket-item-modifiers ticket-item-base-price" style="cursor: pointer; text-decoration: underline dashed 1px; text-underline-offset: 2px;" title="Editar precio base">${item.price.toFixed(2)}€ x ud.</span>
         ${item.selectedOptions && item.selectedOptions.length > 0 ? `
           <div class="ticket-item-options">
             ${item.selectedOptions.map(opt => `
@@ -1205,7 +1255,7 @@ function renderDrawerOverlay() {
         <span class="ticket-item-qty">${item.qty}</span>
         <button class="qty-btn qty-plus-btn" data-ticket-item-id="${item.ticketItemId}">+</button>
       </div>
-      <span class="ticket-item-total">${store.getItemTotal(item).toFixed(2)}€</span>
+      <span class="ticket-item-total ticket-item-total-price" style="cursor: pointer; text-decoration: underline dashed 1px; text-underline-offset: 2px;" title="Editar precio base">${store.getItemTotal(item).toFixed(2)}€</span>
     </div>
   `).join('');
 
@@ -1989,7 +2039,7 @@ function showPaymentModal(totalAmount) {
           <div class="editor-form-group">
             <label class="editor-form-label">Efectivo entregado por el cliente</label>
             <div style="display:flex; gap:8px; align-items:center;">
-              <input type="number" class="search-input" id="cash-received-input" step="0.01" value="${cashReceived.toFixed(2)}" style="font-size:1.3rem; text-align:right; font-weight:700; flex:1; height: 48px; padding-right:12px; background:var(--bg-panel); color:var(--text-main); border:1px solid var(--border-color); border-radius:var(--border-radius-md);">
+              <input type="text" class="search-input" id="cash-received-input" readonly placeholder="${totalAmount.toFixed(2)}" value="${(cashReceived === totalAmount || cashReceived === 0) ? '' : cashReceived.toFixed(2)}" style="font-size:1.3rem; text-align:right; font-weight:700; flex:1; height: 48px; padding-right:12px; background:var(--bg-panel); color:var(--text-main); border:1px solid var(--border-color); border-radius:var(--border-radius-md); cursor: pointer;">
               <span style="font-size:1.3rem; font-weight:700;">€</span>
             </div>
           </div>
@@ -2087,7 +2137,7 @@ function showPaymentModal(totalAmount) {
             <div class="editor-form-group" style="display:flex; flex-direction:column; gap:4px;">
               <label class="editor-form-label">Importe a cobrar</label>
               <div style="display:flex; gap:8px; align-items:center;">
-                <input type="number" class="search-input" id="free-charge-amount" step="0.01" value="${(freeInputValue !== null ? freeInputValue : getFreeRemaining()).toFixed(2)}" style="font-size:1.2rem; text-align:right; font-weight:700; flex:1; height: 44px; padding-right:12px; background:var(--bg-panel); color:var(--text-main); border:1px solid var(--border-color); border-radius:var(--border-radius-md);">
+                <input type="text" class="search-input" id="free-charge-amount" readonly placeholder="${getFreeRemaining().toFixed(2)}" value="${freeInputValue === null ? '' : freeInputValue.toFixed(2)}" style="font-size:1.2rem; text-align:right; font-weight:700; flex:1; height: 44px; padding-right:12px; background:var(--bg-panel); color:var(--text-main); border:1px solid var(--border-color); border-radius:var(--border-radius-md); cursor: pointer;">
                 <span style="font-size:1.2rem; font-weight:700;">€</span>
               </div>
             </div>
@@ -2269,14 +2319,18 @@ function showPaymentModal(totalAmount) {
     // Input de Efectivo entregado
     if (isEfectivo) {
       const cashInput = modal.querySelector('#cash-received-input');
-      cashInput.addEventListener('input', (e) => {
-        const val = parseFloat(e.target.value);
-        cashReceived = isNaN(val) ? 0 : val;
-        const changeVal = modal.querySelector('.payment-change-highlight strong');
-        if (changeVal) {
-          changeVal.innerText = `${getChangeAmount().toFixed(2)}€`;
-        }
-      });
+      if (cashInput) {
+        cashInput.addEventListener('click', () => {
+          showNumericKeypadModal({
+            title: 'Efectivo Entregado',
+            placeholder: totalAmount,
+            onSave: (val) => {
+              cashReceived = val;
+              renderPaymentContent();
+            }
+          });
+        });
+      }
 
       modal.querySelectorAll('.cash-quick-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -2327,10 +2381,18 @@ function showPaymentModal(totalAmount) {
       // ── Eventos de División Libre
       if (splitType === 'libre') {
         const freeInput = modal.querySelector('#free-charge-amount');
-        freeInput.addEventListener('input', (e) => {
-          const val = parseFloat(e.target.value);
-          freeInputValue = isNaN(val) ? 0 : val;
-        });
+        if (freeInput) {
+          freeInput.addEventListener('click', () => {
+            showNumericKeypadModal({
+              title: 'Importe a Cobrar',
+              placeholder: getFreeRemaining(),
+              onSave: (val) => {
+                freeInputValue = val;
+                renderPaymentContent();
+              }
+            });
+          });
+        }
 
         const cardBtn = modal.querySelector('#free-charge-card-btn');
         if (cardBtn) {
@@ -2480,6 +2542,7 @@ function setupEventListeners(container) {
       const tab = btn.dataset.tab;
       if (tab) {
         isDrawerOpen = false; // Reset drawer on tab switch
+        store.state.settingsPath = []; // Always go to root of that section
         store.setActiveTab(tab);
       }
     });
@@ -2796,6 +2859,22 @@ function setupEventListeners(container) {
     });
   });
 
+  // Click on base price or total price to edit it
+  container.querySelectorAll('.ticket-item-base-price, .ticket-item-total-price').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation(); // prevent triggering modifier selection modal!
+      const row = el.closest('.ticket-item');
+      if (row) {
+        const ticketItemId = row.dataset.ticketItemId;
+        const activeItems = store.getActiveItems();
+        const item = activeItems.find(i => i.ticketItemId === ticketItemId);
+        if (item) {
+          showPriceEditModal(ticketItemId, item.price);
+        }
+      }
+    });
+  });
+
   // Drawer clear ticket
   const drawerClear = container.querySelector('#drawer-clear-btn');
   if (drawerClear) {
@@ -3019,6 +3098,7 @@ function setupEventListeners(container) {
       const priceRaw = container.querySelector('#create-article-price')?.value;
       const price = parseFloat(priceRaw);
       const category = container.querySelector('#create-article-category')?.value || '';
+      const image = container.querySelector('#article-image-preview')?.dataset.imageBase64 || null;
 
       if (!name) { showToast('El nombre no puede estar vacío.', 'error'); return; }
       if (isNaN(price) || price < 0) { showToast('El precio debe ser un número válido mayor o igual a 0.', 'error'); return; }
@@ -3027,7 +3107,7 @@ function setupEventListeners(container) {
       const modifiers = Array.from(container.querySelectorAll('#create-article-modifiers-checklist .assign-checkbox-card.assigned'))
         .map(card => card.dataset.createModifierId);
 
-      store.addMenuItem({ name, price, category, modifiers });
+      store.addMenuItem({ name, price, category, modifiers, image });
       store.navigateSettings(['articulos', 'todos']);
       showToast('Artículo creado correctamente.', 'success');
     });
@@ -3067,6 +3147,7 @@ function setupEventListeners(container) {
       const name = container.querySelector('#edit-item-name').value.trim();
       const price = parseFloat(container.querySelector('#edit-item-price').value);
       const category = container.querySelector('#edit-item-category').value;
+      const image = container.querySelector('#article-image-preview')?.dataset.imageBase64 || null;
 
       if (!name) {
         showToast('El nombre no puede estar vacío.', 'error');
@@ -3081,9 +3162,78 @@ function setupEventListeners(container) {
       const modifiers = Array.from(container.querySelectorAll('#article-modifiers-checklist .assign-checkbox-card.assigned'))
         .map(card => card.dataset.articleModifierId);
 
-      store.updateMenuItem(itemId, { name, price, category, modifiers });
+      store.updateMenuItem(itemId, { name, price, category, modifiers, image });
       store.goBackSettings();
       showToast('Artículo actualizado correctamente.', 'success');
+    });
+  }
+
+  // Article Image Picker (For both Create and Edit Article)
+  const btnSelectImage = container.querySelector('#btn-select-article-image');
+  const btnRemoveImage = container.querySelector('#btn-remove-article-image');
+  const fileInput = container.querySelector('#article-image-file-input');
+  const previewEl = container.querySelector('#article-image-preview');
+
+  if (btnSelectImage && fileInput) {
+    btnSelectImage.addEventListener('click', () => {
+      fileInput.click();
+    });
+  }
+
+  if (fileInput && previewEl) {
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        // Show loading state on preview briefly
+        previewEl.innerHTML = '<span style="font-size:0.8rem; color:var(--text-muted);">...</span>';
+        
+        const reader = new FileReader();
+        reader.onload = function(event) {
+          const img = new Image();
+          img.onload = function() {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+            const maxDim = 300; // max size
+
+            if (width > height) {
+              if (width > maxDim) {
+                height = Math.round((height * maxDim) / width);
+                width = maxDim;
+              }
+            } else {
+              if (height > maxDim) {
+                width = Math.round((width * maxDim) / height);
+                height = maxDim;
+              }
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+            previewEl.dataset.imageBase64 = dataUrl;
+            previewEl.style.backgroundImage = `url('${dataUrl}')`;
+            previewEl.innerHTML = '';
+            
+            if (btnRemoveImage) btnRemoveImage.style.display = 'inline-block';
+          };
+          img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+  }
+
+  if (btnRemoveImage && previewEl && fileInput) {
+    btnRemoveImage.addEventListener('click', () => {
+      previewEl.dataset.imageBase64 = '';
+      previewEl.style.backgroundImage = 'none';
+      previewEl.innerHTML = '<span style="font-size: 1.5rem; color: var(--text-muted);">📷</span>';
+      fileInput.value = '';
+      btnRemoveImage.style.display = 'none';
     });
   }
 
@@ -3387,15 +3537,36 @@ function setupEventListeners(container) {
     });
   }
 
-  // Inline Option Add inside Edit Modifier Form
+  // Toggle assigned articles panel in Modifier Editor
+  const toggleAssignedBtn = container.querySelector('#toggle-assigned-items-btn');
+  if (toggleAssignedBtn) {
+    toggleAssignedBtn.addEventListener('click', () => {
+      const panel = container.querySelector('#assigned-items-panel');
+      const icon = container.querySelector('#assigned-toggle-icon');
+      if (panel) {
+        const isHidden = window.getComputedStyle(panel).display === 'none';
+        panel.style.display = isHidden ? 'block' : 'none';
+        if (icon) {
+          icon.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
+        }
+      }
+    });
+  }
+
+  // Inline Option Add / Edit inside Edit Modifier Form
   const btnAddModOption = container.querySelector('#btn-add-mod-option');
   if (btnAddModOption) {
     btnAddModOption.addEventListener('click', () => {
       const modId = store.state.settingsPath[2];
       const optNameInput = container.querySelector('#new-opt-name');
       const optPriceInput = container.querySelector('#new-opt-price');
+      const editOptIndexInput = container.querySelector('#edit-opt-index');
+      const optionFormLabel = container.querySelector('#option-form-label');
+      const cancelBtn = container.querySelector('#btn-cancel-edit-option');
+      
       const name = optNameInput ? optNameInput.value.trim() : '';
       const price = optPriceInput ? parseFloat(optPriceInput.value) : 0;
+      const editIndexRaw = editOptIndexInput ? editOptIndexInput.value : '';
 
       if (!name) {
         showToast('El nombre de la opción no puede estar vacío.', 'error');
@@ -3408,17 +3579,113 @@ function setupEventListeners(container) {
 
       const mod = store.state.modifiers.find(m => m.id === modId);
       if (mod) {
-        const newOption = {
-          id: 'opt-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') + '-' + Date.now(),
-          name,
-          price
-        };
-        const newOptions = [...(mod.options || []), newOption];
+        let newOptions = [...(mod.options || [])];
+        if (editIndexRaw !== '') {
+          // Edit existing option
+          const idx = parseInt(editIndexRaw, 10);
+          if (!isNaN(idx) && idx >= 0 && idx < newOptions.length) {
+            newOptions[idx] = {
+              ...newOptions[idx],
+              name,
+              price
+            };
+            showToast('Opción actualizada correctamente.', 'success');
+          }
+        } else {
+          // Add new option
+          const newOption = {
+            id: 'opt-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') + '-' + Date.now(),
+            name,
+            price
+          };
+          newOptions.push(newOption);
+          showToast('Opción añadida correctamente.', 'success');
+        }
+
         store.updateModifier(modId, { options: newOptions });
-        showToast('Opción añadida correctamente.', 'success');
+
+        // Reset form
+        if (optNameInput) optNameInput.value = '';
+        if (optPriceInput) optPriceInput.value = '';
+        if (editOptIndexInput) editOptIndexInput.value = '';
+        if (optionFormLabel) optionFormLabel.innerText = 'Nueva opción';
+        if (cancelBtn) cancelBtn.style.display = 'none';
       }
     });
   }
+
+  // Cancel edit option mode button
+  const btnCancelEditOption = container.querySelector('#btn-cancel-edit-option');
+  if (btnCancelEditOption) {
+    btnCancelEditOption.addEventListener('click', () => {
+      const optNameInput = container.querySelector('#new-opt-name');
+      const optPriceInput = container.querySelector('#new-opt-price');
+      const editOptIndexInput = container.querySelector('#edit-opt-index');
+      const optionFormLabel = container.querySelector('#option-form-label');
+
+      if (optNameInput) optNameInput.value = '';
+      if (optPriceInput) optPriceInput.value = '';
+      if (editOptIndexInput) editOptIndexInput.value = '';
+      if (optionFormLabel) optionFormLabel.innerText = 'Nueva opción';
+      btnCancelEditOption.style.display = 'none';
+    });
+  }
+
+  // Inline Option Edit button trigger inside Edit Modifier Form
+  container.querySelectorAll('.btn-edit-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const modId = store.state.settingsPath[2];
+      const optIndex = parseInt(btn.dataset.optionIndex, 10);
+      const mod = store.state.modifiers.find(m => m.id === modId);
+      if (mod && !isNaN(optIndex) && optIndex >= 0 && optIndex < (mod.options || []).length) {
+        const opt = mod.options[optIndex];
+        const optNameInput = container.querySelector('#new-opt-name');
+        const optPriceInput = container.querySelector('#new-opt-price');
+        const editOptIndexInput = container.querySelector('#edit-opt-index');
+        const optionFormLabel = container.querySelector('#option-form-label');
+        const cancelBtn = container.querySelector('#btn-cancel-edit-option');
+
+        if (optNameInput) optNameInput.value = opt.name;
+        if (optPriceInput) optPriceInput.value = opt.price.toFixed(2);
+        if (editOptIndexInput) editOptIndexInput.value = optIndex;
+        if (optionFormLabel) optionFormLabel.innerText = 'Editar opción';
+        if (cancelBtn) cancelBtn.style.display = 'inline-block';
+        if (optNameInput) optNameInput.focus();
+      }
+    });
+  });
+
+  // Inline Option Move Up inside Edit Modifier Form
+  container.querySelectorAll('.btn-move-up-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const modId = store.state.settingsPath[2];
+      const optIndex = parseInt(btn.dataset.optionIndex, 10);
+      const mod = store.state.modifiers.find(m => m.id === modId);
+      if (mod && !isNaN(optIndex) && optIndex > 0) {
+        const newOptions = [...(mod.options || [])];
+        const temp = newOptions[optIndex];
+        newOptions[optIndex] = newOptions[optIndex - 1];
+        newOptions[optIndex - 1] = temp;
+        store.updateModifier(modId, { options: newOptions });
+      }
+    });
+  });
+
+  // Inline Option Move Down inside Edit Modifier Form
+  container.querySelectorAll('.btn-move-down-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const modId = store.state.settingsPath[2];
+      const optIndex = parseInt(btn.dataset.optionIndex, 10);
+      const mod = store.state.modifiers.find(m => m.id === modId);
+      if (mod && !isNaN(optIndex) && optIndex < (mod.options || []).length - 1) {
+        const newOptions = [...(mod.options || [])];
+        const temp = newOptions[optIndex];
+        newOptions[optIndex] = newOptions[optIndex + 1];
+        newOptions[optIndex + 1] = temp;
+        store.updateModifier(modId, { options: newOptions });
+      }
+    });
+  });
 
   // Inline Option Delete inside Edit Modifier Form
   container.querySelectorAll('.btn-delete-option').forEach(btn => {
@@ -3461,6 +3728,283 @@ function setupEventListeners(container) {
       if (chk) chk.checked = isAssigned;
     });
   });
+
+  // Article Editor Delete Button trigger
+  const editItemDeleteBtn = container.querySelector('#edit-item-delete-btn');
+  if (editItemDeleteBtn) {
+    editItemDeleteBtn.addEventListener('click', () => {
+      const itemId = editItemDeleteBtn.dataset.deleteItemId;
+      if (itemId) {
+        showConfirm(
+          'Eliminar Artículo',
+          '¿Seguro que deseas eliminar este artículo? Esto lo quitará del menú y de todos los atajos de pantalla.',
+          () => {
+            store.deleteMenuItem(itemId);
+            store.navigateSettings(['articulos', 'todos']);
+            showToast('Artículo eliminado correctamente.', 'success');
+          },
+          null,
+          true // isDanger
+        );
+      }
+    });
+  }
+}
+
+// Generic Numeric Keypad Modal for Cash Payments / Split Payments
+function showNumericKeypadModal({ title, placeholder, onSave }) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.id = 'generic-keypad-modal';
+  modal.style.zIndex = '1100'; // Sits above payment modal (which has z-index 1000)
+
+  modal.innerHTML = `
+    <div class="modal-dialog" style="max-width: 320px;">
+      <div class="modal-header" style="border-bottom: none; padding-bottom: 0;">
+        <h3 style="margin-bottom: 0; font-weight: 700; text-align: center; color: var(--text-main);">${title}</h3>
+      </div>
+      <div class="modal-body" style="padding: 10px 0;">
+        <div class="keypad-display" id="generic-modal-keypad-display" style="font-size: 2.2rem; text-align: center; font-weight: 700; margin-bottom: 12px; color: var(--secondary); padding: 8px; background: var(--bg-item); border-radius: var(--border-radius-sm); border: 1px solid var(--border-color); min-height: 52px; display: flex; align-items: center; justify-content: center;">0.00 €</div>
+        
+        <div class="keypad-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 0 4px;">
+          <button class="keypad-btn generic-modal-num-key" data-val="1" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">1</button>
+          <button class="keypad-btn generic-modal-num-key" data-val="2" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">2</button>
+          <button class="keypad-btn generic-modal-num-key" data-val="3" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">3</button>
+          <button class="keypad-btn generic-modal-num-key" data-val="4" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">4</button>
+          <button class="keypad-btn generic-modal-num-key" data-val="5" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">5</button>
+          <button class="keypad-btn generic-modal-num-key" data-val="6" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">6</button>
+          <button class="keypad-btn generic-modal-num-key" data-val="7" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">7</button>
+          <button class="keypad-btn generic-modal-num-key" data-val="8" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">8</button>
+          <button class="keypad-btn generic-modal-num-key" data-val="9" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">9</button>
+          <button class="keypad-btn generic-modal-clear-key" style="height: 48px; font-size: 1.1rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--danger); border-radius: var(--border-radius-sm); cursor: pointer;">C</button>
+          <button class="keypad-btn generic-modal-num-key" data-val="0" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">0</button>
+          <button class="keypad-btn generic-modal-backspace-key" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-muted); border-radius: var(--border-radius-sm); cursor: pointer;">⌫</button>
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:space-between; gap:12px; border-top: 1px solid var(--border-color); padding-top: 14px; margin-top: 8px;">
+        <button class="btn btn-secondary" id="generic-modal-cancel-btn" style="height:40px; flex: 1; font-weight:600;">Cancelar</button>
+        <button class="btn btn-primary" id="generic-modal-save-btn" style="background-color: var(--secondary); border-color: var(--secondary); height:40px; flex: 1; color: white; font-weight:600;">Aceptar</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  let currentCents = 0;
+  const displayEl = modal.querySelector('#generic-modal-keypad-display');
+
+  const updateDisplay = () => {
+    if (displayEl) {
+      if (currentCents === 0 && placeholder !== undefined) {
+        displayEl.innerText = `${placeholder.toFixed(2)} €`;
+        displayEl.style.color = 'var(--text-muted)';
+        displayEl.style.opacity = '0.6';
+      } else {
+        displayEl.innerText = `${(currentCents / 100).toFixed(2)} €`;
+        displayEl.style.color = 'var(--secondary)';
+        displayEl.style.opacity = '1';
+      }
+    }
+  };
+
+  updateDisplay();
+
+  modal.querySelectorAll('.generic-modal-num-key').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const val = btn.dataset.val;
+      if (String(currentCents).length < 7) {
+        if (currentCents === 0) {
+          currentCents = parseInt(val, 10);
+        } else {
+          currentCents = parseInt(String(currentCents) + val, 10);
+        }
+        updateDisplay();
+      }
+    });
+  });
+
+  const clearBtn = modal.querySelector('.generic-modal-clear-key');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      currentCents = 0;
+      updateDisplay();
+    });
+  }
+
+  const backspaceBtn = modal.querySelector('.generic-modal-backspace-key');
+  if (backspaceBtn) {
+    backspaceBtn.addEventListener('click', () => {
+      if (currentCents > 0) {
+        const str = String(currentCents);
+        if (str.length > 1) {
+          currentCents = parseInt(str.substring(0, str.length - 1), 10);
+        } else {
+          currentCents = 0;
+        }
+        updateDisplay();
+      }
+    });
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key >= '0' && e.key <= '9') {
+      if (String(currentCents).length < 7) {
+        if (currentCents === 0) {
+          currentCents = parseInt(e.key, 10);
+        } else {
+          currentCents = parseInt(String(currentCents) + e.key, 10);
+        }
+        updateDisplay();
+      }
+    } else if (e.key === 'Backspace') {
+      if (currentCents > 0) {
+        const str = String(currentCents);
+        if (str.length > 1) {
+          currentCents = parseInt(str.substring(0, str.length - 1), 10);
+        } else {
+          currentCents = 0;
+        }
+        updateDisplay();
+      }
+    } else if (e.key === 'Escape') {
+      closeModal();
+    } else if (e.key === 'Enter') {
+      saveValue();
+    }
+  };
+
+  window.addEventListener('keydown', handleKeyDown);
+
+  const closeModal = () => {
+    window.removeEventListener('keydown', handleKeyDown);
+    modal.remove();
+  };
+
+  const saveValue = () => {
+    const finalAmount = currentCents === 0 && placeholder !== undefined ? placeholder : (currentCents / 100);
+    onSave(finalAmount);
+    closeModal();
+  };
+
+  modal.querySelector('#generic-modal-cancel-btn').addEventListener('click', closeModal);
+  modal.querySelector('#generic-modal-save-btn').addEventListener('click', saveValue);
+}
+
+// Price Edit Modal Dialog
+function showPriceEditModal(ticketItemId, currentPrice) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.id = 'price-edit-modal';
+
+  modal.innerHTML = `
+    <div class="modal-dialog" style="max-width: 320px;">
+      <div class="modal-header" style="border-bottom: none; padding-bottom: 0;">
+        <h3 style="margin-bottom: 0; font-weight: 700; text-align: center;">Editar Precio Base</h3>
+      </div>
+      <div class="modal-body" style="padding: 10px 0;">
+        <div class="keypad-display" id="modal-keypad-display" style="font-size: 2.2rem; text-align: center; font-weight: 700; margin-bottom: 12px; color: var(--secondary); padding: 8px; background: var(--bg-item); border-radius: var(--border-radius-sm); border: 1px solid var(--border-color);">0.00 €</div>
+        
+        <div class="keypad-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 0 4px;">
+          <button class="keypad-btn modal-num-key" data-val="1" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">1</button>
+          <button class="keypad-btn modal-num-key" data-val="2" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">2</button>
+          <button class="keypad-btn modal-num-key" data-val="3" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">3</button>
+          <button class="keypad-btn modal-num-key" data-val="4" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">4</button>
+          <button class="keypad-btn modal-num-key" data-val="5" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">5</button>
+          <button class="keypad-btn modal-num-key" data-val="6" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">6</button>
+          <button class="keypad-btn modal-num-key" data-val="7" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">7</button>
+          <button class="keypad-btn modal-num-key" data-val="8" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">8</button>
+          <button class="keypad-btn modal-num-key" data-val="9" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">9</button>
+          <button class="keypad-btn modal-clear-key" style="height: 48px; font-size: 1.1rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--danger); border-radius: var(--border-radius-sm); cursor: pointer;">C</button>
+          <button class="keypad-btn modal-num-key" data-val="0" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); border-radius: var(--border-radius-sm); cursor: pointer;">0</button>
+          <button class="keypad-btn modal-backspace-key" style="height: 48px; font-size: 1.25rem; font-weight:600; background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-muted); border-radius: var(--border-radius-sm); cursor: pointer;">⌫</button>
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:space-between; gap:12px; border-top: 1px solid var(--border-color); padding-top: 14px; margin-top: 8px;">
+        <button class="btn btn-secondary" id="price-edit-cancel-btn" style="height:40px; flex: 1; font-weight:600;">Cancelar</button>
+        <button class="btn btn-primary" id="price-edit-save-btn" style="background-color: var(--secondary); border-color: var(--secondary); height:40px; flex: 1; color: white; font-weight:600;">Guardar</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+  
+  let currentCents = Math.round(currentPrice * 100);
+  const displayEl = modal.querySelector('#modal-keypad-display');
+  
+  const updateDisplay = () => {
+    if (displayEl) {
+      displayEl.innerText = `${(currentCents / 100).toFixed(2)} €`;
+    }
+  };
+  
+  updateDisplay();
+
+  modal.querySelectorAll('.modal-num-key').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const val = btn.dataset.val;
+      if (String(currentCents).length < 7) {
+        if (currentCents === 0) {
+          currentCents = parseInt(val, 10);
+        } else {
+          currentCents = parseInt(String(currentCents) + val, 10);
+        }
+        updateDisplay();
+      }
+    });
+  });
+
+  modal.querySelector('.modal-clear-key').addEventListener('click', () => {
+    currentCents = 0;
+    updateDisplay();
+  });
+
+  modal.querySelector('.modal-backspace-key').addEventListener('click', () => {
+    let s = String(currentCents);
+    s = s.slice(0, -1);
+    if (!s || s === '0') {
+      currentCents = 0;
+    } else {
+      currentCents = parseInt(s, 10);
+    }
+    updateDisplay();
+  });
+
+  modal.querySelector('#price-edit-cancel-btn').addEventListener('click', () => {
+    modal.remove();
+  });
+
+  modal.querySelector('#price-edit-save-btn').addEventListener('click', () => {
+    const val = currentCents / 100;
+    store.updateItemBasePrice(ticketItemId, val);
+    modal.remove();
+  });
+
+  const keydownHandler = (e) => {
+    if (e.key >= '0' && e.key <= '9') {
+      if (String(currentCents).length < 7) {
+        if (currentCents === 0) currentCents = parseInt(e.key, 10);
+        else currentCents = parseInt(String(currentCents) + e.key, 10);
+        updateDisplay();
+      }
+    } else if (e.key === 'Backspace') {
+      let s = String(currentCents);
+      s = s.slice(0, -1);
+      currentCents = (!s || s === '0') ? 0 : parseInt(s, 10);
+      updateDisplay();
+    } else if (e.key === 'Escape') {
+      modal.querySelector('#price-edit-cancel-btn').click();
+    } else if (e.key === 'Enter') {
+      modal.querySelector('#price-edit-save-btn').click();
+    }
+  };
+  
+  document.addEventListener('keydown', keydownHandler);
+  
+  const originalRemove = modal.remove;
+  modal.remove = function() {
+    document.removeEventListener('keydown', keydownHandler);
+    originalRemove.call(modal);
+  };
 }
 
 // Bootstrapper

@@ -250,6 +250,7 @@ class Store {
     if (tab === 'inicio') {
       this.state.gridPath = ['root'];
     }
+    this.state.settingsPath = [];
     this.notify();
   }
 
@@ -275,6 +276,7 @@ class Store {
     this.state.activeTab = 'inicio';
     this.state.activePosTab = 'atajos';
     this.state.gridPath = ['root'];
+    this.state.settingsPath = [];
     this.notify();
   }
 
@@ -369,7 +371,7 @@ class Store {
               itemId: itemId,
               name: updatedData.name || oldItem.name,
               price: updatedData.price !== undefined ? parseFloat(updatedData.price) : oldItem.price,
-              image: oldItem.image
+              image: updatedData.image !== undefined ? updatedData.image : oldItem.image
             };
           }
         }
@@ -388,7 +390,8 @@ class Store {
               this.state.gridItems[key][idx] = {
                 ...gridItem,
                 name: updatedData.name || gridItem.name,
-                price: updatedData.price !== undefined ? parseFloat(updatedData.price) : gridItem.price
+                price: updatedData.price !== undefined ? parseFloat(updatedData.price) : gridItem.price,
+                image: updatedData.image !== undefined ? updatedData.image : gridItem.image
               };
               if (!affectedGridKeys.includes(key)) affectedGridKeys.push(key);
             }
@@ -409,6 +412,35 @@ class Store {
     this.state.isEditingGrid = !this.state.isEditingGrid;
     this.notify();
   }
+
+  deleteMenuItem(itemId) {
+    // Remove from menuItems
+    this.state.menuItems = this.state.menuItems.filter(i => i.id !== itemId);
+
+    // Remove from all grid slots
+    Object.keys(this.state.gridItems).forEach(key => {
+      this.state.gridItems[key] = this.state.gridItems[key].map(slot =>
+        slot && slot.type === 'article' && slot.itemId === itemId ? null : slot
+      );
+      upsertGridItems(key, this.state.gridItems[key]);
+    });
+
+    // Remove from all modifier assignedItems
+    this.state.modifiers.forEach((mod, idx) => {
+      if ((mod.assignedItems || []).includes(itemId)) {
+        this.state.modifiers[idx].assignedItems = mod.assignedItems.filter(id => id !== itemId);
+        upsertModifier(this.state.modifiers[idx]);
+      }
+    });
+
+    // Delete from DB
+    import('./db.js').then(db => {
+      if (db.deleteMenuItem) db.deleteMenuItem(itemId);
+    });
+
+    this.notify();
+  }
+
 
   addGridShortcut(gridKey, slotIndex, shortcutData) {
     if (this.state.gridItems[gridKey]) {
@@ -608,6 +640,28 @@ class Store {
     this.notify();
   }
 
+  updateItemBasePrice(ticketItemId, newPrice) {
+    if (this.state.selectedTableId !== null) {
+      const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
+      if (tableIndex === -1) return;
+      const table = this.state.tables[tableIndex];
+      const newItems = [...table.items];
+      const idx = newItems.findIndex(i => i.ticketItemId === ticketItemId);
+      if (idx > -1) {
+        newItems[idx] = { ...newItems[idx], price: parseFloat(newPrice) };
+        this.state.tables[tableIndex] = { ...table, items: newItems };
+      }
+    } else {
+      const newItems = [...this.state.directSaleTicket.items];
+      const idx = newItems.findIndex(i => i.ticketItemId === ticketItemId);
+      if (idx > -1) {
+        newItems[idx] = { ...newItems[idx], price: parseFloat(newPrice) };
+        this.state.directSaleTicket.items = newItems;
+      }
+    }
+    this.notify();
+  }
+
   updateItemQty(ticketItemId, change) {
     if (this.state.selectedTableId !== null) {
       const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
@@ -708,10 +762,24 @@ class Store {
     if (modIndex > -1) {
       const oldMod = this.state.modifiers[modIndex];
       
+      let newOptions = options;
+      if (options !== undefined) {
+        newOptions = options.map((opt, idx) => {
+          let suffix = opt.id;
+          if (/^\d{4}_/.test(suffix)) {
+            suffix = suffix.substring(5);
+          }
+          return {
+            ...opt,
+            id: `${String(idx).padStart(4, '0')}_${suffix}`
+          };
+        });
+      }
+
       this.state.modifiers[modIndex] = {
         ...oldMod,
         name: name !== undefined ? name : oldMod.name,
-        options: options !== undefined ? options : oldMod.options,
+        options: newOptions !== undefined ? newOptions : oldMod.options,
         assignedItems: assignedItems !== undefined ? assignedItems : oldMod.assignedItems
       };
       
