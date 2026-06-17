@@ -64,6 +64,7 @@ let keypadAmount = '0'; // Accumulated cents as string
 let productSearchText = '';
 let isDrawerOpen = false;
 let dbStatus = 'loading'; // 'loading' | 'connected' | 'fallback' | 'error'
+let selectedReportsTab = 'horas'; // 'horas' | 'diaria' | 'semanal' | 'mensual' | 'anual'
 
 // ─────────────────────────────────────────
 // Toast notification system
@@ -611,6 +612,10 @@ function renderAjustesView(state) {
             <span>Datos Fiscales</span>
             ${chevron}
           </button>
+          <button class="settings-tree-item" id="settings-to-informes">
+            <span>Informes y Ventas</span>
+            ${chevron}
+          </button>
           
           <div style="margin-top: 24px; border-top: 1px solid var(--border-color); padding-top: 16px;">
             <div style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Configuración de Dispositivo</div>
@@ -712,6 +717,397 @@ function renderAjustesView(state) {
               Guardar Cambios
             </button>
           </form>
+        </div>
+      </div>
+    `;
+  }
+
+  // 1c. Informes y Ventas
+  if (path.length === 1 && path[0] === 'informes') {
+    // Helper function to safely parse transaction dates
+    const getTxDate = (tx) => {
+      if (tx.createdAt) return new Date(tx.createdAt);
+      if (tx.date) {
+        const [datePart, timePart] = tx.date.split(', ');
+        const [day, month, year] = datePart.split('/').map(Number);
+        const [hour, minute] = timePart.split(':').map(Number);
+        return new Date(year, month - 1, day, hour, minute);
+      }
+      return new Date();
+    };
+
+    // Calculate overall sales
+    let totalSales = 0;
+    let cashSales = 0;
+    let cardSales = 0;
+    const txCount = state.transactions.length;
+
+    state.transactions.forEach(tx => {
+      const val = Number(tx.total || 0);
+      totalSales += val;
+      const method = (tx.paymentMethod || '').toLowerCase().trim();
+      if (method.includes('efectivo')) {
+        cashSales += val;
+      } else if (method.includes('tarjeta')) {
+        cardSales += val;
+      } else {
+        cardSales += val; 
+      }
+    });
+
+    // Time-based groupings
+    const hourlySales = Array(24).fill(0);
+    const dailySales = {};
+    const weeklySales = {};
+    const monthlySales = {};
+    const annualSales = {};
+
+    // Article and Modifier sales grouping
+    const itemSummary = {};
+
+    state.transactions.forEach(tx => {
+      const val = Number(tx.total || 0);
+      const d = getTxDate(tx);
+
+      // Hourly
+      const hour = d.getHours();
+      hourlySales[hour] += val;
+
+      // Daily
+      const dayStr = d.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });
+      dailySales[dayStr] = (dailySales[dayStr] || 0) + val;
+
+      // Weekly
+      const startOfWeek = new Date(d);
+      const dayVal = startOfWeek.getDay();
+      const diff = startOfWeek.getDate() - dayVal + (dayVal === 0 ? -6 : 1);
+      startOfWeek.setDate(diff);
+      const weekStr = `Sem. ${startOfWeek.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}`;
+      weeklySales[weekStr] = (weeklySales[weekStr] || 0) + val;
+
+      // Monthly
+      const monthStr = d.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+      monthlySales[monthStr] = (monthlySales[monthStr] || 0) + val;
+
+      // Annual
+      const yearStr = d.getFullYear().toString();
+      annualSales[yearStr] = (annualSales[yearStr] || 0) + val;
+
+      // Item & Modifiers aggregation
+      const items = Array.isArray(tx.items) ? tx.items : [];
+      items.forEach(item => {
+        const itemId = item.id || item.name;
+        if (!itemSummary[itemId]) {
+          itemSummary[itemId] = {
+            name: item.name,
+            qty: 0,
+            revenue: 0,
+            modifiers: {}
+          };
+        }
+        itemSummary[itemId].qty += item.qty;
+        itemSummary[itemId].revenue += (item.total || (item.price * item.qty));
+
+        const selectedOpts = Array.isArray(item.selectedOptions) ? item.selectedOptions : [];
+        selectedOpts.forEach(opt => {
+          const optId = opt.id || opt.name;
+          if (!itemSummary[itemId].modifiers[optId]) {
+            itemSummary[itemId].modifiers[optId] = {
+              name: opt.name,
+              qty: 0
+            };
+          }
+          itemSummary[itemId].modifiers[optId].qty += (opt.qty * item.qty);
+        });
+      });
+    });
+
+    // Build the selected tab data and chart representation
+    let chartHTML = '';
+    let periodsListHTML = '';
+    let maxVal = 0.01; // Avoid divide by zero
+
+    if (selectedReportsTab === 'horas') {
+      // Find range of active hours
+      let minH = 8;
+      let maxH = 20;
+      for (let h = 0; h < 24; h++) {
+        if (hourlySales[h] > 0) {
+          if (h < minH) minH = h;
+          if (h > maxH) maxH = h;
+        }
+      }
+      
+      const activeHours = [];
+      for (let h = minH; h <= maxH; h++) {
+        activeHours.push(h);
+        if (hourlySales[h] > maxVal) maxVal = hourlySales[h];
+      }
+
+      // Render SVG Bar Chart
+      const barCount = activeHours.length;
+      const svgW = 500;
+      const svgH = 180;
+      const paddingX = 40;
+      const paddingY = 30;
+      const chartW = svgW - paddingX * 2;
+      const chartH = svgH - paddingY * 2;
+      const barW = (chartW / barCount) * 0.6;
+      const barGap = (chartW / barCount) * 0.4;
+
+      let barsSVG = '';
+      let labelsSVG = '';
+      
+      activeHours.forEach((h, index) => {
+        const sales = hourlySales[h];
+        const hPct = sales / maxVal;
+        const bHeight = hPct * chartH;
+        const bX = paddingX + index * (barW + barGap) + barGap / 2;
+        const bY = svgH - paddingY - bHeight;
+
+        barsSVG += `
+          <g>
+            <rect class="chart-bar-hover" x="${bX}" y="${bY}" width="${barW}" height="${bHeight}" fill="url(#barGrad)" rx="3" ry="3">
+              <title>${h.toString().padStart(2, '0')}:00 - ${sales.toFixed(2)}€</title>
+            </rect>
+          </g>
+        `;
+        
+        if (barCount <= 12 || index % 2 === 0) {
+          labelsSVG += `
+            <text x="${bX + barW / 2}" y="${svgH - 10}" fill="var(--text-muted)" font-size="10" font-family="var(--font-family)" font-weight="600" text-anchor="middle">
+              ${h.toString().padStart(2, '0')}h
+            </text>
+          `;
+        }
+      });
+
+      chartHTML = `
+        <svg viewBox="0 0 ${svgW} ${svgH}" width="100%" height="100%">
+          <defs>
+            <linearGradient id="barGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="var(--secondary)" />
+              <stop offset="100%" stop-color="#059669" stop-opacity="0.6" />
+            </linearGradient>
+          </defs>
+          <line x1="${paddingX}" y1="${paddingY}" x2="${svgW - paddingX}" y2="${paddingY}" stroke="var(--border-color)" stroke-width="1" stroke-dasharray="4" />
+          <line x1="${paddingX}" y1="${paddingY + chartH / 2}" x2="${svgW - paddingX}" y2="${paddingY + chartH / 2}" stroke="var(--border-color)" stroke-width="1" stroke-dasharray="4" />
+          <line x1="${paddingX}" y1="${svgH - paddingY}" x2="${svgW - paddingX}" y2="${svgH - paddingY}" stroke="var(--border-color)" stroke-width="1.5" />
+          
+          <text x="${paddingX - 10}" y="${paddingY + 4}" fill="var(--text-muted)" font-size="9" font-weight="700" text-anchor="end">${maxVal.toFixed(0)}€</text>
+          <text x="${paddingX - 10}" y="${svgH - paddingY}" fill="var(--text-muted)" font-size="9" font-weight="700" text-anchor="end">0€</text>
+          
+          ${barsSVG}
+          ${labelsSVG}
+        </svg>
+      `;
+
+      activeHours.forEach(h => {
+        const val = hourlySales[h];
+        if (val > 0) {
+          const pct = (val / maxVal) * 100;
+          periodsListHTML += `
+            <div class="reports-period-row">
+              <div class="reports-period-info">
+                <span>${h.toString().padStart(2, '0')}:00 - ${(h + 1).toString().padStart(2, '0')}:00</span>
+                <span>${val.toFixed(2)}€</span>
+              </div>
+              <div class="reports-period-progress-bg">
+                <div class="reports-period-progress-fill" style="width: ${pct}%;"></div>
+              </div>
+            </div>
+          `;
+        }
+      });
+
+      if (!periodsListHTML) {
+        periodsListHTML = `<p style="text-align:center; padding:12px; color:var(--text-muted); font-size:0.85rem;">No hay ventas registradas por horas.</p>`;
+      }
+    } else {
+      let activeGroup = {};
+      if (selectedReportsTab === 'diaria') activeGroup = dailySales;
+      else if (selectedReportsTab === 'semanal') activeGroup = weeklySales;
+      else if (selectedReportsTab === 'mensual') activeGroup = monthlySales;
+      else if (selectedReportsTab === 'anual') activeGroup = annualSales;
+
+      const keys = Object.keys(activeGroup);
+      
+      keys.forEach(k => {
+        if (activeGroup[k] > maxVal) maxVal = activeGroup[k];
+      });
+
+      if (keys.length > 0) {
+        const barCount = keys.length;
+        const svgW = 500;
+        const svgH = 180;
+        const paddingX = 45;
+        const paddingY = 30;
+        const chartW = svgW - paddingX * 2;
+        const chartH = svgH - paddingY * 2;
+        const barW = (chartW / barCount) * 0.5;
+        const barGap = (chartW / barCount) * 0.5;
+
+        let barsSVG = '';
+        let labelsSVG = '';
+
+        keys.forEach((k, index) => {
+          const sales = activeGroup[k];
+          const hPct = sales / maxVal;
+          const bHeight = hPct * chartH;
+          const bX = paddingX + index * (barW + barGap) + barGap / 2;
+          const bY = svgH - paddingY - bHeight;
+
+          barsSVG += `
+            <g>
+              <rect class="chart-bar-hover" x="${bX}" y="${bY}" width="${barW}" height="${bHeight}" fill="url(#barGrad)" rx="3" ry="3">
+                <title>${k}: ${sales.toFixed(2)}€</title>
+              </rect>
+            </g>
+          `;
+
+          if (barCount <= 8 || index % Math.ceil(barCount / 8) === 0) {
+            labelsSVG += `
+              <text x="${bX + barW / 2}" y="${svgH - 10}" fill="var(--text-muted)" font-size="9" font-family="var(--font-family)" font-weight="600" text-anchor="middle">
+                ${k}
+              </text>
+            `;
+          }
+        });
+
+        chartHTML = `
+          <svg viewBox="0 0 ${svgW} ${svgH}" width="100%" height="100%">
+            <defs>
+              <linearGradient id="barGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stop-color="var(--secondary)" />
+                <stop offset="100%" stop-color="#059669" stop-opacity="0.6" />
+              </linearGradient>
+            </defs>
+            <line x1="${paddingX}" y1="${paddingY}" x2="${svgW - paddingX}" y2="${paddingY}" stroke="var(--border-color)" stroke-width="1" stroke-dasharray="4" />
+            <line x1="${paddingX}" y1="${paddingY + chartH / 2}" x2="${svgW - paddingX}" y2="${paddingY + chartH / 2}" stroke="var(--border-color)" stroke-width="1" stroke-dasharray="4" />
+            <line x1="${paddingX}" y1="${svgH - paddingY}" x2="${svgW - paddingX}" y2="${svgH - paddingY}" stroke="var(--border-color)" stroke-width="1.5" />
+            <text x="${paddingX - 10}" y="${paddingY + 4}" fill="var(--text-muted)" font-size="9" font-weight="700" text-anchor="end">${maxVal.toFixed(0)}€</text>
+            <text x="${paddingX - 10}" y="${svgH - paddingY}" fill="var(--text-muted)" font-size="9" font-weight="700" text-anchor="end">0€</text>
+            ${barsSVG}
+            ${labelsSVG}
+          </svg>
+        `;
+
+        keys.forEach(k => {
+          const val = activeGroup[k];
+          const pct = (val / maxVal) * 100;
+          periodsListHTML += `
+            <div class="reports-period-row">
+              <div class="reports-period-info">
+                <span>${k}</span>
+                <span>${val.toFixed(2)}€</span>
+              </div>
+              <div class="reports-period-progress-bg">
+                <div class="reports-period-progress-fill" style="width: ${pct}%;"></div>
+              </div>
+            </div>
+          `;
+        });
+      } else {
+        chartHTML = `
+          <div style="height:100%; display:flex; justify-content:center; align-items:center; color:var(--text-muted); font-size:0.9rem;">
+            No hay datos suficientes para generar el gráfico.
+          </div>
+        `;
+        periodsListHTML = `<p style="text-align:center; padding:12px; color:var(--text-muted); font-size:0.85rem;">No hay ventas registradas.</p>`;
+      }
+    }
+
+    // Sort item breakdown by revenue descending
+    const sortedItems = Object.values(itemSummary).sort((a, b) => b.revenue - a.revenue);
+    let itemsBreakdownHTML = '';
+    
+    sortedItems.forEach(item => {
+      const modifierRows = Object.values(item.modifiers).sort((a, b) => b.qty - a.qty).map(opt => `
+        <div class="reports-modifier-row">
+          <span class="reports-modifier-name">
+            <span style="color:var(--text-muted); font-style:italic;">+ ${opt.name}</span>
+          </span>
+          <span class="reports-modifier-qty">x${opt.qty}</span>
+        </div>
+      `).join('');
+
+      itemsBreakdownHTML += `
+        <div class="reports-item-card">
+          <div class="reports-item-main">
+            <div class="reports-item-name-col">
+              <span class="reports-item-name">${item.name}</span>
+              <span class="reports-item-qty">Vendidos: ${item.qty} uds.</span>
+            </div>
+            <span class="reports-item-revenue">${item.revenue.toFixed(2)}€</span>
+          </div>
+          ${modifierRows.length > 0 ? `
+            <div class="reports-item-modifiers-list">
+              <div style="font-size:0.68rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:2px; letter-spacing:0.04em;">Modificadores:</div>
+              ${modifierRows}
+            </div>
+          ` : ''}
+        </div>
+      `;
+    });
+
+    if (!itemsBreakdownHTML) {
+      itemsBreakdownHTML = `<p style="text-align:center; padding:20px; color:var(--text-muted); font-size:0.85rem;">No se han vendido artículos todavía.</p>`;
+    }
+
+    return `
+      <div class="view-container" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
+        <div class="settings-nav-header">
+          <button class="settings-back-arrow-btn" id="settings-back-btn">
+            ${backArrow} Ajustes
+          </button>
+        </div>
+        <h2 class="settings-nav-title" style="padding-bottom:10px;">Informes de Ventas</h2>
+        
+        <div style="flex-grow:1; overflow-y:auto; padding-bottom:32px;">
+          <!-- 1. KPIs Section -->
+          <div class="reports-kpis-grid">
+            <div class="reports-kpi-card kpi-total">
+              <span class="reports-kpi-label">Ventas Totales</span>
+              <span class="reports-kpi-val">${totalSales.toFixed(2)}€</span>
+              <span style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">${txCount} transacciones</span>
+            </div>
+            <div class="reports-kpi-card kpi-cash">
+              <span class="reports-kpi-label">Efectivo</span>
+              <span class="reports-kpi-val" style="color:#f59e0b;">${cashSales.toFixed(2)}€</span>
+            </div>
+            <div class="reports-kpi-card kpi-card-pay">
+              <span class="reports-kpi-label">Tarjeta</span>
+              <span class="reports-kpi-val" style="color:#3b82f6;">${cardSales.toFixed(2)}€</span>
+            </div>
+          </div>
+
+          <!-- 2. Time-Period Tabs -->
+          <div class="reports-tabs-bar">
+            <button class="reports-tab-btn ${selectedReportsTab === 'horas' ? 'active' : ''}" data-tab="horas">Por Horas</button>
+            <button class="reports-tab-btn ${selectedReportsTab === 'diaria' ? 'active' : ''}" data-tab="diaria">Diario</button>
+            <button class="reports-tab-btn ${selectedReportsTab === 'semanal' ? 'active' : ''}" data-tab="semanal">Semanal</button>
+            <button class="reports-tab-btn ${selectedReportsTab === 'mensual' ? 'active' : ''}" data-tab="mensual">Mensual</button>
+            <button class="reports-tab-btn ${selectedReportsTab === 'anual' ? 'active' : ''}" data-tab="anual">Anual</button>
+          </div>
+
+          <!-- 3. Chart Container -->
+          <div class="reports-chart-card">
+            <div class="reports-chart-title">Desglose de Facturación</div>
+            <div class="chart-svg-container">
+              ${chartHTML}
+            </div>
+            <div class="reports-period-list">
+              ${periodsListHTML}
+            </div>
+          </div>
+
+          <!-- 4. Items breakdown section -->
+          <div class="reports-items-section">
+            <h3 style="margin:0 0 12px 0; font-size:1.05rem; font-weight:700; color:var(--text-main);">Artículos y Modificadores</h3>
+            <div class="reports-items-list">
+              ${itemsBreakdownHTML}
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -3341,6 +3737,20 @@ function setupEventListeners(container) {
       showToast('Datos fiscales guardados y sincronizados.', 'success');
     });
   }
+
+  const toInformesBtn = container.querySelector('#settings-to-informes');
+  if (toInformesBtn) {
+    toInformesBtn.addEventListener('click', () => {
+      store.navigateSettings(['informes']);
+    });
+  }
+
+  container.querySelectorAll('.reports-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedReportsTab = btn.dataset.tab;
+      store.notify();
+    });
+  });
 
   const toTodosArticulosBtn = container.querySelector('#settings-to-todos-articulos');
   if (toTodosArticulosBtn) {
