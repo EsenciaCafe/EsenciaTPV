@@ -2799,5 +2799,49 @@ body.light-theme .btn-quick-pay {
   padding: 2px 6px;
   border-radius: 8px;
   font-size: 0.7rem;
+  color: var(--text-muted);
 }
 
+/* ── Added for Reports Redesign and Refunds ── */
+.reports-breakdown-table th, 
+.reports-breakdown-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border-color);
+  font-family: var(--font-family);
+  color: var(--text-main);
+}
+.reports-breakdown-table tbody tr:hover {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+.text-danger {
+  color: var(--danger) !important;
+}
+.badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.badge--danger {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+.badge--warning {
+  background-color: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+.pay-btn-opt.danger {
+  background-color: var(--danger) !important;
+  color: white !important;
+}
+.pay-btn-opt.danger:hover {
+  background-color: #dc2626 !important;
+}
+.report-selector-card input[type="date"]::-webkit-calendar-picker-indicator,
+.report-selector-card input[type="month"]::-webkit-calendar-picker-indicator {
+  filter: invert(var(--calendar-indicator-invert, 0));
+}

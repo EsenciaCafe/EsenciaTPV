@@ -74,7 +74,13 @@ class Store {
       categories: [],
       modifiers: [],
       menuItems: [],
-      gridItems: {}
+      gridItems: {},
+
+      // ── REPORT NAVIGATION ─────────────────────────────────────
+      // ISO date string YYYY-MM-DD (default = today)
+      selectedReportDate: new Date().toISOString().slice(0, 10),
+      // Month string YYYY-MM (default = current month)
+      selectedReportMonth: new Date().toISOString().slice(0, 7),
     };
     
     this.restoreDiningState();
@@ -217,16 +223,21 @@ class Store {
           if (Array.isArray(tpvState.tables) && tpvState.tables.length > 0) {
             this.state.tables = tpvState.tables;
           }
+          // Restore direct sale ticket (but keep legal_data separate)
           if (tpvState.direct_sale) {
-            this.state.directSaleTicket = tpvState.direct_sale;
-            if (tpvState.direct_sale.legal_data) {
+            // Merge legal from direct_sale.legal_data (embedded fallback)
+            if (tpvState.direct_sale.legal_data && Object.keys(tpvState.direct_sale.legal_data).length > 0) {
               this.state.legal = { ...this.state.legal, ...tpvState.direct_sale.legal_data };
             }
+            // Store directSaleTicket without legal_data inside it
+            const { legal_data: _ld, ...directSaleClean } = tpvState.direct_sale;
+            this.state.directSaleTicket = directSaleClean;
           }
           if (Array.isArray(tpvState.transactions)) {
             this.state.transactions = tpvState.transactions;
           }
-          if (tpvState.legal_data) {
+          // Top-level legal_data column (if the column exists in Supabase)
+          if (tpvState.legal_data && Object.keys(tpvState.legal_data).length > 0) {
             this.state.legal = { ...this.state.legal, ...tpvState.legal_data };
           }
         }
@@ -832,7 +843,9 @@ class Store {
       
       let newOptions = options;
       if (options !== undefined) {
-        newOptions = options.map((opt, idx) => {
+        // Sort options alphabetically by name before reindexing
+        const sorted = [...options].sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+        newOptions = sorted.map((opt, idx) => {
           let suffix = opt.id;
           if (/^\d{4}_/.test(suffix)) {
             suffix = suffix.substring(5);
@@ -1109,8 +1122,51 @@ class Store {
     if (!table || !table.items) return 0;
     return table.items.reduce((sum, item) => sum + this.getItemTotal(item), 0);
   }
-}
 
+  // ─────────────────────────────────────────────────────────────────
+  // Devoluciones / Refunds
+  // ─────────────────────────────────────────────────────────────────
+  registerRefund({ parentTransactionId, amount, reason = '' }) {
+    const parent = this.state.transactions.find(t => t.id === parentTransactionId);
+    if (!parent) return null;
+
+    const refundAmount = parseFloat(amount);
+    if (isNaN(refundAmount) || refundAmount <= 0) return null;
+
+    const dateNow = new Date();
+    const dateStr = `${String(dateNow.getDate()).padStart(2, '0')}/${String(dateNow.getMonth() + 1).padStart(2, '0')}/${dateNow.getFullYear()}`;
+    const timeStr = `${String(dateNow.getHours()).padStart(2, '0')}:${String(dateNow.getMinutes()).padStart(2, '0')}`;
+
+    const refundTx = {
+      id: `DEV-${Date.now()}`,
+      type: 'refund',
+      parentId: parentTransactionId,
+      date: `${dateStr}, ${timeStr}`,
+      createdAt: dateNow.toISOString(),
+      table: parent.table,
+      total: -Math.abs(refundAmount),
+      paymentMethod: parent.paymentMethod,
+      reason,
+      itemsCount: 0,
+      items: [],
+      legalData: { ...this.state.legal }
+    };
+
+    // Mark the original transaction
+    const parentIdx = this.state.transactions.findIndex(t => t.id === parentTransactionId);
+    if (parentIdx > -1) {
+      this.state.transactions[parentIdx] = {
+        ...this.state.transactions[parentIdx],
+        hasRefund: true,
+        refundAmount: refundAmount
+      };
+    }
+
+    this.state.transactions.unshift(refundTx);
+    this.notify();
+    return refundTx;
+  }
+}
 // Single instance of store across the app
 export const store = new Store();
 export default store;

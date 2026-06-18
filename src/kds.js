@@ -22,6 +22,7 @@ const CONFIG_KEY = 'kds-config-v3';
 const DEFAULT_CONFIG = {
   columns:             3,
   showOnlyOccupied:    false,      // false = show all tables (empty = green)
+  showOnlyActive:      true,       // true = hide ready/empty cards, show only waiting/urgent
   visibleTableIds:     null,       // null = all
   yellowToRedMinutes:  10,
   collapsedItemCount:  4,          // max items shown when card is collapsed
@@ -323,8 +324,9 @@ function renderItem(item, deliveredItems) {
   const showPrice    = state.config.showPrices;
 
   const opts = (item.selectedOptions || []).length > 0
-    ? `<div class="kds-item-opts">${item.selectedOptions.map(o => `+ ${o.name}${o.qty > 1 ? ` ×${o.qty}` : ''}`).join(' · ')}</div>`
+    ? `<div class="kds-item-opts">${item.selectedOptions.map(o => `<span class="kds-item-opt">+ ${o.name}${o.qty > 1 ? ` ×${o.qty}` : ''}</span>`).join('')}</div>`
     : '';
+
 
   const priceSpan = (qty) => showPrice
     ? `<span class="kds-item-price">${getItemTotal({ ...item, qty }).toFixed(2)}€</span>`
@@ -369,7 +371,8 @@ function renderItem(item, deliveredItems) {
 // RENDER — Card
 // ══════════════════════════════════════════════════════════════════════════════
 
-function renderCard(table) {
+function renderCard(table, orderNum) {
+  // orderNum: 1-based position in the sorted visible list (undefined = not shown)
   const kds          = getTableKds(table.id);
   const cardClass    = getCardClass(table.id);
   const elapsed      = getElapsedMinutes(table.id);
@@ -410,6 +413,7 @@ function renderCard(table) {
   return `
     <div class="kds-card ${cardClass} ${fontClass}" data-table-id="${table.id}">
       <div class="kds-card-header">
+        ${orderNum != null ? `<span class="kds-card-order-num">#${orderNum}</span>` : ''}
         <span class="kds-card-name">${table.name}</span>
         ${timeBadge}
       </div>
@@ -431,22 +435,58 @@ function renderCard(table) {
 function renderGrid() {
   const visible = getVisibleTables();
   if (visible.length === 0) {
+    // Determine why it's empty for a better message
+    const hasAnyOccupied = state.tables.some(t => (t.items || []).length > 0);
+    const allReady = hasAnyOccupied && state.tables
+      .filter(t => (t.items || []).length > 0)
+      .every(t => getTableKds(t.id).status === 'ready');
+
+    if (allReady && state.config.showOnlyActive) {
+      return `
+        <div class="kds-empty kds-empty-clear">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:64px;height:64px;color:#10b981;">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <p style="color:#10b981;font-size:1.3rem;font-weight:700;">¡Todo listo!</p>
+          <p style="opacity:.6;font-size:.9rem;">No hay comandas pendientes de preparar</p>
+        </div>`;
+    }
+
     return `
       <div class="kds-empty">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:56px;height:56px;">
           <path d="M4 10h16M6 10V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3M7 10l-2 9M17 10l2 9M9 14h6"/>
         </svg>
-        <p>No hay mesas configuradas</p>
+        <p>Sin comandas activas</p>
       </div>`;
   }
-  return visible.map(renderCard).join('');
+  return visible.map((table, idx) => renderCard(table, idx + 1)).join('');
 }
 
+
 function getVisibleTables() {
-  const { showOnlyOccupied, visibleTableIds } = state.config;
+  const { showOnlyOccupied, showOnlyActive, visibleTableIds } = state.config;
   let tables = state.tables;
   if (visibleTableIds !== null) tables = tables.filter(t => visibleTableIds.includes(t.id));
-  if (showOnlyOccupied)         tables = tables.filter(t => (t.items || []).length > 0);
+  if (showOnlyOccupied) tables = tables.filter(t => (t.items || []).length > 0);
+
+  // "Solo comandas activas": show only tables with items AND not yet marked ready
+  if (showOnlyActive) {
+    tables = tables.filter(t => {
+      const hasItems = (t.items || []).length > 0;
+      if (!hasItems) return false;                          // hide empty
+      const kds = getTableKds(t.id);
+      return kds.status !== 'ready';                        // hide ready (fully served)
+    });
+  }
+
+  // Sort by order start time: oldest first (most urgent at the top-left)
+  tables = [...tables].sort((a, b) => {
+    const ta = state.tableStartTimes[a.id] || Infinity;
+    const tb = state.tableStartTimes[b.id] || Infinity;
+    return ta - tb;
+  });
+
   return tables;
 }
 
@@ -484,7 +524,7 @@ function renderNumInput(id, label, value, min, max) {
 }
 
 function renderSettingsPanel() {
-  const { columns, showOnlyOccupied, visibleTableIds, yellowToRedMinutes,
+  const { columns, showOnlyOccupied, showOnlyActive, visibleTableIds, yellowToRedMinutes,
           collapsedItemCount, fontSize, showPrices, soundOnNew, autoResetReady, theme } = state.config;
 
   const diningTables   = state.allTableDefs.filter(t => (t.type || 'table') === 'table');
@@ -554,7 +594,8 @@ function renderSettingsPanel() {
 
           <div class="kds-settings-section">
             <h3>Visualización y comportamiento</h3>
-            ${renderToggleRow('kds-toggle-occupied', 'Solo mesas ocupadas', 'Oculta las mesas sin pedidos', showOnlyOccupied)}
+            ${renderToggleRow('kds-toggle-active', 'Solo comandas activas', 'Oculta mesas vacías y ya marcadas como Listo — ideal para pantalla limpia', showOnlyActive)}
+            ${renderToggleRow('kds-toggle-occupied', 'Solo mesas ocupadas', 'Oculta las mesas completamente vacías', showOnlyOccupied)}
             ${renderToggleRow('kds-toggle-prices', 'Mostrar precios por artículo', '', showPrices)}
             ${renderToggleRow('kds-toggle-sound', 'Sonido al recibir comanda', 'Pitido al llegar un pedido nuevo', soundOnNew)}
             ${renderToggleRow('kds-toggle-autoreset', 'Limpiar "Listo" al cerrar comanda', 'Cuando el TPV cierra la mesa', autoResetReady)}
@@ -837,6 +878,7 @@ function setupGlobalEventListeners() {
 
     // 3. Toggles
     const toggleMap = {
+      'kds-toggle-active':     'showOnlyActive',
       'kds-toggle-occupied':   'showOnlyOccupied',
       'kds-toggle-prices':     'showPrices',
       'kds-toggle-sound':      'soundOnNew',

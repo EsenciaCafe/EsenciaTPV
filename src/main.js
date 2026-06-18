@@ -377,18 +377,27 @@ function renderTablesView(state) {
 
 // 7. Transacciones View
 function renderTransaccionesView(state) {
-  const rows = state.transactions.map(tx => `
-    <button class="tx-card" data-transaction-id="${tx.id}">
-      <div class="tx-meta">
-        <span class="tx-table-name">${tx.table}</span>
-        <span class="tx-date-method">${tx.date} • ${tx.paymentMethod}</span>
-      </div>
-      <div class="tx-financial">
-        <span class="tx-amount">${tx.total.toFixed(2)}€</span>
-        <div class="tx-qty">${tx.itemsCount} art.</div>
-      </div>
-    </button>
-  `).join('');
+  const rows = state.transactions.map(tx => {
+    const isRefund = tx.type === 'refund';
+    const badge = isRefund
+      ? `<span class="badge badge--danger" style="margin-left: 8px;">Devolución</span>`
+      : tx.hasRefund
+      ? `<span class="badge badge--warning" style="margin-left: 8px;">Devuelta parcial</span>`
+      : '';
+
+    return `
+      <button class="tx-card" data-transaction-id="${tx.id}">
+        <div class="tx-meta">
+          <span class="tx-table-name">${tx.table} ${badge}</span>
+          <span class="tx-date-method">${tx.date} • ${tx.paymentMethod}</span>
+        </div>
+        <div class="tx-financial">
+          <span class="tx-amount ${isRefund ? 'text-danger' : ''}" style="${isRefund ? 'color: var(--danger); font-weight: 700;' : ''}">${tx.total.toFixed(2)}€</span>
+          <div class="tx-qty">${tx.itemsCount} art.</div>
+        </div>
+      </button>
+    `;
+  }).join('');
 
   return `
     <div class="tx-list-container">
@@ -509,6 +518,25 @@ function showTransactionDetailModal(transactionId) {
     </div>
   `;
 
+  // Refund block elements
+  let refundStatusHTML = '';
+  if (tx.type === 'refund') {
+    refundStatusHTML = `
+      <div style="background-color: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: var(--border-radius-sm); padding: 10px; margin-bottom: 12px; font-size: 0.85rem; color: var(--danger);">
+        <strong>Tipo: Devolución</strong><br>
+        <span>Devolución del ticket: ${tx.parentId}</span><br>
+        ${tx.reason ? `<span>Motivo: ${tx.reason}</span>` : ''}
+      </div>
+    `;
+  } else if (tx.hasRefund) {
+    refundStatusHTML = `
+      <div style="background-color: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); border-radius: var(--border-radius-sm); padding: 10px; margin-bottom: 12px; font-size: 0.85rem; color: #f59e0b;">
+        <strong>Estado: Devuelto</strong><br>
+        <span>Importe devuelto: ${tx.refundAmount.toFixed(2)}€</span>
+      </div>
+    `;
+  }
+
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop';
   modal.innerHTML = `
@@ -529,6 +557,7 @@ function showTransactionDetailModal(transactionId) {
         </div>
       </div>
       <div class="tx-detail-body">
+        ${refundStatusHTML}
         <div class="tx-detail-summary">
           <div>
             <span>Factura Nº</span>
@@ -563,12 +592,19 @@ function showTransactionDetailModal(transactionId) {
         </div>
 
         <div class="tx-detail-total">
-          <span>Total cobrado</span>
-          <strong>${total.toFixed(2)}€</strong>
+          <span>${tx.type === 'refund' ? 'Total devuelto' : 'Total cobrado'}</span>
+          <strong class="${tx.type === 'refund' ? 'text-danger' : ''}">${total.toFixed(2)}€</strong>
         </div>
-        <button class="pay-btn-opt primary tx-detail-share-btn" id="tx-detail-share-btn">
-          Mostrar QR del ticket
-        </button>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <button class="pay-btn-opt primary tx-detail-share-btn" id="tx-detail-share-btn" style="height: 40px; font-size: 0.9rem;">
+            Mostrar QR del ticket
+          </button>
+          ${(!tx.hasRefund && tx.type !== 'refund') ? `
+            <button class="pay-btn-opt danger tx-detail-refund-btn" id="tx-detail-refund-btn" style="height: 40px; font-size: 0.9rem; margin: 0;">
+              Registrar Devolución
+            </button>
+          ` : ''}
+        </div>
       </div>
     </div>
   `;
@@ -578,8 +614,90 @@ function showTransactionDetailModal(transactionId) {
   modal.querySelector('#tx-detail-share-btn').addEventListener('click', () => {
     showReceiptQrModal(tx.id);
   });
+  
+  const refundBtn = modal.querySelector('#tx-detail-refund-btn');
+  if (refundBtn) {
+    refundBtn.addEventListener('click', () => {
+      modal.remove();
+      showRefundModal(tx);
+    });
+  }
+
   modal.addEventListener('click', (event) => {
     if (event.target === modal) modal.remove();
+  });
+}
+
+function showRefundModal(tx) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  
+  modal.innerHTML = `
+    <div class="modal-dialog refund-dialog" style="max-width: 400px; padding: 20px;">
+      <div class="modal-header" style="padding-bottom: 12px; border-bottom: 1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
+        <h3 style="margin:0;">Registrar Devolución</h3>
+        <button class="modal-close-btn" id="refund-close-btn" aria-label="Cerrar modal" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="width:20px; height:20px;">
+            <path d="M6 6l12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body" style="padding: 16px 0 0 0; display: grid; gap: 16px;">
+        <div>
+          <span style="font-size: 0.8rem; color: var(--text-muted); text-transform:uppercase; font-weight:700;">Ticket Original:</span>
+          <strong style="display: block; font-size: 1.05rem; color: var(--text-main); margin-top:4px;">${tx.id} (${tx.total.toFixed(2)}€)</strong>
+        </div>
+        <form id="refund-form" style="display: grid; gap: 16px; margin: 0;">
+          <div class="editor-form-group">
+            <label class="editor-form-label" style="font-weight:700;">Importe a Devolver (€)</label>
+            <input type="number" step="0.01" min="0.01" max="${tx.total}" class="editor-form-input" id="refund-amount-input" value="${tx.total.toFixed(2)}" required style="width:100%; padding:10px; background:var(--bg-main); border:1px solid var(--border-color); border-radius:var(--border-radius-sm); color:var(--text-main); font-size:1.1rem; font-weight:700;">
+          </div>
+          <div class="editor-form-group">
+            <label class="editor-form-label" style="font-weight:700;">Motivo de la Devolución (Opcional)</label>
+            <textarea class="editor-form-input" id="refund-reason-input" rows="3" placeholder="Ej: Error en cobro, producto defectuoso, etc." style="width:100%; padding:10px; background:var(--bg-main); border:1px solid var(--border-color); border-radius:var(--border-radius-sm); color:var(--text-main); font-family:var(--font-family); resize:none; font-size:0.9rem;"></textarea>
+          </div>
+          <div style="display: flex; gap: 12px; margin-top: 8px;">
+            <button type="button" class="btn btn-secondary" id="refund-cancel-btn" style="flex: 1; height: 44px; font-weight:700;">Cancelar</button>
+            <button type="submit" class="btn btn-primary pay-btn-opt danger" style="flex: 1; height: 44px; margin:0; font-weight:700; color:white !important; display:flex; align-items:center; justify-content:center;">Confirmar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  const closeBtn = modal.querySelector('#refund-close-btn');
+  const cancelBtn = modal.querySelector('#refund-cancel-btn');
+  const form = modal.querySelector('#refund-form');
+
+  const closeModal = () => modal.remove();
+  closeBtn.addEventListener('click', closeModal);
+  cancelBtn.addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const amount = parseFloat(modal.querySelector('#refund-amount-input').value);
+    const reason = modal.querySelector('#refund-reason-input').value.trim();
+
+    if (isNaN(amount) || amount <= 0 || amount > tx.total) {
+      showToast('Por favor, introduce un importe válido de devolución.', 'error');
+      return;
+    }
+
+    const result = store.registerRefund({
+      parentTransactionId: tx.id,
+      amount: amount,
+      reason: reason
+    });
+
+    if (result) {
+      closeModal();
+      showToast('Devolución registrada correctamente.', 'success');
+    } else {
+      showToast('Error al registrar la devolución.', 'error');
+    }
   });
 }
 
@@ -724,7 +842,35 @@ function renderAjustesView(state) {
 
   // 1c. Informes y Ventas
   if (path.length === 1 && path[0] === 'informes') {
-    // Helper function to safely parse transaction dates
+    return `
+      <div class="view-container">
+        <div class="settings-nav-header">
+          <button class="settings-back-arrow-btn" id="settings-back-btn">
+            ${backArrow} Ajustes
+          </button>
+        </div>
+        <h2 class="settings-nav-title">Informes de Ventas</h2>
+        <div class="settings-tree-list">
+          <button class="settings-tree-item" id="settings-to-informes-diario">
+            <div>
+              <div style="font-weight: 600;">Informe Diario</div>
+              <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">Ventas detalladas, métodos de pago y devoluciones de un día específico</div>
+            </div>
+            ${chevron}
+          </button>
+          <button class="settings-tree-item" id="settings-to-informes-mensual">
+            <div>
+              <div style="font-weight: 600;">Informe Mensual</div>
+              <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">Resumen mensual y desglose diario de facturación</div>
+            </div>
+            ${chevron}
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  if (path.length === 2 && path[0] === 'informes' && path[1] === 'diario') {
     const getTxDate = (tx) => {
       if (tx.createdAt) return new Date(tx.createdAt);
       if (tx.date) {
@@ -736,386 +882,432 @@ function renderAjustesView(state) {
       return new Date();
     };
 
-    // Calculate overall sales
-    let totalSales = 0;
-    let cashSales = 0;
-    let cardSales = 0;
-    const txCount = state.transactions.length;
-
-    state.transactions.forEach(tx => {
-      const val = Number(tx.total || 0);
-      totalSales += val;
-      const method = (tx.paymentMethod || '').toLowerCase().trim();
-      if (method.includes('efectivo')) {
-        cashSales += val;
-      } else if (method.includes('tarjeta')) {
-        cardSales += val;
-      } else {
-        cardSales += val; 
-      }
-    });
-
-    // Time-based groupings
-    const hourlySales = Array(24).fill(0);
-    const dailySales = {};
-    const weeklySales = {};
-    const monthlySales = {};
-    const annualSales = {};
-
-    // Article and Modifier sales grouping
-    const itemSummary = {};
-
-    state.transactions.forEach(tx => {
-      const val = Number(tx.total || 0);
+    const getTxDateKey = (tx) => {
       const d = getTxDate(tx);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    };
 
-      // Hourly
-      const hour = d.getHours();
-      hourlySales[hour] += val;
+    const selectedDate = state.selectedReportDate || new Date().toISOString().slice(0, 10);
+    const dayTx = state.transactions.filter(tx => getTxDateKey(tx) === selectedDate);
 
-      // Daily
-      const dayStr = d.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });
-      dailySales[dayStr] = (dailySales[dayStr] || 0) + val;
+    // Calculate daily figures
+    let totalGross = 0;
+    let totalRefunds = 0;
+    let totalDiscounts = 0; // future placeholder
+    const paymentMethods = {
+      'Efectivo': 0,
+      'Tarjeta': 0,
+      'Tarjeta Regalo': 0
+    };
 
-      // Weekly
-      const startOfWeek = new Date(d);
-      const dayVal = startOfWeek.getDay();
-      const diff = startOfWeek.getDate() - dayVal + (dayVal === 0 ? -6 : 1);
-      startOfWeek.setDate(diff);
-      const weekStr = `Sem. ${startOfWeek.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}`;
-      weeklySales[weekStr] = (weeklySales[weekStr] || 0) + val;
-
-      // Monthly
-      const monthStr = d.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
-      monthlySales[monthStr] = (monthlySales[monthStr] || 0) + val;
-
-      // Annual
-      const yearStr = d.getFullYear().toString();
-      annualSales[yearStr] = (annualSales[yearStr] || 0) + val;
-
-      // Item & Modifiers aggregation
-      const items = Array.isArray(tx.items) ? tx.items : [];
-      items.forEach(item => {
-        const itemId = item.id || item.name;
-        if (!itemSummary[itemId]) {
-          itemSummary[itemId] = {
-            name: item.name,
-            qty: 0,
-            revenue: 0,
-            modifiers: {}
-          };
-        }
-        itemSummary[itemId].qty += item.qty;
-        itemSummary[itemId].revenue += (item.total || (item.price * item.qty));
-
-        const selectedOpts = Array.isArray(item.selectedOptions) ? item.selectedOptions : [];
-        selectedOpts.forEach(opt => {
-          const optId = opt.id || opt.name;
-          if (!itemSummary[itemId].modifiers[optId]) {
-            itemSummary[itemId].modifiers[optId] = {
-              name: opt.name,
-              qty: 0
-            };
-          }
-          itemSummary[itemId].modifiers[optId].qty += (opt.qty * item.qty);
-        });
-      });
-    });
-
-    // Build the selected tab data and chart representation
-    let chartHTML = '';
-    let periodsListHTML = '';
-    let maxVal = 0.01; // Avoid divide by zero
-
-    if (selectedReportsTab === 'horas') {
-      // Find range of active hours
-      let minH = 8;
-      let maxH = 20;
-      for (let h = 0; h < 24; h++) {
-        if (hourlySales[h] > 0) {
-          if (h < minH) minH = h;
-          if (h > maxH) maxH = h;
-        }
-      }
+    dayTx.forEach(tx => {
+      const val = Number(tx.total || 0);
+      const method = (tx.paymentMethod || '').toLowerCase().trim();
       
-      const activeHours = [];
-      for (let h = minH; h <= maxH; h++) {
-        activeHours.push(h);
-        if (hourlySales[h] > maxVal) maxVal = hourlySales[h];
+      let matchedMethod = 'Tarjeta';
+      if (method.includes('efectivo')) {
+        matchedMethod = 'Efectivo';
+      } else if (method.includes('regalo') || method.includes('gift')) {
+        matchedMethod = 'Tarjeta Regalo';
       }
 
-      // Render SVG Bar Chart
-      const barCount = activeHours.length;
-      const svgW = 500;
-      const svgH = 180;
-      const paddingX = 40;
-      const paddingY = 30;
-      const chartW = svgW - paddingX * 2;
-      const chartH = svgH - paddingY * 2;
-      const barW = (chartW / barCount) * 0.6;
-      const barGap = (chartW / barCount) * 0.4;
-
-      let barsSVG = '';
-      let labelsSVG = '';
-      
-      activeHours.forEach((h, index) => {
-        const sales = hourlySales[h];
-        const hPct = sales / maxVal;
-        const bHeight = hPct * chartH;
-        const bX = paddingX + index * (barW + barGap) + barGap / 2;
-        const bY = svgH - paddingY - bHeight;
-
-        barsSVG += `
-          <g>
-            <rect class="chart-bar-hover" x="${bX}" y="${bY}" width="${barW}" height="${bHeight}" fill="url(#barGrad)" rx="3" ry="3">
-              <title>${h.toString().padStart(2, '0')}:00 - ${sales.toFixed(2)}€</title>
-            </rect>
-          </g>
-        `;
-        
-        if (barCount <= 12 || index % 2 === 0) {
-          labelsSVG += `
-            <text x="${bX + barW / 2}" y="${svgH - 10}" fill="var(--text-muted)" font-size="10" font-family="var(--font-family)" font-weight="600" text-anchor="middle">
-              ${h.toString().padStart(2, '0')}h
-            </text>
-          `;
-        }
-      });
-
-      chartHTML = `
-        <svg viewBox="0 0 ${svgW} ${svgH}" width="100%" height="100%">
-          <defs>
-            <linearGradient id="barGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stop-color="var(--secondary)" />
-              <stop offset="100%" stop-color="#059669" stop-opacity="0.6" />
-            </linearGradient>
-          </defs>
-          <line x1="${paddingX}" y1="${paddingY}" x2="${svgW - paddingX}" y2="${paddingY}" stroke="var(--border-color)" stroke-width="1" stroke-dasharray="4" />
-          <line x1="${paddingX}" y1="${paddingY + chartH / 2}" x2="${svgW - paddingX}" y2="${paddingY + chartH / 2}" stroke="var(--border-color)" stroke-width="1" stroke-dasharray="4" />
-          <line x1="${paddingX}" y1="${svgH - paddingY}" x2="${svgW - paddingX}" y2="${svgH - paddingY}" stroke="var(--border-color)" stroke-width="1.5" />
-          
-          <text x="${paddingX - 10}" y="${paddingY + 4}" fill="var(--text-muted)" font-size="9" font-weight="700" text-anchor="end">${maxVal.toFixed(0)}€</text>
-          <text x="${paddingX - 10}" y="${svgH - paddingY}" fill="var(--text-muted)" font-size="9" font-weight="700" text-anchor="end">0€</text>
-          
-          ${barsSVG}
-          ${labelsSVG}
-        </svg>
-      `;
-
-      activeHours.forEach(h => {
-        const val = hourlySales[h];
-        if (val > 0) {
-          const pct = (val / maxVal) * 100;
-          periodsListHTML += `
-            <div class="reports-period-row">
-              <div class="reports-period-info">
-                <span>${h.toString().padStart(2, '0')}:00 - ${(h + 1).toString().padStart(2, '0')}:00</span>
-                <span>${val.toFixed(2)}€</span>
-              </div>
-              <div class="reports-period-progress-bg">
-                <div class="reports-period-progress-fill" style="width: ${pct}%;"></div>
-              </div>
-            </div>
-          `;
-        }
-      });
-
-      if (!periodsListHTML) {
-        periodsListHTML = `<p style="text-align:center; padding:12px; color:var(--text-muted); font-size:0.85rem;">No hay ventas registradas por horas.</p>`;
-      }
-    } else {
-      let activeGroup = {};
-      if (selectedReportsTab === 'diaria') activeGroup = dailySales;
-      else if (selectedReportsTab === 'semanal') activeGroup = weeklySales;
-      else if (selectedReportsTab === 'mensual') activeGroup = monthlySales;
-      else if (selectedReportsTab === 'anual') activeGroup = annualSales;
-
-      const keys = Object.keys(activeGroup);
-      
-      keys.forEach(k => {
-        if (activeGroup[k] > maxVal) maxVal = activeGroup[k];
-      });
-
-      if (keys.length > 0) {
-        const barCount = keys.length;
-        const svgW = 500;
-        const svgH = 180;
-        const paddingX = 45;
-        const paddingY = 30;
-        const chartW = svgW - paddingX * 2;
-        const chartH = svgH - paddingY * 2;
-        const barW = (chartW / barCount) * 0.5;
-        const barGap = (chartW / barCount) * 0.5;
-
-        let barsSVG = '';
-        let labelsSVG = '';
-
-        keys.forEach((k, index) => {
-          const sales = activeGroup[k];
-          const hPct = sales / maxVal;
-          const bHeight = hPct * chartH;
-          const bX = paddingX + index * (barW + barGap) + barGap / 2;
-          const bY = svgH - paddingY - bHeight;
-
-          barsSVG += `
-            <g>
-              <rect class="chart-bar-hover" x="${bX}" y="${bY}" width="${barW}" height="${bHeight}" fill="url(#barGrad)" rx="3" ry="3">
-                <title>${k}: ${sales.toFixed(2)}€</title>
-              </rect>
-            </g>
-          `;
-
-          if (barCount <= 8 || index % Math.ceil(barCount / 8) === 0) {
-            labelsSVG += `
-              <text x="${bX + barW / 2}" y="${svgH - 10}" fill="var(--text-muted)" font-size="9" font-family="var(--font-family)" font-weight="600" text-anchor="middle">
-                ${k}
-              </text>
-            `;
-          }
-        });
-
-        chartHTML = `
-          <svg viewBox="0 0 ${svgW} ${svgH}" width="100%" height="100%">
-            <defs>
-              <linearGradient id="barGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stop-color="var(--secondary)" />
-                <stop offset="100%" stop-color="#059669" stop-opacity="0.6" />
-              </linearGradient>
-            </defs>
-            <line x1="${paddingX}" y1="${paddingY}" x2="${svgW - paddingX}" y2="${paddingY}" stroke="var(--border-color)" stroke-width="1" stroke-dasharray="4" />
-            <line x1="${paddingX}" y1="${paddingY + chartH / 2}" x2="${svgW - paddingX}" y2="${paddingY + chartH / 2}" stroke="var(--border-color)" stroke-width="1" stroke-dasharray="4" />
-            <line x1="${paddingX}" y1="${svgH - paddingY}" x2="${svgW - paddingX}" y2="${svgH - paddingY}" stroke="var(--border-color)" stroke-width="1.5" />
-            <text x="${paddingX - 10}" y="${paddingY + 4}" fill="var(--text-muted)" font-size="9" font-weight="700" text-anchor="end">${maxVal.toFixed(0)}€</text>
-            <text x="${paddingX - 10}" y="${svgH - paddingY}" fill="var(--text-muted)" font-size="9" font-weight="700" text-anchor="end">0€</text>
-            ${barsSVG}
-            ${labelsSVG}
-          </svg>
-        `;
-
-        keys.forEach(k => {
-          const val = activeGroup[k];
-          const pct = (val / maxVal) * 100;
-          periodsListHTML += `
-            <div class="reports-period-row">
-              <div class="reports-period-info">
-                <span>${k}</span>
-                <span>${val.toFixed(2)}€</span>
-              </div>
-              <div class="reports-period-progress-bg">
-                <div class="reports-period-progress-fill" style="width: ${pct}%;"></div>
-              </div>
-            </div>
-          `;
-        });
+      if (tx.type === 'refund') {
+        totalRefunds += Math.abs(val);
+        paymentMethods[matchedMethod] += val; // negative
       } else {
-        chartHTML = `
-          <div style="height:100%; display:flex; justify-content:center; align-items:center; color:var(--text-muted); font-size:0.9rem;">
-            No hay datos suficientes para generar el gráfico.
-          </div>
-        `;
-        periodsListHTML = `<p style="text-align:center; padding:12px; color:var(--text-muted); font-size:0.85rem;">No hay ventas registradas.</p>`;
+        totalGross += val;
+        paymentMethods[matchedMethod] += val; // positive
       }
-    }
-
-    // Sort item breakdown by revenue descending
-    const sortedItems = Object.values(itemSummary).sort((a, b) => b.revenue - a.revenue);
-    let itemsBreakdownHTML = '';
-    
-    sortedItems.forEach(item => {
-      const modifierRows = Object.values(item.modifiers).sort((a, b) => b.qty - a.qty).map(opt => `
-        <div class="reports-modifier-row">
-          <span class="reports-modifier-name">
-            <span style="color:var(--text-muted); font-style:italic;">+ ${opt.name}</span>
-          </span>
-          <span class="reports-modifier-qty">x${opt.qty}</span>
-        </div>
-      `).join('');
-
-      itemsBreakdownHTML += `
-        <div class="reports-item-card">
-          <div class="reports-item-main">
-            <div class="reports-item-name-col">
-              <span class="reports-item-name">${item.name}</span>
-              <span class="reports-item-qty">Vendidos: ${item.qty} uds.</span>
-            </div>
-            <span class="reports-item-revenue">${item.revenue.toFixed(2)}€</span>
-          </div>
-          ${modifierRows.length > 0 ? `
-            <div class="reports-item-modifiers-list">
-              <div style="font-size:0.68rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:2px; letter-spacing:0.04em;">Modificadores:</div>
-              ${modifierRows}
-            </div>
-          ` : ''}
-        </div>
-      `;
     });
 
-    if (!itemsBreakdownHTML) {
-      itemsBreakdownHTML = `<p style="text-align:center; padding:20px; color:var(--text-muted); font-size:0.85rem;">No se han vendido artículos todavía.</p>`;
+    const totalNet = totalGross - totalRefunds;
+
+    // Time-based groupings for the hourly chart (only for selected day)
+    const hourlySales = Array(24).fill(0);
+    dayTx.forEach(tx => {
+      const d = getTxDate(tx);
+      const hour = d.getHours();
+      hourlySales[hour] += Number(tx.total || 0);
+    });
+
+    // Render hourly chart
+    let minH = 8;
+    let maxH = 20;
+    for (let h = 0; h < 24; h++) {
+      if (hourlySales[h] !== 0) {
+        if (h < minH) minH = h;
+        if (h > maxH) maxH = h;
+      }
     }
+    
+    const activeHours = [];
+    let maxVal = 0.01;
+    for (let h = minH; h <= maxH; h++) {
+      activeHours.push(h);
+      const absVal = Math.abs(hourlySales[h]);
+      if (absVal > maxVal) maxVal = absVal;
+    }
+
+    const barCount = activeHours.length;
+    const svgW = 500;
+    const svgH = 180;
+    const paddingX = 40;
+    const paddingY = 30;
+    const chartW = svgW - paddingX * 2;
+    const chartH = svgH - paddingY * 2;
+    const barW = barCount > 0 ? (chartW / barCount) * 0.6 : 10;
+    const barGap = barCount > 0 ? (chartW / barCount) * 0.4 : 10;
+
+    let barsSVG = '';
+    let labelsSVG = '';
+    
+    activeHours.forEach((h, index) => {
+      const sales = hourlySales[h];
+      const hPct = Math.abs(sales) / maxVal;
+      const bHeight = hPct * chartH;
+      const bX = paddingX + index * (barW + barGap) + barGap / 2;
+      const bY = sales >= 0 ? (svgH - paddingY - bHeight) : (svgH - paddingY);
+      const barFill = sales >= 0 ? 'url(#barGrad)' : 'url(#barGradRefund)';
+
+      barsSVG += `
+        <g>
+          <rect class="chart-bar-hover" x="${bX}" y="${bY}" width="${barW}" height="${bHeight}" fill="${barFill}" rx="3" ry="3">
+            <title>${h.toString().padStart(2, '0')}:00 - ${sales.toFixed(2)}€</title>
+          </rect>
+        </g>
+      `;
+      
+      if (barCount <= 12 || index % 2 === 0) {
+        labelsSVG += `
+          <text x="${bX + barW / 2}" y="${svgH - 10}" fill="var(--text-muted)" font-size="10" font-family="var(--font-family)" font-weight="600" text-anchor="middle">
+            ${h.toString().padStart(2, '0')}h
+          </text>
+        `;
+      }
+    });
+
+    const chartHTML = `
+      <svg viewBox="0 0 ${svgW} ${svgH}" width="100%" height="100%">
+        <defs>
+          <linearGradient id="barGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="var(--secondary)" />
+            <stop offset="100%" stop-color="#059669" stop-opacity="0.6" />
+          </linearGradient>
+          <linearGradient id="barGradRefund" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="var(--danger)" />
+            <stop offset="100%" stop-color="#ef4444" stop-opacity="0.6" />
+          </linearGradient>
+        </defs>
+        <line x1="${paddingX}" y1="${paddingY}" x2="${svgW - paddingX}" y2="${paddingY}" stroke="var(--border-color)" stroke-width="1" stroke-dasharray="4" />
+        <line x1="${paddingX}" y1="${paddingY + chartH / 2}" x2="${svgW - paddingX}" y2="${paddingY + chartH / 2}" stroke="var(--border-color)" stroke-width="1" stroke-dasharray="4" />
+        <line x1="${paddingX}" y1="${svgH - paddingY}" x2="${svgW - paddingX}" y2="${svgH - paddingY}" stroke="var(--border-color)" stroke-width="1.5" />
+        
+        <text x="${paddingX - 10}" y="${paddingY + 4}" fill="var(--text-muted)" font-size="9" font-weight="700" text-anchor="end">${maxVal.toFixed(0)}€</text>
+        <text x="${paddingX - 10}" y="${svgH - paddingY}" fill="var(--text-muted)" font-size="9" font-weight="700" text-anchor="end">0€</text>
+        
+        ${barsSVG}
+        ${labelsSVG}
+      </svg>
+    `;
+
+    // Render transactions for this day
+    const txRows = dayTx.map(tx => {
+      const isRefund = tx.type === 'refund';
+      const badge = isRefund
+        ? `<span class="badge badge--danger" style="margin-left: 8px;">Devolución</span>`
+        : tx.hasRefund
+        ? `<span class="badge badge--warning" style="margin-left: 8px;">Devuelta parcial</span>`
+        : '';
+      const txTime = tx.date.split(', ')[1] || '';
+      return `
+        <button class="tx-card" data-transaction-id="${tx.id}">
+          <div class="tx-meta">
+            <span class="tx-table-name">${tx.id} ${badge}</span>
+            <span class="tx-date-method">${txTime} • ${tx.table} • ${tx.paymentMethod}</span>
+          </div>
+          <div class="tx-financial">
+            <span class="tx-amount ${isRefund ? 'text-danger' : ''}" style="${isRefund ? 'color: var(--danger); font-weight: 700;' : ''}">${tx.total.toFixed(2)}€</span>
+            <div class="tx-qty">${tx.itemsCount} art.</div>
+          </div>
+        </button>
+      `;
+    }).join('');
+
+    // Prettify date for header
+    const formattedDateHeader = new Date(selectedDate + 'T00:00:00').toLocaleDateString('es-ES', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
 
     return `
       <div class="view-container" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
         <div class="settings-nav-header">
           <button class="settings-back-arrow-btn" id="settings-back-btn">
-            ${backArrow} Ajustes
+            ${backArrow} Informes
           </button>
         </div>
-        <h2 class="settings-nav-title" style="padding-bottom:10px;">Informes de Ventas</h2>
         
         <div style="flex-grow:1; overflow-y:auto; padding-bottom:32px;">
+          <!-- Date Selector -->
+          <div class="report-selector-card" style="margin: 0 16px 16px 16px; padding: 16px; background: var(--bg-item); border: 1px solid var(--border-color); border-radius: var(--border-radius); display: flex; flex-direction: column; gap: 12px; align-items: center;">
+            <div style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted);">Seleccionar Fecha</div>
+            <div style="display: flex; align-items: center; gap: 12px; width: 100%; justify-content: center;">
+              <button class="btn btn-secondary btn-icon-only" id="report-date-prev" style="height: 38px; width: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">&larr;</button>
+              <input type="date" id="report-date-input" value="${selectedDate}" style="background: var(--bg-main); border: 1px solid var(--border-color); color: var(--text-main); font-family: var(--font-family); font-weight: 700; padding: 8px 16px; border-radius: var(--border-radius-sm); outline: none; text-align: center; font-size: 1rem;">
+              <button class="btn btn-secondary btn-icon-only" id="report-date-next" style="height: 38px; width: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">&rarr;</button>
+            </div>
+            <div style="font-size: 0.9rem; font-weight: 600; color: var(--secondary); text-align: center; margin-top: 4px;">
+              ${formattedDateHeader.charAt(0).toUpperCase() + formattedDateHeader.slice(1)}
+            </div>
+          </div>
+
           <!-- 1. KPIs Section -->
-          <div class="reports-kpis-grid">
+          <div class="reports-kpis-grid" style="margin-bottom: 16px;">
             <div class="reports-kpi-card kpi-total">
-              <span class="reports-kpi-label">Ventas Totales</span>
-              <span class="reports-kpi-val">${totalSales.toFixed(2)}€</span>
-              <span style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">${txCount} transacciones</span>
+              <span class="reports-kpi-label">Ventas Netas</span>
+              <span class="reports-kpi-val">${totalNet.toFixed(2)}€</span>
+              <span style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">Bruto: ${totalGross.toFixed(2)}€</span>
             </div>
             <div class="reports-kpi-card kpi-cash">
-              <span class="reports-kpi-label">Efectivo</span>
+              <span class="reports-kpi-label">Devoluciones</span>
+              <span class="reports-kpi-val" style="color:var(--danger);">${totalRefunds.toFixed(2)}€</span>
+              <span style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">${dayTx.filter(t => t.type === 'refund').length} dev.</span>
+            </div>
+            <div class="reports-kpi-card kpi-card-pay">
+              <span class="reports-kpi-label">Descuentos</span>
+              <span class="reports-kpi-val" style="color:#f59e0b;">${totalDiscounts.toFixed(2)}€</span>
+              <span style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">Aplicados</span>
+            </div>
+          </div>
+
+          <!-- Payment Methods Breakdown Section -->
+          <div class="reports-chart-card" style="margin-bottom: 16px; padding: 16px;">
+            <div class="reports-chart-title" style="margin-bottom: 12px; font-weight: 700;">Desglose Métodos de Pago (Neto)</div>
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom: 6px; border-bottom: 1px solid var(--border-color);">
+                <span style="font-weight: 600;">Efectivo</span>
+                <strong style="color: #f59e0b;">${paymentMethods['Efectivo'].toFixed(2)}€</strong>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom: 6px; border-bottom: 1px solid var(--border-color);">
+                <span style="font-weight: 600;">Tarjeta Bancaria</span>
+                <strong style="color: #3b82f6;">${paymentMethods['Tarjeta'].toFixed(2)}€</strong>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom: 6px;">
+                <span style="font-weight: 600;">Tarjeta Regalo</span>
+                <strong style="color: var(--secondary);">${paymentMethods['Tarjeta Regalo'].toFixed(2)}€</strong>
+              </div>
+            </div>
+          </div>
+
+          <!-- Export Action -->
+          <div style="padding: 0 16px 16px 16px;">
+            <button class="btn btn-primary btn-full" id="btn-export-diario" style="height: 44px; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; background-color: var(--secondary); color: white;">
+              📄 Exportar Diario (PDF)
+            </button>
+          </div>
+
+          <!-- 3. Chart Container -->
+          <div class="reports-chart-card" style="margin-bottom: 16px;">
+            <div class="reports-chart-title">Ventas Netas por Hora</div>
+            <div class="chart-svg-container">
+              ${chartHTML}
+            </div>
+          </div>
+
+          <!-- 4. Transactions List -->
+          <div class="reports-items-section">
+            <h3 style="margin:0 0 12px 0; font-size:1.05rem; font-weight:700; color:var(--text-main);">Tickets y Transacciones (${dayTx.length})</h3>
+            <div class="tx-history-list">
+              ${txRows ? txRows : '<p style="text-align:center; padding: 20px; color: var(--text-muted); font-size:0.85rem;">No hay transacciones registradas este día</p>'}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (path.length === 2 && path[0] === 'informes' && path[1] === 'mensual') {
+    const getTxDate = (tx) => {
+      if (tx.createdAt) return new Date(tx.createdAt);
+      if (tx.date) {
+        const [datePart, timePart] = tx.date.split(', ');
+        const [day, month, year] = datePart.split('/').map(Number);
+        const [hour, minute] = timePart.split(':').map(Number);
+        return new Date(year, month - 1, day, hour, minute);
+      }
+      return new Date();
+    };
+
+    const getTxMonthKey = (tx) => {
+      const d = getTxDate(tx);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      return `${yyyy}-${mm}`;
+    };
+
+    const selectedMonth = state.selectedReportMonth || new Date().toISOString().slice(0, 7);
+    const monthTx = state.transactions.filter(tx => getTxMonthKey(tx) === selectedMonth);
+
+    // Calculate monthly figures
+    let totalGross = 0;
+    let totalRefunds = 0;
+    let cashSales = 0;
+    let cardSales = 0;
+    const txCount = monthTx.filter(t => t.type !== 'refund').length;
+
+    const dailyAgg = {};
+    monthTx.forEach(tx => {
+      const d = getTxDate(tx);
+      const day = d.getDate();
+      const dateStr = d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+      
+      if (!dailyAgg[day]) {
+        dailyAgg[day] = {
+          day,
+          dateStr,
+          count: 0,
+          gross: 0,
+          refunds: 0,
+          net: 0,
+          cash: 0,
+          card: 0
+        };
+      }
+
+      const val = Number(tx.total || 0);
+      const method = (tx.paymentMethod || '').toLowerCase().trim();
+      const isCash = method.includes('efectivo');
+
+      if (tx.type === 'refund') {
+        totalRefunds += Math.abs(val);
+        dailyAgg[day].refunds += Math.abs(val);
+        dailyAgg[day].net += val; // negative
+        if (isCash) {
+          cashSales += val;
+          dailyAgg[day].cash += val;
+        } else {
+          cardSales += val;
+          dailyAgg[day].card += val;
+        }
+      } else {
+        totalGross += val;
+        dailyAgg[day].count += 1;
+        dailyAgg[day].gross += val;
+        dailyAgg[day].net += val; // positive
+        if (isCash) {
+          cashSales += val;
+          dailyAgg[day].cash += val;
+        } else {
+          cardSales += val;
+          dailyAgg[day].card += val;
+        }
+      }
+    });
+
+    const totalNet = totalGross - totalRefunds;
+    const sortedDays = Object.values(dailyAgg).sort((a, b) => a.day - b.day);
+
+    // Month name display
+    const [yearPart, monthPart] = selectedMonth.split('-');
+    const formattedMonthHeader = new Date(Number(yearPart), Number(monthPart) - 1, 1).toLocaleDateString('es-ES', {
+      month: 'long',
+      year: 'numeric'
+    });
+
+    // Build breakdown table rows
+    const tableRowsHTML = sortedDays.map(day => `
+      <tr>
+        <td style="font-weight: 600;">${day.dateStr}</td>
+        <td style="text-align: right;">${day.count}</td>
+        <td style="text-align: right; color: #f59e0b;">${day.cash.toFixed(2)}€</td>
+        <td style="text-align: right; color: #3b82f6;">${day.card.toFixed(2)}€</td>
+        <td style="text-align: right; color: var(--danger); font-size: 0.85rem;">${day.refunds > 0 ? `-${day.refunds.toFixed(2)}€` : '0.00€'}</td>
+        <td style="text-align: right; font-weight: 700; color: ${day.net >= 0 ? 'var(--secondary)' : 'var(--danger)'};">${day.net.toFixed(2)}€</td>
+      </tr>
+    `).join('');
+
+    return `
+      <div class="view-container" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
+        <div class="settings-nav-header">
+          <button class="settings-back-arrow-btn" id="settings-back-btn">
+            ${backArrow} Informes
+          </button>
+        </div>
+        
+        <div style="flex-grow:1; overflow-y:auto; padding-bottom:32px;">
+          <!-- Month Selector -->
+          <div class="report-selector-card" style="margin: 0 16px 16px 16px; padding: 16px; background: var(--bg-item); border: 1px solid var(--border-color); border-radius: var(--border-radius); display: flex; flex-direction: column; gap: 12px; align-items: center;">
+            <div style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted);">Seleccionar Mes</div>
+            <div style="display: flex; align-items: center; gap: 12px; width: 100%; justify-content: center;">
+              <button class="btn btn-secondary btn-icon-only" id="report-month-prev" style="height: 38px; width: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">&larr;</button>
+              <input type="month" id="report-month-input" value="${selectedMonth}" style="background: var(--bg-main); border: 1px solid var(--border-color); color: var(--text-main); font-family: var(--font-family); font-weight: 700; padding: 8px 16px; border-radius: var(--border-radius-sm); outline: none; text-align: center; font-size: 1rem;">
+              <button class="btn btn-secondary btn-icon-only" id="report-month-next" style="height: 38px; width: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">&rarr;</button>
+            </div>
+            <div style="font-size: 0.9rem; font-weight: 600; color: var(--secondary); text-align: center; margin-top: 4px;">
+              ${formattedMonthHeader.charAt(0).toUpperCase() + formattedMonthHeader.slice(1)}
+            </div>
+          </div>
+
+          <!-- 1. KPIs Section -->
+          <div class="reports-kpis-grid" style="margin-bottom: 16px;">
+            <div class="reports-kpi-card kpi-total">
+              <span class="reports-kpi-label">Ventas Netas</span>
+              <span class="reports-kpi-val">${totalNet.toFixed(2)}€</span>
+              <span style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">${txCount} pedidos</span>
+            </div>
+            <div class="reports-kpi-card kpi-cash">
+              <span class="reports-kpi-label">Efectivo (Neto)</span>
               <span class="reports-kpi-val" style="color:#f59e0b;">${cashSales.toFixed(2)}€</span>
             </div>
             <div class="reports-kpi-card kpi-card-pay">
-              <span class="reports-kpi-label">Tarjeta</span>
+              <span class="reports-kpi-label">Tarjeta (Neto)</span>
               <span class="reports-kpi-val" style="color:#3b82f6;">${cardSales.toFixed(2)}€</span>
             </div>
           </div>
 
-          <!-- Export Actions -->
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 16px 16px 16px;">
-            <button class="btn btn-secondary" id="btn-export-diario" style="height: 40px; font-size: 0.85rem; font-weight: 600;">
-              📄 Exportar Diario (PDF)
-            </button>
-            <button class="btn btn-secondary" id="btn-export-mensual" style="height: 40px; font-size: 0.85rem; font-weight: 600;">
+          <!-- Export Action -->
+          <div style="padding: 0 16px 16px 16px;">
+            <button class="btn btn-primary btn-full" id="btn-export-mensual" style="height: 44px; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; background-color: var(--secondary); color: white;">
               📅 Exportar Mensual (PDF)
             </button>
           </div>
 
-          <!-- 2. Time-Period Tabs -->
-          <div class="reports-tabs-bar">
-            <button class="reports-tab-btn ${selectedReportsTab === 'horas' ? 'active' : ''}" data-tab="horas">Por Horas</button>
-            <button class="reports-tab-btn ${selectedReportsTab === 'diaria' ? 'active' : ''}" data-tab="diaria">Diario</button>
-            <button class="reports-tab-btn ${selectedReportsTab === 'semanal' ? 'active' : ''}" data-tab="semanal">Semanal</button>
-            <button class="reports-tab-btn ${selectedReportsTab === 'mensual' ? 'active' : ''}" data-tab="mensual">Mensual</button>
-            <button class="reports-tab-btn ${selectedReportsTab === 'anual' ? 'active' : ''}" data-tab="anual">Anual</button>
-          </div>
-
-          <!-- 3. Chart Container -->
-          <div class="reports-chart-card">
-            <div class="reports-chart-title">Desglose de Facturación</div>
-            <div class="chart-svg-container">
-              ${chartHTML}
-            </div>
-            <div class="reports-period-list">
-              ${periodsListHTML}
-            </div>
-          </div>
-
-          <!-- 4. Items breakdown section -->
-          <div class="reports-items-section">
-            <h3 style="margin:0 0 12px 0; font-size:1.05rem; font-weight:700; color:var(--text-main);">Artículos y Modificadores</h3>
-            <div class="reports-items-list">
-              ${itemsBreakdownHTML}
+          <!-- 4. Breakdown Table Section -->
+          <div class="reports-items-section" style="padding: 0 16px;">
+            <h3 style="margin:0 0 12px 0; font-size:1.05rem; font-weight:700; color:var(--text-main);">Desglose por Días</h3>
+            <div style="overflow-x: auto; background: var(--bg-item); border: 1px solid var(--border-color); border-radius: var(--border-radius); padding: 8px;">
+              <table class="reports-breakdown-table" style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+                <thead>
+                  <tr style="border-bottom: 1.5px solid var(--border-color); text-align: left; font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted);">
+                    <th style="padding: 10px 8px;">Día</th>
+                    <th style="padding: 10px 8px; text-align: right;">Pedidos</th>
+                    <th style="padding: 10px 8px; text-align: right;">Efectivo</th>
+                    <th style="padding: 10px 8px; text-align: right;">Tarjeta</th>
+                    <th style="padding: 10px 8px; text-align: right;">Devoluciones</th>
+                    <th style="padding: 10px 8px; text-align: right;">Total Neto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${tableRowsHTML ? tableRowsHTML : `<tr><td colspan="6" style="text-align: center; padding: 20px; color: var(--text-muted);">No hay ventas este mes</td></tr>`}
+                </tbody>
+                ${sortedDays.length > 0 ? `
+                  <tfoot>
+                    <tr style="border-top: 1.5px solid var(--border-color); font-weight: 700; background: rgba(0,0,0,0.02);">
+                      <td style="padding: 10px 8px;">TOTAL</td>
+                      <td style="padding: 10px 8px; text-align: right;">${txCount}</td>
+                      <td style="padding: 10px 8px; text-align: right; color: #f59e0b;">${cashSales.toFixed(2)}€</td>
+                      <td style="padding: 10px 8px; text-align: right; color: #3b82f6;">${cardSales.toFixed(2)}€</td>
+                      <td style="padding: 10px 8px; text-align: right; color: var(--danger); font-size: 0.85rem;">-${totalRefunds.toFixed(2)}€</td>
+                      <td style="padding: 10px 8px; text-align: right; color: var(--secondary); font-size: 1.05rem;">${totalNet.toFixed(2)}€</td>
+                    </tr>
+                  </tfoot>
+                ` : ''}
+              </table>
             </div>
           </div>
         </div>
@@ -1169,7 +1361,15 @@ function renderAjustesView(state) {
 
   // 3. Todos los artículos Product Manager list
   if (path.length === 2 && path[0] === 'articulos' && path[1] === 'todos') {
-    const rows = state.menuItems.map(item => {
+    const query = (state.articleSearchQuery || '').toLowerCase().trim();
+    const filteredItems = query
+      ? state.menuItems.filter(item => {
+          const catName = (state.categories.find(c => c.id === item.category)?.name || '').toLowerCase();
+          return item.name.toLowerCase().includes(query) || catName.includes(query);
+        })
+      : state.menuItems;
+
+    const rows = filteredItems.map(item => {
       const categoryName = state.categories.find(c => c.id === item.category)?.name || item.category;
       return `
         <button class="product-manager-row" data-edit-item-id="${item.id}">
@@ -1192,18 +1392,35 @@ function renderAjustesView(state) {
             ${backArrow} Artículos
           </button>
         </div>
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
           <h2 class="settings-nav-title" style="margin-bottom:0;">Todos los artículos</h2>
           <button class="btn btn-primary" id="settings-create-article-btn" style="height:36px; padding:0 12px; font-size:0.85rem; background-color:var(--secondary);">
             + Crear Artículo
           </button>
         </div>
+        <div style="position:relative; margin-bottom:10px;">
+          <svg style="position:absolute; left:12px; top:50%; transform:translateY(-50%); width:16px; height:16px; color:var(--text-muted); pointer-events:none;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input
+            id="article-search-input"
+            type="text"
+            placeholder="Buscar artículo o categoría..."
+            value="${query.replace(/"/g, '&quot;')}"
+            autocomplete="off"
+            style="width:100%; padding:9px 12px 9px 36px; background:var(--bg-surface); border:1px solid var(--border-color); border-radius:10px; color:var(--text-main); font-family:var(--font-family); font-size:0.88rem; outline:none; transition:border-color 0.2s;"
+          >
+        </div>
         <div class="settings-tree-list" style="padding-bottom: 24px;">
-          ${rows.length > 0 ? rows : '<p style="text-align:center; padding:20px; color:var(--text-muted);">No hay artículos creados.</p>'}
+          ${rows.length > 0
+            ? rows
+            : `<p style="text-align:center; padding:20px; color:var(--text-muted); font-size:0.85rem;">${query ? 'No se encontraron resultados.' : 'No hay artículos creados.'}</p>`
+          }
         </div>
       </div>
     `;
   }
+
 
   // 3b. Create Article Screen
   if (path.length === 3 && path[0] === 'articulos' && path[1] === 'todos' && path[2] === 'new') {
@@ -3286,116 +3503,480 @@ function triggerCSVDownload(filename, headers, rows) {
   document.body.removeChild(link);
 }
 
-function downloadReportPDF(title, headers, rows, legal, filename) {
-  const container = document.createElement('div');
-  container.style.position = 'fixed';
-  container.style.top = '-9999px';
-  container.style.left = '-9999px';
-  container.style.width = '790px';
-  container.style.padding = '40px';
-  container.style.backgroundColor = '#ffffff';
-  container.style.color = '#1e293b';
-  container.style.fontFamily = 'Arial, Helvetica, sans-serif';
-  container.style.lineHeight = '1.5';
-  container.style.boxSizing = 'border-box';
+function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
 
-  const headersHTML = headers.map(h => `<th style="text-align:left; border-bottom: 2px solid #333; padding: 10px 8px; font-size: 0.85rem; font-weight: 700; text-transform: uppercase; color: #0f172a;">${h}</th>`).join('');
-  const rowsHTML = rows.map((row, index) => {
-    const cells = row.map((val, cellIndex) => {
-      // Formatter: keep first column (period label) clean, second column (orders count) formatted as integer, format euros for others
-      let displayVal = val;
-      if (cellIndex === 1 && typeof val === 'number') {
-        displayVal = new Intl.NumberFormat('es-ES').format(val);
-      } else if (cellIndex > 1 && typeof val === 'number') {
-        displayVal = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(val);
+    const pageW = doc.internal.pageSize.getWidth();
+    const margin = 15;
+    const dateNow = new Date();
+    const dateString = dateNow.toLocaleString('es-ES');
+
+    // ── Header band ────────────────────────────────────────────────────────
+    doc.setFillColor(15, 23, 42);           // #0f172a
+    doc.rect(0, 0, pageW, 38, 'F');
+
+    // ── Business name ──────────────────────────────────────────────────────
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(legal.businessName || 'Esencia Café', margin, 13);
+
+    // ── Title ──────────────────────────────────────────────────────────────
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(148, 163, 184);        // slate-400
+    doc.text(`INFORME DIARIO DE VENTAS — ${selectedDate}`, margin, 20);
+    doc.text(`Generado el ${dateString}`, margin, 26);
+
+    // ── Legal info ────────────────────────────────────────────────────────
+    const rightX = pageW - margin;
+    doc.setFontSize(8);
+    doc.setTextColor(200, 210, 220);
+    doc.text(legal.companyName || 'Esencia Café S.L.', rightX, 12, { align: 'right' });
+    doc.text(`NIF: ${legal.nif || 'B-87654321'}`, rightX, 17, { align: 'right' });
+    doc.text(legal.address || 'Santa Cruz de Tenerife', rightX, 22, { align: 'right' });
+
+    // Calculate figures
+    let totalGross = 0;
+    let totalRefunds = 0;
+    const paymentMethods = { 'Efectivo': 0, 'Tarjeta': 0, 'Tarjeta Regalo': 0 };
+
+    dayTx.forEach(tx => {
+      const val = Number(tx.total || 0);
+      const method = (tx.paymentMethod || '').toLowerCase().trim();
+      let matchedMethod = 'Tarjeta';
+      if (method.includes('efectivo')) {
+        matchedMethod = 'Efectivo';
+      } else if (method.includes('regalo') || method.includes('gift')) {
+        matchedMethod = 'Tarjeta Regalo';
       }
-      return `<td style="border-bottom: 1px solid #ddd; padding: 8px; font-size: 0.85rem; color: #334155;">${displayVal}</td>`;
-    }).join('');
-    const background = index % 2 === 0 ? 'background-color: #fafafa;' : 'background-color: #ffffff;';
-    return `<tr style="${background}">${cells}</tr>`;
-  }).join('');
-
-  // Calculate totals
-  let totalCount = 0;
-  let totalBase = 0;
-  let totalTax = 0;
-  let totalCash = 0;
-  let totalCard = 0;
-  let totalRevenue = 0;
-
-  rows.forEach(r => {
-    totalCount += Number(r[1] || 0);
-    totalBase += Number(r[2] || 0);
-    totalTax += Number(r[3] || 0);
-    totalCash += Number(r[4] || 0);
-    totalCard += Number(r[5] || 0);
-    totalRevenue += Number(r[6] || 0);
-  });
-
-  const totalsHTML = `
-    <tr style="background-color: #f1f5f9; font-weight: bold; border-top: 2px solid #333;">
-      <td style="padding: 10px 8px; font-size: 0.85rem; color: #0f172a;">TOTALES</td>
-      <td style="padding: 10px 8px; font-size: 0.85rem; color: #0f172a;">${new Intl.NumberFormat('es-ES').format(totalCount)}</td>
-      <td style="padding: 10px 8px; font-size: 0.85rem; color: #0f172a;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalBase)}</td>
-      <td style="padding: 10px 8px; font-size: 0.85rem; color: #0f172a;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalTax)}</td>
-      <td style="padding: 10px 8px; font-size: 0.85rem; color: #0f172a;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalCash)}</td>
-      <td style="padding: 10px 8px; font-size: 0.85rem; color: #0f172a;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalCard)}</td>
-      <td style="padding: 10px 8px; font-size: 0.85rem; color: #059669;">${new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalRevenue)}</td>
-    </tr>
-  `;
-
-  const dateNow = new Date();
-  const dateString = dateNow.toLocaleString('es-ES');
-
-  container.innerHTML = `
-    <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 30px; box-sizing: border-box;">
-      <div style="text-align: left;">
-        <h1 style="margin: 0 0 6px 0; font-size: 1.8rem; color: #0f172a; font-family: Arial, Helvetica, sans-serif;">${title}</h1>
-        <p style="margin: 0; font-size: 0.9rem; color: #64748b;">Generado el ${dateString}</p>
-      </div>
-      <div style="text-align: right; font-size: 0.85rem; color: #475569; line-height: 1.4;">
-        <strong style="color: #0f172a; font-size: 1rem;">${legal.businessName || 'Esencia Café'}</strong><br>
-        ${legal.companyName || 'Esencia Café S.L.'}<br>
-        NIF: ${legal.nif || 'B-87654321'}<br>
-        ${legal.address || 'Santa Cruz de Tenerife'}
-      </div>
-    </div>
-
-    <table style="width: 100%; border-collapse: collapse; margin-top: 10px; box-sizing: border-box;">
-      <thead>
-        <tr>${headersHTML}</tr>
-      </thead>
-      <tbody>
-        ${rowsHTML}
-        ${totalsHTML}
-      </tbody>
-    </table>
-
-    <div style="margin-top: 40px; font-size: 0.75rem; color: #94a3b8; display: flex; justify-content: space-between; border-top: 1px solid #e2e8f0; padding-top: 15px; box-sizing: border-box;">
-      <span>Esencia TPV - Sistema de Gestión de Ventas</span>
-      <span>Generado en formato PDF</span>
-    </div>
-  `;
-
-  document.body.appendChild(container);
-
-  const opt = {
-    margin:       [10, 10, 10, 10],
-    filename:     filename,
-    image:        { type: 'jpeg', quality: 0.98 },
-    html2canvas:  { scale: 2, useCORS: true, logging: false },
-    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-  };
-
-  html2pdf().from(container).set(opt).save()
-    .then(() => {
-      document.body.removeChild(container);
-    })
-    .catch(err => {
-      console.error('Error generando PDF:', err);
-      showToast('Error al generar el PDF. Inténtalo de nuevo.', 'error');
-      document.body.removeChild(container);
+      
+      if (tx.type === 'refund') {
+        totalRefunds += Math.abs(val);
+        paymentMethods[matchedMethod] += val;
+      } else {
+        totalGross += val;
+        paymentMethods[matchedMethod] += val;
+      }
     });
+    const totalNet = totalGross - totalRefunds;
+
+    // Draw KPI Summary boxes
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.2);
+    
+    // Summary metrics rectangle
+    doc.rect(margin, 44, 85, 30, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(9);
+    doc.text('RESUMEN DE VENTAS', margin + 5, 49);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(`Ventas Brutas: ${totalGross.toFixed(2)} €`, margin + 5, 55);
+    doc.text(`Devoluciones: -${totalRefunds.toFixed(2)} €`, margin + 5, 60);
+    doc.text(`Descuentos: 0.00 €`, margin + 5, 65);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`VENTAS NETAS: ${totalNet.toFixed(2)} €`, margin + 5, 71);
+
+    // Payment Methods rectangle
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.2);
+    doc.rect(margin + 95, 44, 85, 30, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text('MÉTODOS DE PAGO (NETO)', margin + 95 + 5, 49);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(`Efectivo: ${paymentMethods['Efectivo'].toFixed(2)} €`, margin + 95 + 5, 55);
+    doc.text(`Tarjeta Bancaria: ${paymentMethods['Tarjeta'].toFixed(2)} €`, margin + 95 + 5, 60);
+    doc.text(`Tarjeta Regalo: ${paymentMethods['Tarjeta Regalo'].toFixed(2)} €`, margin + 95 + 5, 65);
+
+    // Draw transaction table
+    const headers = ['Ticket ID', 'Hora', 'Mesa / Concepto', 'Método Pago', 'Artículos', 'Importe'];
+    const tableBody = dayTx.map(tx => {
+      const isRefund = tx.type === 'refund';
+      return [
+        tx.id,
+        tx.date.split(', ')[1] || '',
+        tx.table,
+        tx.paymentMethod,
+        isRefund ? 'Devolución' : `${tx.itemsCount} art.`,
+        isRefund ? `-${Math.abs(tx.total).toFixed(2)} €` : `${tx.total.toFixed(2)} €`
+      ];
+    });
+
+    // Add totals row
+    tableBody.push([
+      'TOTAL NETO',
+      '',
+      '',
+      '',
+      `${dayTx.filter(t => t.type !== 'refund').reduce((sum, t) => sum + t.itemsCount, 0)} art.`,
+      `${totalNet.toFixed(2)} €`
+    ]);
+
+    const totalRowIndex = tableBody.length - 1;
+
+    doc.autoTable({
+      startY: 80,
+      head: [headers],
+      body: tableBody,
+      margin: { left: margin, right: margin },
+      styles: {
+        fontSize: 8,
+        cellPadding: 2.5,
+        lineColor: [226, 232, 240],
+        lineWidth: 0.1
+      },
+      headStyles: {
+        fillColor: [30, 41, 59],
+        textColor: [248, 250, 252],
+        fontStyle: 'bold',
+        fontSize: 7.5
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252]
+      },
+      columnStyles: {
+        0: { cellWidth: 35 },
+        1: { halign: 'center', cellWidth: 20 },
+        4: { halign: 'center', cellWidth: 25 },
+        5: { halign: 'right', cellWidth: 25 }
+      },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.row.index === totalRowIndex) {
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.fillColor = [241, 245, 249];
+          if (data.column.index === 5) {
+            data.cell.styles.textColor = totalNet >= 0 ? [5, 150, 105] : [220, 38, 38];
+          } else {
+            data.cell.styles.textColor = [15, 23, 42];
+          }
+        }
+      }
+    });
+
+    const finalY = doc.lastAutoTable.finalY + 8;
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(margin, finalY, pageW - margin, finalY);
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text('Esencia TPV — Sistema de Gestión de Ventas', margin, finalY + 5);
+    doc.text('Generado en formato PDF', pageW - margin, finalY + 5, { align: 'right' });
+
+    doc.save(filename);
+    showToast('Informe Diario PDF descargado.', 'success');
+  } catch (err) {
+    console.error('Error generando PDF diario:', err);
+    showToast('Error al generar el PDF: ' + err.message, 'error');
+  }
+}
+
+function downloadMonthlyReportPDF(selectedMonth, sortedDays, legal, filename) {
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+
+    const pageW = doc.internal.pageSize.getWidth();
+    const margin = 15;
+    const dateNow = new Date();
+    const dateString = dateNow.toLocaleString('es-ES');
+
+    // ── Header band ────────────────────────────────────────────────────────
+    doc.setFillColor(15, 23, 42);           // #0f172a
+    doc.rect(0, 0, pageW, 38, 'F');
+
+    // ── Business name ──────────────────────────────────────────────────────
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(legal.businessName || 'Esencia Café', margin, 13);
+
+    // ── Title ──────────────────────────────────────────────────────────────
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(148, 163, 184);        // slate-400
+    doc.text(`INFORME MENSUAL DE VENTAS — ${selectedMonth}`, margin, 20);
+    doc.text(`Generado el ${dateString}`, margin, 26);
+
+    // ── Legal info ────────────────────────────────────────────────────────
+    const rightX = pageW - margin;
+    doc.setFontSize(8);
+    doc.setTextColor(200, 210, 220);
+    doc.text(legal.companyName || 'Esencia Café S.L.', rightX, 12, { align: 'right' });
+    doc.text(`NIF: ${legal.nif || 'B-87654321'}`, rightX, 17, { align: 'right' });
+    doc.text(legal.address || 'Santa Cruz de Tenerife', rightX, 22, { align: 'right' });
+
+    // Calculate figures
+    let totalGross = 0;
+    let totalRefunds = 0;
+    let totalCash = 0;
+    let totalCard = 0;
+    let totalOrders = 0;
+
+    sortedDays.forEach(day => {
+      totalGross += day.gross;
+      totalRefunds += day.refunds;
+      totalCash += day.cash;
+      totalCard += day.card;
+      totalOrders += day.count;
+    });
+    const totalNet = totalGross - totalRefunds;
+
+    // Draw KPI Summary boxes
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.2);
+    
+    // Summary metrics rectangle
+    doc.rect(margin, 44, 85, 30, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(9);
+    doc.text('RESUMEN DEL MES', margin + 5, 49);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(`Total Pedidos: ${totalOrders}`, margin + 5, 55);
+    doc.text(`Ventas Brutas: ${totalGross.toFixed(2)} €`, margin + 5, 60);
+    doc.text(`Devoluciones: -${totalRefunds.toFixed(2)} €`, margin + 5, 65);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`VENTAS NETAS: ${totalNet.toFixed(2)} €`, margin + 5, 71);
+
+    // Payment Methods rectangle
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.2);
+    doc.rect(margin + 95, 44, 85, 30, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text('MÉTODOS DE PAGO (NETO)', margin + 95 + 5, 49);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(`Efectivo: ${totalCash.toFixed(2)} €`, margin + 95 + 5, 55);
+    doc.text(`Tarjeta Bancaria: ${totalCard.toFixed(2)} €`, margin + 95 + 5, 60);
+
+    // Draw breakdown table
+    const headers = ['Día', 'Pedidos', 'Efectivo', 'Tarjeta', 'Devoluciones', 'Total Neto'];
+    const tableBody = sortedDays.map(day => [
+      day.dateStr,
+      String(day.count),
+      `${day.cash.toFixed(2)} €`,
+      `${day.card.toFixed(2)} €`,
+      day.refunds > 0 ? `-${day.refunds.toFixed(2)} €` : '0.00 €',
+      `${day.net.toFixed(2)} €`
+    ]);
+
+    // Add totals row
+    tableBody.push([
+      'TOTAL MENSUAL',
+      String(totalOrders),
+      `${totalCash.toFixed(2)} €`,
+      `${totalCard.toFixed(2)} €`,
+      `-${totalRefunds.toFixed(2)} €`,
+      `${totalNet.toFixed(2)} €`
+    ]);
+
+    const totalRowIndex = tableBody.length - 1;
+
+    doc.autoTable({
+      startY: 80,
+      head: [headers],
+      body: tableBody,
+      margin: { left: margin, right: margin },
+      styles: {
+        fontSize: 8,
+        cellPadding: 2.5,
+        lineColor: [226, 232, 240],
+        lineWidth: 0.1
+      },
+      headStyles: {
+        fillColor: [30, 41, 59],
+        textColor: [248, 250, 252],
+        fontStyle: 'bold',
+        fontSize: 7.5
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252]
+      },
+      columnStyles: {
+        0: { cellWidth: 35 },
+        1: { halign: 'right', cellWidth: 20 },
+        2: { halign: 'right' },
+        3: { halign: 'right' },
+        4: { halign: 'right' },
+        5: { halign: 'right', cellWidth: 30 }
+      },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.row.index === totalRowIndex) {
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.fillColor = [241, 245, 249];
+          if (data.column.index === 5) {
+            data.cell.styles.textColor = totalNet >= 0 ? [5, 150, 105] : [220, 38, 38];
+          } else {
+            data.cell.styles.textColor = [15, 23, 42];
+          }
+        }
+      }
+    });
+
+    const finalY = doc.lastAutoTable.finalY + 8;
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(margin, finalY, pageW - margin, finalY);
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text('Esencia TPV — Sistema de Gestión de Ventas', margin, finalY + 5);
+    doc.text('Generado en formato PDF', pageW - margin, finalY + 5, { align: 'right' });
+
+    doc.save(filename);
+    showToast('Informe Mensual PDF descargado.', 'success');
+  } catch (err) {
+    console.error('Error generando PDF mensual:', err);
+    showToast('Error al generar el PDF: ' + err.message, 'error');
+  }
+}
+
+function downloadReportPDF(title, headers, rows, legal, filename) {
+  // Use jsPDF directly (programmatic PDF, no html2canvas/DOM capture that could be blank)
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 15;
+    const dateNow = new Date();
+    const dateString = dateNow.toLocaleString('es-ES');
+
+    // ── Header background band ─────────────────────────────────────────────
+    doc.setFillColor(15, 23, 42);           // #0f172a
+    doc.rect(0, 0, pageW, 38, 'F');
+
+    // ── Business name (top-left) ──────────────────────────────────────────
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(legal.businessName || 'Esencia Café', margin, 13);
+
+    // ── Report title (top-left, below business name) ──────────────────────
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(148, 163, 184);        // slate-400
+    doc.text(title, margin, 20);
+    doc.text(`Generado el ${dateString}`, margin, 26);
+
+    // ── Legal info (top-right) ────────────────────────────────────────────
+    const rightX = pageW - margin;
+    doc.setFontSize(8);
+    doc.setTextColor(200, 210, 220);
+    doc.text(legal.companyName || 'Esencia Café S.L.', rightX, 12, { align: 'right' });
+    doc.text(`NIF: ${legal.nif || 'B-87654321'}`, rightX, 17, { align: 'right' });
+    doc.text(legal.address || 'Santa Cruz de Tenerife', rightX, 22, { align: 'right' });
+
+    // ── Format helper ─────────────────────────────────────────────────────
+    const fmtCurrency = (v) =>
+      new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(Number(v) || 0);
+    const fmtInt = (v) => new Intl.NumberFormat('es-ES').format(Number(v) || 0);
+
+    // ── Build autoTable body + totals row ─────────────────────────────────
+    let totalCount = 0, totalBase = 0, totalTax = 0, totalCash = 0, totalCard = 0, totalRevenue = 0;
+    const tableBody = rows.map((row, idx) => {
+      totalCount   += Number(row[1] || 0);
+      totalBase    += Number(row[2] || 0);
+      totalTax     += Number(row[3] || 0);
+      totalCash    += Number(row[4] || 0);
+      totalCard    += Number(row[5] || 0);
+      totalRevenue += Number(row[6] || 0);
+      return [
+        row[0],
+        fmtInt(row[1]),
+        fmtCurrency(row[2]),
+        fmtCurrency(row[3]),
+        fmtCurrency(row[4]),
+        fmtCurrency(row[5]),
+        fmtCurrency(row[6])
+      ];
+    });
+
+    // Totals row appended as last body row (styled differently via didParseCell)
+    tableBody.push([
+      'TOTALES',
+      fmtInt(totalCount),
+      fmtCurrency(totalBase),
+      fmtCurrency(totalTax),
+      fmtCurrency(totalCash),
+      fmtCurrency(totalCard),
+      fmtCurrency(totalRevenue)
+    ]);
+
+    const totalRowIndex = tableBody.length - 1;
+
+    doc.autoTable({
+      startY: 44,
+      head: [headers],
+      body: tableBody,
+      margin: { left: margin, right: margin },
+      styles: {
+        fontSize: 8,
+        cellPadding: 3,
+        overflow: 'linebreak',
+        lineColor: [226, 232, 240],
+        lineWidth: 0.1
+      },
+      headStyles: {
+        fillColor: [30, 41, 59],       // slate-800
+        textColor: [248, 250, 252],    // slate-50
+        fontStyle: 'bold',
+        fontSize: 7.5
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252]     // slate-50
+      },
+      columnStyles: {
+        0: { cellWidth: 28 },
+        1: { halign: 'right', cellWidth: 16 },
+        2: { halign: 'right' },
+        3: { halign: 'right' },
+        4: { halign: 'right' },
+        5: { halign: 'right' },
+        6: { halign: 'right', textColor: [5, 150, 105] }  // emerald-600
+      },
+      didParseCell: (data) => {
+        // Style the TOTALES row
+        if (data.section === 'body' && data.row.index === totalRowIndex) {
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.fillColor = [241, 245, 249];  // slate-100
+          if (data.column.index === 6) {
+            data.cell.styles.textColor = [5, 150, 105];  // emerald-600
+          } else {
+            data.cell.styles.textColor = [15, 23, 42];   // slate-900
+          }
+        }
+      }
+    });
+
+    // ── Footer ────────────────────────────────────────────────────────────
+    const finalY = doc.lastAutoTable.finalY + 8;
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(margin, finalY, pageW - margin, finalY);
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text('Esencia TPV — Sistema de Gestión de Ventas', margin, finalY + 5);
+    doc.text('Generado en formato PDF', pageW - margin, finalY + 5, { align: 'right' });
+
+    doc.save(filename);
+    showToast('Informe PDF descargado correctamente.', 'success');
+  } catch (err) {
+    console.error('Error generando PDF:', err);
+    showToast('Error al generar el PDF: ' + err.message, 'error');
+  }
 }
 
 // Event bindings
@@ -3977,13 +4558,111 @@ function setupEventListeners(container) {
     });
   }
 
-  container.querySelectorAll('.reports-tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      selectedReportsTab = btn.dataset.tab;
+  const toDiarioBtn = container.querySelector('#settings-to-informes-diario');
+  if (toDiarioBtn) {
+    toDiarioBtn.addEventListener('click', () => {
+      store.navigateSettings(['informes', 'diario']);
+    });
+  }
+
+  const toMensualBtn = container.querySelector('#settings-to-informes-mensual');
+  if (toMensualBtn) {
+    toMensualBtn.addEventListener('click', () => {
+      store.navigateSettings(['informes', 'mensual']);
+    });
+  }
+
+  // Date picker events
+  const dateInput = container.querySelector('#report-date-input');
+  if (dateInput) {
+    dateInput.addEventListener('change', (e) => {
+      store.state.selectedReportDate = e.target.value;
       store.notify();
     });
-  });
+  }
 
+  const datePrev = container.querySelector('#report-date-prev');
+  if (datePrev) {
+    datePrev.addEventListener('click', () => {
+      const parts = store.state.selectedReportDate.split('-');
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      const d = parseInt(parts[2], 10);
+      const dateObj = new Date(y, m, d);
+      dateObj.setDate(dateObj.getDate() - 1);
+      
+      const resY = dateObj.getFullYear();
+      const resM = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const resD = String(dateObj.getDate()).padStart(2, '0');
+      
+      store.state.selectedReportDate = `${resY}-${resM}-${resD}`;
+      store.notify();
+    });
+  }
+
+  const dateNext = container.querySelector('#report-date-next');
+  if (dateNext) {
+    dateNext.addEventListener('click', () => {
+      const parts = store.state.selectedReportDate.split('-');
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      const d = parseInt(parts[2], 10);
+      const dateObj = new Date(y, m, d);
+      dateObj.setDate(dateObj.getDate() + 1);
+      
+      const resY = dateObj.getFullYear();
+      const resM = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const resD = String(dateObj.getDate()).padStart(2, '0');
+      
+      store.state.selectedReportDate = `${resY}-${resM}-${resD}`;
+      store.notify();
+    });
+  }
+
+  // Month picker events
+  const monthInput = container.querySelector('#report-month-input');
+  if (monthInput) {
+    monthInput.addEventListener('change', (e) => {
+      store.state.selectedReportMonth = e.target.value;
+      store.notify();
+    });
+  }
+
+  const monthPrev = container.querySelector('#report-month-prev');
+  if (monthPrev) {
+    monthPrev.addEventListener('click', () => {
+      const parts = store.state.selectedReportMonth.split('-');
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      const dateObj = new Date(y, m, 1);
+      dateObj.setMonth(dateObj.getMonth() - 1);
+      
+      const resY = dateObj.getFullYear();
+      const resM = String(dateObj.getMonth() + 1).padStart(2, '0');
+      
+      store.state.selectedReportMonth = `${resY}-${resM}`;
+      store.notify();
+    });
+  }
+
+  const monthNext = container.querySelector('#report-month-next');
+  if (monthNext) {
+    monthNext.addEventListener('click', () => {
+      const parts = store.state.selectedReportMonth.split('-');
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      const dateObj = new Date(y, m, 1);
+      dateObj.setMonth(dateObj.getMonth() + 1);
+      
+      const resY = dateObj.getFullYear();
+      const resM = String(dateObj.getMonth() + 1).padStart(2, '0');
+      
+      store.state.selectedReportMonth = `${resY}-${resM}`;
+      store.notify();
+    });
+  }
+
+  // Export buttons
   const btnExportDiario = container.querySelector('#btn-export-diario');
   if (btnExportDiario) {
     btnExportDiario.addEventListener('click', () => {
@@ -3998,24 +4677,19 @@ function setupEventListeners(container) {
         return new Date();
       };
 
-      const dailyData = aggregateDailyData(store.state.transactions, getTxDate);
-      const headers = ['Fecha', 'Pedidos', 'Base Imponible', 'Impuestos', 'Efectivo', 'Tarjeta', 'Total Facturado'];
-      const rows = dailyData.map(d => [
-        d.dateStr,
-        d.count,
-        d.base,
-        d.tax,
-        d.cash,
-        d.card,
-        d.total
-      ]);
-      
-      const dNow = new Date();
-      const pad = (n) => String(n).padStart(2, '0');
-      const filename = `${dNow.getFullYear()}-${pad(dNow.getMonth() + 1)}-${pad(dNow.getDate())}.pdf`;
+      const getTxDateKey = (tx) => {
+        const d = getTxDate(tx);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+      };
 
-      downloadReportPDF('Informe Diario de Facturación', headers, rows, store.state.legal, filename);
-      showToast('Descargando Informe Diario (PDF)...', 'success');
+      const selectedDate = store.state.selectedReportDate || new Date().toISOString().slice(0, 10);
+      const dayTx = store.state.transactions.filter(tx => getTxDateKey(tx) === selectedDate);
+      const filename = `Informe-Diario-${selectedDate}.pdf`;
+
+      downloadDailyReportPDF(selectedDate, dayTx, store.state.legal, filename);
     });
   }
 
@@ -4033,24 +4707,57 @@ function setupEventListeners(container) {
         return new Date();
       };
 
-      const monthlyData = aggregateMonthlyData(store.state.transactions, getTxDate);
-      const headers = ['Mes', 'Pedidos', 'Base Imponible', 'Impuestos', 'Efectivo', 'Tarjeta', 'Total Facturado'];
-      const rows = monthlyData.map(d => [
-        d.monthStr,
-        d.count,
-        d.base,
-        d.tax,
-        d.cash,
-        d.card,
-        d.total
-      ]);
-      
-      const dNow = new Date();
-      const months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-      const filename = `${dNow.getFullYear()}-${months[dNow.getMonth()]}.pdf`;
+      const getTxMonthKey = (tx) => {
+        const d = getTxDate(tx);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        return `${yyyy}-${mm}`;
+      };
 
-      downloadReportPDF('Informe Mensual de Facturación', headers, rows, store.state.legal, filename);
-      showToast('Descargando Informe Mensual (PDF)...', 'success');
+      const selectedMonth = store.state.selectedReportMonth || new Date().toISOString().slice(0, 7);
+      const monthTx = store.state.transactions.filter(tx => getTxMonthKey(tx) === selectedMonth);
+
+      const dailyAgg = {};
+      monthTx.forEach(tx => {
+        const d = getTxDate(tx);
+        const day = d.getDate();
+        const dateStr = d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+        
+        if (!dailyAgg[day]) {
+          dailyAgg[day] = {
+            day,
+            dateStr,
+            count: 0,
+            gross: 0,
+            refunds: 0,
+            net: 0,
+            cash: 0,
+            card: 0
+          };
+        }
+
+        const val = Number(tx.total || 0);
+        const method = (tx.paymentMethod || '').toLowerCase().trim();
+        const isCash = method.includes('efectivo');
+
+        if (tx.type === 'refund') {
+          dailyAgg[day].refunds += Math.abs(val);
+          dailyAgg[day].net += val;
+          if (isCash) dailyAgg[day].cash += val;
+          else dailyAgg[day].card += val;
+        } else {
+          dailyAgg[day].count += 1;
+          dailyAgg[day].gross += val;
+          dailyAgg[day].net += val;
+          if (isCash) dailyAgg[day].cash += val;
+          else dailyAgg[day].card += val;
+        }
+      });
+
+      const sortedDays = Object.values(dailyAgg).sort((a, b) => a.day - b.day);
+      const filename = `Informe-Mensual-${selectedMonth}.pdf`;
+
+      downloadMonthlyReportPDF(selectedMonth, sortedDays, store.state.legal, filename);
     });
   }
 
@@ -4064,6 +4771,8 @@ function setupEventListeners(container) {
   const backSettingsBtn = container.querySelector('#settings-back-btn');
   if (backSettingsBtn) {
     backSettingsBtn.addEventListener('click', () => {
+      // Clear article search when leaving the list
+      store.state.articleSearchQuery = '';
       store.goBackSettings();
     });
   }
@@ -4073,6 +4782,20 @@ function setupEventListeners(container) {
   if (createArticleBtn) {
     createArticleBtn.addEventListener('click', () => {
       store.navigateSettings(['articulos', 'todos', 'new']);
+    });
+  }
+
+  // Article live search
+  const articleSearchInput = container.querySelector('#article-search-input');
+  if (articleSearchInput) {
+    // Focus at end of current text (preserves typed query on re-render)
+    articleSearchInput.focus();
+    const len = articleSearchInput.value.length;
+    articleSearchInput.setSelectionRange(len, len);
+
+    articleSearchInput.addEventListener('input', (e) => {
+      store.state.articleSearchQuery = e.target.value;
+      store.notify();
     });
   }
 
