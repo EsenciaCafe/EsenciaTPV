@@ -15,6 +15,8 @@ import {
   upsertStaffProfile,
   deleteStaffProfile as dbDeleteStaffProfile
 } from './db.js';
+import { supabase } from './supabase.js';
+
 
 const DINING_STATE_STORAGE_KEY = 'tpv-dining-state-v1';
 const STAFF_SESSION_STORAGE_KEY = 'tpv-staff-session-v1';
