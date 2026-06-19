@@ -416,7 +416,7 @@ async function showReceiptQrModal(transactionId) {
     return;
   }
 
-  const ticketUrl = `${window.location.origin}/ticket.html?t=${encodeURIComponent(tx.receiptToken)}`;
+  const ticketUrl = new URL(`ticket.html?t=${encodeURIComponent(tx.receiptToken)}`, window.location.href).href;
   let qrDataUrl = '';
 
   try {
