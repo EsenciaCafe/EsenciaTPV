@@ -1,5 +1,4 @@
 import { store } from './store.js';
-import { supabase } from './supabase.js';
 import QRCode from 'qrcode';
 
 // SVG Icons
@@ -102,7 +101,7 @@ function renderHeader(state) {
   const table = store.getSelectedTable();
   const title = state.activeTab === 'mesas' ? 'Mesas' : table ? table.name : 'Selecciona una mesa';
   const roleLabel = store.getRoleLabel();
-  const staffName = state.auth.profile?.display_name || state.auth.user?.email || 'Usuario';
+  const staffName = state.auth.profile?.display_name || 'Usuario';
 
   const dbDot = dbStatus === 'connected'
     ? '<div class="status-dot" title="Base de Datos conectada"></div>'
@@ -176,20 +175,22 @@ function renderAuthView(state) {
         </div>
         <div class="auth-copy">
           <h2>Acceso de personal</h2>
-          <p>Inicia sesion para abrir comandas y trabajar con tu rol asignado.</p>
+          <p>Introduce tu codigo de 4 digitos para abrir tu sesion.</p>
         </div>
-        <label class="auth-field">
-          <span>Email</span>
-          <input id="staff-email-input" type="email" autocomplete="email" required ${isDisabled}>
-        </label>
-        <label class="auth-field">
-          <span>Contraseña</span>
-          <input id="staff-password-input" type="password" autocomplete="current-password" required ${isDisabled}>
-        </label>
+        <input id="staff-pin-input" class="pin-hidden-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" required ${isDisabled}>
+        <div class="pin-dots" aria-hidden="true">
+          <span></span><span></span><span></span><span></span>
+        </div>
+        <div class="pin-keypad">
+          ${[1,2,3,4,5,6,7,8,9].map(num => `<button type="button" class="pin-key" data-pin-key="${num}" ${isDisabled}>${num}</button>`).join('')}
+          <button type="button" class="pin-key pin-key--ghost" data-pin-clear ${isDisabled}>C</button>
+          <button type="button" class="pin-key" data-pin-key="0" ${isDisabled}>0</button>
+          <button type="button" class="pin-key pin-key--ghost" data-pin-back ${isDisabled}>DEL</button>
+        </div>
         <button class="auth-submit-btn" type="submit" ${isDisabled}>
           ${state.auth.isLoading ? 'Entrando...' : 'Entrar'}
         </button>
-        <p class="auth-note">Las cuentas se crean desde Supabase y cada usuario recibe un rol.</p>
+        <p class="auth-note">Los perfiles y codigos se gestionan desde Ajustes > Personal.</p>
       </form>
     </section>
   `;
@@ -774,6 +775,12 @@ function renderAjustesView(state) {
             <span>Informes y Ventas</span>
             ${chevron}
           </button>
+          ${store.canManageStaff() ? `
+            <button class="settings-tree-item" id="settings-to-staff">
+              <span>Personal y PIN</span>
+              ${chevron}
+            </button>
+          ` : ''}
           
           <div style="margin-top: 24px; border-top: 1px solid var(--border-color); padding-top: 16px;">
             <div style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Configuración de Dispositivo</div>
@@ -827,6 +834,84 @@ function renderAjustesView(state) {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (path.length === 1 && path[0] === 'staff' && store.canManageStaff()) {
+    const staffRows = state.staffProfiles.map(profile => `
+      <button class="settings-tree-item staff-row" data-edit-staff-id="${profile.id}">
+        <span>
+          <strong>${profile.display_name}</strong>
+          <small>${store.getRoleLabel(profile.role)} · PIN ${profile.pin_code} · ${profile.active ? 'Activo' : 'Inactivo'}</small>
+        </span>
+        ${chevron}
+      </button>
+    `).join('');
+
+    return `
+      <div class="view-container">
+        <div class="settings-nav-header">
+          <button class="settings-back-arrow-btn" id="settings-back-btn">
+            ${backArrow} Ajustes
+          </button>
+          <button class="btn btn-primary" id="settings-create-staff-btn" style="height:36px; padding:0 12px; font-size:0.85rem; background-color:var(--secondary);">
+            Nuevo
+          </button>
+        </div>
+        <h2 class="settings-nav-title">Personal</h2>
+        <div class="settings-tree-list">
+          ${staffRows || '<p style="padding:24px; text-align:center; color:var(--text-muted);">No hay perfiles de personal.</p>'}
+        </div>
+      </div>
+    `;
+  }
+
+  if (path.length >= 2 && path[0] === 'staff' && store.canManageStaff()) {
+    const isNew = path[1] === 'nuevo';
+    const profile = isNew ? null : state.staffProfiles.find(item => item.id === path[1]);
+    if (!isNew && !profile) {
+      return '<div class="view-container"><p style="padding:24px;">Empleado no encontrado.</p></div>';
+    }
+
+    return `
+      <div class="view-container">
+        <div class="settings-nav-header">
+          <button class="settings-back-arrow-btn" id="settings-back-btn">
+            ${backArrow} Personal
+          </button>
+        </div>
+        <h2 class="settings-nav-title">${isNew ? 'Nuevo empleado' : 'Editar empleado'}</h2>
+        <div class="settings-editor-container">
+          <form id="settings-staff-form" data-staff-id="${profile?.id || ''}" style="display:grid; gap:16px;">
+            <div class="editor-form-group">
+              <label class="editor-form-label">Nombre</label>
+              <input type="text" class="editor-form-input" id="staff-display-name" value="${profile?.display_name || ''}" required placeholder="Ej. Camarero 1">
+            </div>
+            <div class="editor-form-group">
+              <label class="editor-form-label">Rol</label>
+              <select class="editor-form-input" id="staff-role" required>
+                <option value="staff" ${profile?.role === 'staff' ? 'selected' : ''}>Staff</option>
+                <option value="manager" ${profile?.role === 'manager' ? 'selected' : ''}>Encargado</option>
+                <option value="admin" ${profile?.role === 'admin' ? 'selected' : ''}>Administrador</option>
+              </select>
+            </div>
+            <div class="editor-form-group">
+              <label class="editor-form-label">Codigo PIN (4 digitos)</label>
+              <input type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" class="editor-form-input" id="staff-pin-code" value="${profile?.pin_code || ''}" required placeholder="1234">
+            </div>
+            <label class="staff-active-toggle">
+              <input type="checkbox" id="staff-active" ${profile?.active === false ? '' : 'checked'}>
+              <span>Empleado activo</span>
+            </label>
+            <button type="submit" class="btn btn-primary" style="height:48px; background-color:var(--secondary);">Guardar empleado</button>
+            ${!isNew ? `
+              <button type="button" class="btn btn-secondary" id="settings-delete-staff-btn" style="height:44px; color:var(--danger); border-color:rgba(239,68,68,.3); background:rgba(239,68,68,.08);">
+                Eliminar empleado
+              </button>
+            ` : ''}
+          </form>
         </div>
       </div>
     `;
@@ -2235,7 +2320,7 @@ function render(state) {
     document.body.classList.remove('light-theme');
   }
 
-  if (!state.auth.session) {
+  if (!state.auth.profile) {
     appRoot.innerHTML = renderAuthView(state);
     setupAuthEventListeners(appRoot);
     return;
@@ -2309,12 +2394,59 @@ function render(state) {
 function setupAuthEventListeners(container) {
   const form = container.querySelector('#staff-login-form');
   if (!form) return;
+  const pinInput = container.querySelector('#staff-pin-input');
+  const dots = Array.from(container.querySelectorAll('.pin-dots span'));
+
+  const updatePinDots = () => {
+    const length = pinInput?.value.length || 0;
+    dots.forEach((dot, index) => {
+      dot.classList.toggle('is-filled', index < length);
+    });
+  };
+
+  const submitPin = () => {
+    form.requestSubmit();
+  };
+
+  container.querySelectorAll('[data-pin-key]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!pinInput || pinInput.value.length >= 4) return;
+      pinInput.value = `${pinInput.value}${btn.dataset.pinKey}`;
+      updatePinDots();
+      if (pinInput.value.length === 4) submitPin();
+    });
+  });
+
+  const clearBtn = container.querySelector('[data-pin-clear]');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      if (!pinInput) return;
+      pinInput.value = '';
+      updatePinDots();
+    });
+  }
+
+  const backBtn = container.querySelector('[data-pin-back]');
+  if (backBtn) {
+    backBtn.addEventListener('click', () => {
+      if (!pinInput) return;
+      pinInput.value = pinInput.value.slice(0, -1);
+      updatePinDots();
+    });
+  }
+
+  if (pinInput) {
+    pinInput.addEventListener('input', () => {
+      pinInput.value = pinInput.value.replace(/\D/g, '').slice(0, 4);
+      updatePinDots();
+      if (pinInput.value.length === 4) submitPin();
+    });
+  }
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const email = container.querySelector('#staff-email-input')?.value.trim();
-    const password = container.querySelector('#staff-password-input')?.value;
-    if (!email || !password) return;
+    const pinCode = pinInput?.value || '';
+    if (pinCode.length !== 4) return;
 
     const submitBtn = container.querySelector('.auth-submit-btn');
     if (submitBtn) {
@@ -2323,9 +2455,18 @@ function setupAuthEventListeners(container) {
     }
 
     try {
-      await store.signIn(email, password);
+      await store.signInWithPin(pinCode);
+      dbStatus = 'loading';
+      render(store.state);
+      const loaded = await store.loadFromSupabase();
+      dbStatus = loaded ? 'connected' : 'fallback';
+      render(store.state);
     } catch (err) {
-      showToast('Email o contraseña incorrectos.', 'error');
+      showToast('Codigo incorrecto.', 'error');
+      if (pinInput) {
+        pinInput.value = '';
+        updatePinDots();
+      }
       if (submitBtn) {
         submitBtn.disabled = false;
         submitBtn.textContent = 'Entrar';
@@ -4647,6 +4788,80 @@ function setupEventListeners(container) {
     });
   }
 
+  const toStaffBtn = container.querySelector('#settings-to-staff');
+  if (toStaffBtn) {
+    toStaffBtn.addEventListener('click', () => {
+      store.navigateSettings(['staff']);
+    });
+  }
+
+  const createStaffBtn = container.querySelector('#settings-create-staff-btn');
+  if (createStaffBtn) {
+    createStaffBtn.addEventListener('click', () => {
+      store.navigateSettings(['staff', 'nuevo']);
+    });
+  }
+
+  container.querySelectorAll('[data-edit-staff-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      store.navigateSettings(['staff', btn.dataset.editStaffId]);
+    });
+  });
+
+  const staffForm = container.querySelector('#settings-staff-form');
+  if (staffForm) {
+    staffForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const id = staffForm.dataset.staffId || undefined;
+      const displayName = (container.querySelector('#staff-display-name')?.value || '').trim();
+      const role = container.querySelector('#staff-role')?.value || 'staff';
+      const pinCode = (container.querySelector('#staff-pin-code')?.value || '').trim();
+      const active = container.querySelector('#staff-active')?.checked !== false;
+
+      if (!displayName || !/^\d{4}$/.test(pinCode)) {
+        showToast('El nombre y el PIN de 4 digitos son obligatorios.', 'error');
+        return;
+      }
+
+      const pinExists = store.state.staffProfiles.some(profile => profile.id !== id && profile.pin_code === pinCode);
+      if (pinExists) {
+        showToast('Ese PIN ya lo usa otro empleado.', 'error');
+        return;
+      }
+
+      const saved = await store.saveStaffProfile({ id, displayName, role, pinCode, active });
+      if (saved) {
+        store.navigateSettings(['staff']);
+        showToast('Empleado guardado.', 'success');
+      } else {
+        showToast('No tienes permiso para gestionar personal.', 'error');
+      }
+    });
+  }
+
+  const deleteStaffBtn = container.querySelector('#settings-delete-staff-btn');
+  if (deleteStaffBtn) {
+    deleteStaffBtn.addEventListener('click', () => {
+      const id = container.querySelector('#settings-staff-form')?.dataset.staffId;
+      if (!id) return;
+      showConfirm(
+        'Eliminar empleado',
+        'Este PIN dejara de funcionar. ¿Quieres continuar?',
+        async () => {
+          const deleted = await store.deleteStaffProfile(id);
+          if (deleted) {
+            store.navigateSettings(['staff']);
+            showToast('Empleado eliminado.', 'success');
+          } else {
+            showToast('No puedes eliminar tu propio usuario activo.', 'error');
+          }
+        },
+        null,
+        true
+      );
+    });
+  }
+
   const toDiarioBtn = container.querySelector('#settings-to-informes-diario');
   if (toDiarioBtn) {
     toDiarioBtn.addEventListener('click', () => {
@@ -5835,22 +6050,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     render(state);
   });
 
-  supabase.auth.onAuthStateChange((_event, session) => {
-    setTimeout(() => store.setAuthSession(session).then(async () => {
-      if (!session) {
-        dbStatus = 'fallback';
-        render(store.state);
-        return;
-      }
-
-      dbStatus = 'loading';
-      render(store.state);
-      const loaded = await store.loadFromSupabase();
-      dbStatus = loaded ? 'connected' : 'fallback';
-      render(store.state);
-    }), 0);
-  });
-
   // Watch system theme changes for System theme mode
   window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
     if (store.state.theme === 'system') {
@@ -5861,7 +6060,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await store.loadAuthSession();
 
   let loaded = false;
-  if (store.state.auth.session) {
+  if (store.state.auth.profile) {
     loaded = await store.loadFromSupabase();
     dbStatus = loaded ? 'connected' : 'fallback';
   } else {
@@ -5869,7 +6068,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (loadingEl) {
-    if (store.state.auth.session && !loaded) {
+    if (store.state.auth.profile && !loaded) {
       // Show fallback warning briefly
       const msgEl = loadingEl.querySelector('.loading-message');
       if (msgEl) {

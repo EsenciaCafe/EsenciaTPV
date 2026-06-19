@@ -234,13 +234,26 @@ export async function loadReceiptTicket(token) {
   return data?.payload || null;
 }
 
-export async function loadStaffProfile(userId) {
-  if (!userId) return null;
-
+export async function loadStaffProfiles() {
   const { data, error } = await supabase
     .from('staff_profiles')
-    .select('display_name, role, active')
-    .eq('user_id', userId)
+    .select('id, display_name, role, pin_code, active, created_at')
+    .order('display_name');
+
+  if (error) {
+    console.warn('[DB] Error loading staff profiles:', error.message);
+    return [];
+  }
+
+  return data || [];
+}
+
+export async function findStaffByPin(pinCode) {
+  const { data, error } = await supabase
+    .from('staff_profiles')
+    .select('id, display_name, role, active')
+    .eq('pin_code', pinCode)
+    .eq('active', true)
     .maybeSingle();
 
   if (error) {
@@ -249,6 +262,25 @@ export async function loadStaffProfile(userId) {
   }
 
   return data || null;
+}
+
+export async function upsertStaffProfile(profile) {
+  const row = {
+    id: profile.id || `staff-${Date.now()}`,
+    display_name: profile.displayName,
+    role: profile.role || 'staff',
+    pin_code: profile.pinCode,
+    active: profile.active !== false,
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = await supabase.from('staff_profiles').upsert(row, { onConflict: 'id' });
+  if (error) notifyDbError('upsertStaffProfile', error.message);
+}
+
+export async function deleteStaffProfile(id) {
+  const { error } = await supabase.from('staff_profiles').delete().eq('id', id);
+  if (error) notifyDbError('deleteStaffProfile', error.message);
 }
 
 export async function loadTPVState() {

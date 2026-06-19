@@ -64,11 +64,17 @@ create table if not exists receipt_tickets (
 );
 
 -- Perfiles de personal y roles de acceso
+drop table if exists staff_profiles;
 create table if not exists staff_profiles (
-  user_id      uuid primary key references auth.users(id) on delete cascade,
-  display_name text,
+  id           text primary key,
+  display_name text not null,
   role         text not null default 'staff' check (role in ('admin', 'manager', 'staff')),
+  pin_code     text not null unique check (pin_code ~ '^[0-9]{4}$'),
   active       boolean not null default true,
   created_at   timestamptz default now(),
   updated_at   timestamptz default now()
 );
+
+insert into staff_profiles (id, display_name, role, pin_code, active)
+values ('admin-default', 'Administrador', 'admin', '0000', true)
+on conflict (id) do nothing;

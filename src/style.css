@@ -373,6 +373,83 @@ body {
   cursor: default;
 }
 
+.pin-hidden-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.pin-dots {
+  display: grid;
+  grid-template-columns: repeat(4, 18px);
+  justify-content: center;
+  gap: 14px;
+  padding: 4px 0;
+}
+
+.pin-dots span {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border-color);
+  background: transparent;
+}
+
+.pin-dots span.is-filled {
+  border-color: var(--secondary);
+  background: var(--secondary);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.42);
+}
+
+.pin-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.pin-key {
+  height: 58px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  background: var(--bg-item);
+  color: var(--text-main);
+  font-family: var(--font-family);
+  font-size: 1.35rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.pin-key:active {
+  background: var(--bg-item-active);
+  transform: scale(0.98);
+}
+
+.pin-key--ghost {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.staff-row span {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+
+.staff-row small {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.staff-active-toggle {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-main);
+  font-weight: 700;
+}
+
 /* View Container animation */
 .view-container {
   height: 100%;

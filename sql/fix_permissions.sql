@@ -48,17 +48,12 @@ alter table if exists receipt_tickets disable row level security;
 grant all on receipt_tickets to anon;
 grant all on receipt_tickets to authenticated;
 
--- Habilitar tiempo real para esta tabla de forma segura
--- Perfiles de personal: solo usuarios autenticados pueden leer roles.
-alter table if exists staff_profiles enable row level security;
-grant select on staff_profiles to authenticated;
+-- Perfiles de personal por PIN
+alter table if exists staff_profiles disable row level security;
+grant all on staff_profiles to anon;
+grant all on staff_profiles to authenticated;
 
-drop policy if exists "staff can read own profile" on staff_profiles;
-create policy "staff can read own profile"
-  on staff_profiles
-  for select
-  to authenticated
-  using (auth.uid() = user_id);
+-- Habilitar tiempo real para esta tabla de forma segura
 
 do $$
 begin

@@ -10,11 +10,14 @@ import {
   loadTPVState,
   saveTPVState,
   upsertReceiptTicket,
-  loadStaffProfile
+  loadStaffProfiles,
+  findStaffByPin,
+  upsertStaffProfile,
+  deleteStaffProfile as dbDeleteStaffProfile
 } from './db.js';
-import { supabase } from './supabase.js';
 
 const DINING_STATE_STORAGE_KEY = 'tpv-dining-state-v1';
+const STAFF_SESSION_STORAGE_KEY = 'tpv-staff-session-v1';
 const createInitialTables = () => [
   ...Array.from({ length: 12 }, (_, i) => ({
   id: i + 1,
@@ -76,6 +79,7 @@ class Store {
       modifiers: [],
       menuItems: [],
       gridItems: {},
+      staffProfiles: [],
 
       // ── REPORT NAVIGATION ─────────────────────────────────────
       // ISO date string YYYY-MM-DD (default = today)
@@ -84,8 +88,6 @@ class Store {
       selectedReportMonth: new Date().toISOString().slice(0, 7),
 
       auth: {
-        session: null,
-        user: null,
         profile: null,
         role: null,
         isLoading: true
@@ -189,28 +191,31 @@ class Store {
     return ['admin', 'manager'].includes(this.state.auth.role);
   }
 
-  async setAuthSession(session) {
-    const user = session?.user || null;
-    let profile = null;
-    let role = null;
+  canManageStaff() {
+    return this.state.auth.role === 'admin';
+  }
 
-    if (user) {
-      profile = await loadStaffProfile(user.id);
-      if (profile?.active === false) {
-        await supabase.auth.signOut();
-        session = null;
-      } else {
-        role = profile?.role || 'staff';
-      }
-    }
+  setStaffSession(profile) {
+    const authProfile = profile ? {
+      id: profile.id,
+      display_name: profile.display_name,
+      role: profile.role,
+      active: profile.active !== false
+    } : null;
 
     this.state.auth = {
-      session,
-      user: session?.user || null,
-      profile,
-      role,
+      profile: authProfile,
+      role: authProfile?.role || null,
       isLoading: false
     };
+
+    if (typeof window !== 'undefined' && window.localStorage) {
+      if (authProfile) {
+        window.localStorage.setItem(STAFF_SESSION_STORAGE_KEY, JSON.stringify(authProfile));
+      } else {
+        window.localStorage.removeItem(STAFF_SESSION_STORAGE_KEY);
+      }
+    }
 
     if (!this.canAccessSettings() && this.state.activeTab === 'ajustes') {
       this.state.activeTab = 'mesas';
@@ -220,17 +225,28 @@ class Store {
     this.listeners.forEach(listener => listener(this.state));
   }
 
+  async loadStaffDirectory() {
+    this.state.staffProfiles = await loadStaffProfiles();
+  }
+
   async loadAuthSession() {
     this.state.auth.isLoading = true;
     try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) throw error;
-      await this.setAuthSession(data.session);
+      await this.loadStaffDirectory();
+      let savedProfile = null;
+
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const rawSession = window.localStorage.getItem(STAFF_SESSION_STORAGE_KEY);
+        if (rawSession) {
+          const parsed = JSON.parse(rawSession);
+          savedProfile = this.state.staffProfiles.find(profile => profile.id === parsed.id && profile.active !== false) || null;
+        }
+      }
+
+      this.setStaffSession(savedProfile);
     } catch (err) {
       console.warn('[Store] No se pudo cargar la sesion.', err);
       this.state.auth = {
-        session: null,
-        user: null,
         profile: null,
         role: null,
         isLoading: false
@@ -239,23 +255,37 @@ class Store {
     }
   }
 
-  async signIn(email, password) {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw error;
+  async signInWithPin(pinCode) {
+    const profile = await findStaffByPin(pinCode);
+    if (!profile) {
+      throw new Error('PIN no valido');
+    }
+    this.setStaffSession(profile);
+    return profile;
   }
 
   async signOut() {
-    await supabase.auth.signOut();
-    this.state.auth = {
-      session: null,
-      user: null,
-      profile: null,
-      role: null,
-      isLoading: false
-    };
+    this.setStaffSession(null);
     this.state.activeTab = 'inicio';
     this.state.selectedTableId = null;
     this.listeners.forEach(listener => listener(this.state));
+  }
+
+  async saveStaffProfile(profileData) {
+    if (!this.canManageStaff()) return false;
+    await upsertStaffProfile(profileData);
+    await this.loadStaffDirectory();
+    this.notify();
+    return true;
+  }
+
+  async deleteStaffProfile(id) {
+    if (!this.canManageStaff()) return false;
+    if (this.state.auth.profile?.id === id) return false;
+    await dbDeleteStaffProfile(id);
+    await this.loadStaffDirectory();
+    this.notify();
+    return true;
   }
 
   createReceiptToken() {
@@ -299,6 +329,7 @@ class Store {
       this.state.menuItems = catalog.menuItems;
       this.state.modifiers = catalog.modifiers;
       this.state.gridItems = catalog.gridItems;
+      await this.loadStaffDirectory();
       
       console.log('[Store] Catálogo cargado desde Supabase:', {
         categorias: catalog.categories.length,
