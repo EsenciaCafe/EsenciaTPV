@@ -175,9 +175,9 @@ function renderAuthView(state) {
         </div>
         <div class="auth-copy">
           <h2>Acceso de personal</h2>
-          <p>Introduce tu codigo de 4 digitos para abrir tu sesion.</p>
+          <p>Introduce tu codigo de 4 a 8 digitos para abrir tu sesion.</p>
         </div>
-        <input id="staff-pin-input" class="pin-hidden-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" required ${isDisabled}>
+        <input id="staff-pin-input" class="pin-hidden-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" required ${isDisabled}>
         <div class="pin-dots" aria-hidden="true">
           <span></span><span></span><span></span><span></span>
         </div>
@@ -190,7 +190,7 @@ function renderAuthView(state) {
         <button class="auth-submit-btn" type="submit" ${isDisabled}>
           ${state.auth.isLoading ? 'Entrando...' : 'Entrar'}
         </button>
-        <p class="auth-note">Los perfiles y codigos se gestionan desde Ajustes > Personal.</p>
+        <p class="auth-note">Los perfiles y codigos se gestionan desde Ajustes > Personal. Mínimo 4, máximo 8 dígitos.</p>
       </form>
     </section>
   `;
@@ -898,8 +898,8 @@ function renderAjustesView(state) {
               </select>
             </div>
             <div class="editor-form-group">
-              <label class="editor-form-label">Codigo PIN (4 digitos)</label>
-              <input type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" class="editor-form-input" id="staff-pin-code" value="${profile?.pin_code || ''}" required placeholder="1234">
+              <label class="editor-form-label">Codigo PIN (4 a 8 digitos)</label>
+              <input type="password" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" class="editor-form-input" id="staff-pin-code" value="${profile?.pin_code || ''}" required placeholder="Minimo 4, maximo 8 digitos">
             </div>
             <label class="staff-active-toggle">
               <input type="checkbox" id="staff-active" ${profile?.active === false ? '' : 'checked'}>
@@ -2395,25 +2395,28 @@ function setupAuthEventListeners(container) {
   const form = container.querySelector('#staff-login-form');
   if (!form) return;
   const pinInput = container.querySelector('#staff-pin-input');
-  const dots = Array.from(container.querySelectorAll('.pin-dots span'));
 
   const updatePinDots = () => {
     const length = pinInput?.value.length || 0;
-    dots.forEach((dot, index) => {
-      dot.classList.toggle('is-filled', index < length);
-    });
-  };
-
-  const submitPin = () => {
-    form.requestSubmit();
+    const dotsContainer = container.querySelector('.pin-dots');
+    if (!dotsContainer) return;
+    const totalDots = Math.max(4, length);
+    let html = '';
+    for (let i = 0; i < totalDots; i++) {
+      if (i < length) {
+        html += '<span class="is-filled"></span>';
+      } else {
+        html += '<span></span>';
+      }
+    }
+    dotsContainer.innerHTML = html;
   };
 
   container.querySelectorAll('[data-pin-key]').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!pinInput || pinInput.value.length >= 4) return;
+      if (!pinInput || pinInput.value.length >= 8) return;
       pinInput.value = `${pinInput.value}${btn.dataset.pinKey}`;
       updatePinDots();
-      if (pinInput.value.length === 4) submitPin();
     });
   });
 
@@ -2437,16 +2440,15 @@ function setupAuthEventListeners(container) {
 
   if (pinInput) {
     pinInput.addEventListener('input', () => {
-      pinInput.value = pinInput.value.replace(/\D/g, '').slice(0, 4);
+      pinInput.value = pinInput.value.replace(/\D/g, '').slice(0, 8);
       updatePinDots();
-      if (pinInput.value.length === 4) submitPin();
     });
   }
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const pinCode = pinInput?.value || '';
-    if (pinCode.length !== 4) return;
+    if (pinCode.length < 4 || pinCode.length > 8) return;
 
     const submitBtn = container.querySelector('.auth-submit-btn');
     if (submitBtn) {
@@ -4818,8 +4820,8 @@ function setupEventListeners(container) {
       const pinCode = (container.querySelector('#staff-pin-code')?.value || '').trim();
       const active = container.querySelector('#staff-active')?.checked !== false;
 
-      if (!displayName || !/^\d{4}$/.test(pinCode)) {
-        showToast('El nombre y el PIN de 4 digitos son obligatorios.', 'error');
+      if (!displayName || !/^\d{4,8}$/.test(pinCode)) {
+        showToast('El nombre es obligatorio y el PIN debe tener entre 4 y 8 digitos.', 'error');
         return;
       }
 

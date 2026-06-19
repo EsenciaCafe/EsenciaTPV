@@ -69,7 +69,7 @@ create table if not exists staff_profiles (
   id           text primary key,
   display_name text not null,
   role         text not null default 'staff' check (role in ('admin', 'manager', 'staff')),
-  pin_code     text not null unique check (pin_code ~ '^[0-9]{4}$'),
+  pin_code     text not null unique check (pin_code ~ '^[0-9]{4,8}$'),
   active       boolean not null default true,
   created_at   timestamptz default now(),
   updated_at   timestamptz default now()

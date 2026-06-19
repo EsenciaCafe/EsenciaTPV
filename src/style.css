@@ -380,11 +380,11 @@ body {
 }
 
 .pin-dots {
-  display: grid;
-  grid-template-columns: repeat(4, 18px);
+  display: flex;
   justify-content: center;
   gap: 14px;
   padding: 4px 0;
+  min-height: 26px; /* to prevent layout shift */
 }
 
 .pin-dots span {

@@ -70,3 +70,8 @@ begin
       null; -- ya es miembro
   end;
 end $$;
+
+-- Modificar restricción de longitud del PIN (4 a 8 dígitos)
+alter table staff_profiles drop constraint if exists staff_profiles_pin_code_check;
+alter table staff_profiles add constraint staff_profiles_pin_code_check check (pin_code ~ '^[0-9]{4,8}$');
+
