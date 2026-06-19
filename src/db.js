@@ -234,6 +234,23 @@ export async function loadReceiptTicket(token) {
   return data?.payload || null;
 }
 
+export async function loadStaffProfile(userId) {
+  if (!userId) return null;
+
+  const { data, error } = await supabase
+    .from('staff_profiles')
+    .select('display_name, role, active')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[DB] Error loading staff profile:', error.message);
+    return null;
+  }
+
+  return data || null;
+}
+
 export async function loadTPVState() {
   const { data, error } = await supabase
     .from('tpv_state')

@@ -1,4 +1,5 @@
 import { store } from './store.js';
+import { supabase } from './supabase.js';
 import QRCode from 'qrcode';
 
 // SVG Icons
@@ -100,6 +101,8 @@ function showToast(message, type = 'error') {
 function renderHeader(state) {
   const table = store.getSelectedTable();
   const title = state.activeTab === 'mesas' ? 'Mesas' : table ? table.name : 'Selecciona una mesa';
+  const roleLabel = store.getRoleLabel();
+  const staffName = state.auth.profile?.display_name || state.auth.user?.email || 'Usuario';
 
   const dbDot = dbStatus === 'connected'
     ? '<div class="status-dot" title="Base de Datos conectada"></div>'
@@ -116,6 +119,10 @@ function renderHeader(state) {
         <h1 class="header-title">${title}</h1>
       </div>
       <div class="header-meta">
+        <button class="staff-session-btn" id="staff-session-btn" title="Cerrar sesion">
+          <span class="staff-session-name">${staffName}</span>
+          <span class="staff-session-role">${roleLabel}</span>
+        </button>
         <div class="status-badge">
           ${dbDot}
           <span>${dbStatus === 'connected' ? 'Base de Datos' : dbStatus === 'fallback' ? 'Sin BD' : 'Comandero'}</span>
@@ -129,6 +136,12 @@ function renderHeader(state) {
 function renderNavbar(state) {
   const activeItems = store.getActiveItems();
   const ticketCount = activeItems.reduce((sum, item) => sum + item.qty, 0);
+  const settingsItem = store.canAccessSettings() ? `
+        <button class="bottom-nav__item ${state.activeTab === 'ajustes' ? 'is-active' : ''}" data-tab="ajustes">
+          ${ICONS.ajustes}
+          <span class="bottom-nav__label">AJUSTES</span>
+        </button>
+  ` : '';
 
   return `
     <nav class="bottom-nav" aria-label="Navegacion principal">
@@ -146,12 +159,39 @@ function renderNavbar(state) {
           ${ICONS.transacciones}
           <span class="bottom-nav__label">TRANSACCIONES</span>
         </button>
-        <button class="bottom-nav__item ${state.activeTab === 'ajustes' ? 'is-active' : ''}" data-tab="ajustes">
-          ${ICONS.ajustes}
-          <span class="bottom-nav__label">AJUSTES</span>
-        </button>
+        ${settingsItem}
       </div>
     </nav>
+  `;
+}
+
+function renderAuthView(state) {
+  const isDisabled = state.auth.isLoading ? 'disabled' : '';
+  return `
+    <section class="auth-screen">
+      <form class="auth-card" id="staff-login-form">
+        <div class="auth-brand">
+          ${ICONS.coffee}
+          <h1>Esencia TPV</h1>
+        </div>
+        <div class="auth-copy">
+          <h2>Acceso de personal</h2>
+          <p>Inicia sesion para abrir comandas y trabajar con tu rol asignado.</p>
+        </div>
+        <label class="auth-field">
+          <span>Email</span>
+          <input id="staff-email-input" type="email" autocomplete="email" required ${isDisabled}>
+        </label>
+        <label class="auth-field">
+          <span>Contraseña</span>
+          <input id="staff-password-input" type="password" autocomplete="current-password" required ${isDisabled}>
+        </label>
+        <button class="auth-submit-btn" type="submit" ${isDisabled}>
+          ${state.auth.isLoading ? 'Entrando...' : 'Entrar'}
+        </button>
+        <p class="auth-note">Las cuentas se crean desde Supabase y cada usuario recibe un rol.</p>
+      </form>
+    </section>
   `;
 }
 
@@ -2195,6 +2235,12 @@ function render(state) {
     document.body.classList.remove('light-theme');
   }
 
+  if (!state.auth.session) {
+    appRoot.innerHTML = renderAuthView(state);
+    setupAuthEventListeners(appRoot);
+    return;
+  }
+
   // Workspace Area
   let workspaceHTML = '';
   if (state.activeTab === 'mesas') {
@@ -2240,7 +2286,7 @@ function render(state) {
   } else if (state.activeTab === 'transacciones') {
     workspaceHTML = renderTransaccionesView(state);
   } else if (state.activeTab === 'ajustes') {
-    workspaceHTML = renderAjustesView(state);
+    workspaceHTML = store.canAccessSettings() ? renderAjustesView(state) : renderTablesView(state);
   }
 
   // Draw full app structure
@@ -2258,6 +2304,34 @@ function render(state) {
   `;
 
   setupEventListeners(appRoot);
+}
+
+function setupAuthEventListeners(container) {
+  const form = container.querySelector('#staff-login-form');
+  if (!form) return;
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const email = container.querySelector('#staff-email-input')?.value.trim();
+    const password = container.querySelector('#staff-password-input')?.value;
+    if (!email || !password) return;
+
+    const submitBtn = container.querySelector('.auth-submit-btn');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Entrando...';
+    }
+
+    try {
+      await store.signIn(email, password);
+    } catch (err) {
+      showToast('Email o contraseña incorrectos.', 'error');
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Entrar';
+      }
+    }
+  });
 }
 
 // Add Shortcut Dialog Modal
@@ -3981,11 +4055,26 @@ function downloadReportPDF(title, headers, rows, legal, filename) {
 
 // Event bindings
 function setupEventListeners(container) {
+  const staffSessionBtn = container.querySelector('#staff-session-btn');
+  if (staffSessionBtn) {
+    staffSessionBtn.addEventListener('click', () => {
+      showConfirm(
+        'Cerrar sesion',
+        '¿Quieres salir de esta cuenta de personal?',
+        () => store.signOut()
+      );
+    });
+  }
+
   // Bottom Nav tabs
   container.querySelectorAll('.bottom-nav [data-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
       const tab = btn.dataset.tab;
       if (tab) {
+        if (tab === 'ajustes' && !store.canAccessSettings()) {
+          showToast('Tu usuario no tiene acceso a Ajustes.', 'warning');
+          return;
+        }
         isDrawerOpen = false; // Reset drawer on tab switch
         store.state.settingsPath = []; // Always go to root of that section
         store.setActiveTab(tab);
@@ -5746,6 +5835,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     render(state);
   });
 
+  supabase.auth.onAuthStateChange((_event, session) => {
+    setTimeout(() => store.setAuthSession(session).then(async () => {
+      if (!session) {
+        dbStatus = 'fallback';
+        render(store.state);
+        return;
+      }
+
+      dbStatus = 'loading';
+      render(store.state);
+      const loaded = await store.loadFromSupabase();
+      dbStatus = loaded ? 'connected' : 'fallback';
+      render(store.state);
+    }), 0);
+  });
+
   // Watch system theme changes for System theme mode
   window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
     if (store.state.theme === 'system') {
@@ -5753,12 +5858,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Load catalog from Supabase before first paint
-  const loaded = await store.loadFromSupabase();
-  dbStatus = loaded ? 'connected' : 'fallback';
+  await store.loadAuthSession();
+
+  let loaded = false;
+  if (store.state.auth.session) {
+    loaded = await store.loadFromSupabase();
+    dbStatus = loaded ? 'connected' : 'fallback';
+  } else {
+    dbStatus = 'fallback';
+  }
 
   if (loadingEl) {
-    if (!loaded) {
+    if (store.state.auth.session && !loaded) {
       // Show fallback warning briefly
       const msgEl = loadingEl.querySelector('.loading-message');
       if (msgEl) {

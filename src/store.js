@@ -9,7 +9,8 @@ import {
   deleteGridItems,
   loadTPVState,
   saveTPVState,
-  upsertReceiptTicket
+  upsertReceiptTicket,
+  loadStaffProfile
 } from './db.js';
 import { supabase } from './supabase.js';
 
@@ -81,6 +82,14 @@ class Store {
       selectedReportDate: new Date().toISOString().slice(0, 10),
       // Month string YYYY-MM (default = current month)
       selectedReportMonth: new Date().toISOString().slice(0, 7),
+
+      auth: {
+        session: null,
+        user: null,
+        profile: null,
+        role: null,
+        isLoading: true
+      }
     };
     
     this.restoreDiningState();
@@ -164,6 +173,88 @@ class Store {
 
   notify() {
     this.persistDiningState();
+    this.listeners.forEach(listener => listener(this.state));
+  }
+
+  getRoleLabel(role = this.state.auth.role) {
+    const labels = {
+      admin: 'Administrador',
+      manager: 'Encargado',
+      staff: 'Staff'
+    };
+    return labels[role] || 'Sin rol';
+  }
+
+  canAccessSettings() {
+    return ['admin', 'manager'].includes(this.state.auth.role);
+  }
+
+  async setAuthSession(session) {
+    const user = session?.user || null;
+    let profile = null;
+    let role = null;
+
+    if (user) {
+      profile = await loadStaffProfile(user.id);
+      if (profile?.active === false) {
+        await supabase.auth.signOut();
+        session = null;
+      } else {
+        role = profile?.role || 'staff';
+      }
+    }
+
+    this.state.auth = {
+      session,
+      user: session?.user || null,
+      profile,
+      role,
+      isLoading: false
+    };
+
+    if (!this.canAccessSettings() && this.state.activeTab === 'ajustes') {
+      this.state.activeTab = 'mesas';
+      this.state.settingsPath = [];
+    }
+
+    this.listeners.forEach(listener => listener(this.state));
+  }
+
+  async loadAuthSession() {
+    this.state.auth.isLoading = true;
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
+      await this.setAuthSession(data.session);
+    } catch (err) {
+      console.warn('[Store] No se pudo cargar la sesion.', err);
+      this.state.auth = {
+        session: null,
+        user: null,
+        profile: null,
+        role: null,
+        isLoading: false
+      };
+      this.listeners.forEach(listener => listener(this.state));
+    }
+  }
+
+  async signIn(email, password) {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+  }
+
+  async signOut() {
+    await supabase.auth.signOut();
+    this.state.auth = {
+      session: null,
+      user: null,
+      profile: null,
+      role: null,
+      isLoading: false
+    };
+    this.state.activeTab = 'inicio';
+    this.state.selectedTableId = null;
     this.listeners.forEach(listener => listener(this.state));
   }
 
@@ -325,6 +416,9 @@ class Store {
   }
 
   setActiveTab(tab) {
+    if (tab === 'ajustes' && !this.canAccessSettings()) {
+      tab = 'mesas';
+    }
     this.state.activeTab = tab;
     if (tab === 'inicio') {
       this.state.gridPath = ['root'];

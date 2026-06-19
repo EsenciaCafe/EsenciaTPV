@@ -221,6 +221,34 @@ body {
   border: 1px solid var(--border-color);
 }
 
+.staff-session-btn {
+  min-width: 0;
+  max-width: 148px;
+  display: grid;
+  gap: 1px;
+  text-align: right;
+  background: transparent;
+  border: 0;
+  color: var(--text-main);
+  font-family: var(--font-family);
+  cursor: pointer;
+}
+
+.staff-session-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.staff-session-role {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--secondary);
+  text-transform: uppercase;
+}
+
 .status-dot {
   width: 6px;
   height: 6px;
@@ -252,6 +280,97 @@ body {
   overflow-x: hidden;
   position: relative;
   -webkit-overflow-scrolling: touch;
+}
+
+.auth-screen {
+  min-height: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg-app);
+}
+
+.auth-card {
+  width: min(100%, 380px);
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-lg);
+  background: var(--bg-panel);
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.auth-brand svg {
+  width: 28px;
+  height: 28px;
+}
+
+.auth-brand h1,
+.auth-copy h2 {
+  font-size: 1.4rem;
+  font-weight: 800;
+}
+
+.auth-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.auth-copy p,
+.auth-note {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.auth-field {
+  display: grid;
+  gap: 7px;
+  color: var(--text-main);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.auth-field input {
+  height: 48px;
+  width: 100%;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  background: var(--bg-item);
+  color: var(--text-main);
+  font-family: var(--font-family);
+  font-size: 1rem;
+  padding: 0 14px;
+  outline: none;
+}
+
+.auth-field input:focus {
+  border-color: var(--secondary);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
+}
+
+.auth-submit-btn {
+  height: 50px;
+  border: 0;
+  border-radius: var(--border-radius-md);
+  background: var(--secondary);
+  color: #ffffff;
+  font-family: var(--font-family);
+  font-size: 1rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.auth-submit-btn:disabled {
+  opacity: 0.65;
+  cursor: default;
 }
 
 /* View Container animation */
@@ -518,7 +637,7 @@ body.light-theme .btn-quick-pay {
   width: 100%;
   height: 100%;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
   align-items: stretch;
 }
 

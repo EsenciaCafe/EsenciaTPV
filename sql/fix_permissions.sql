@@ -20,6 +20,11 @@ grant all on menu_items        to anon;
 grant all on modifiers         to anon;
 grant all on modifier_options  to anon;
 grant all on grid_items        to anon;
+grant all on categories        to authenticated;
+grant all on menu_items        to authenticated;
+grant all on modifiers         to authenticated;
+grant all on modifier_options  to authenticated;
+grant all on grid_items        to authenticated;
 
 -- Verificar que las tablas existen y tienen datos
 select 'categories'     as tabla, count(*) as filas from categories
@@ -36,12 +41,25 @@ select 'grid_items',    count(*) from grid_items;
 alter table if exists tpv_state add column if not exists legal_data jsonb not null default '{}';
 alter table if exists tpv_state disable row level security;
 grant all on tpv_state to anon;
+grant all on tpv_state to authenticated;
 
 -- Permisos para tickets públicos por QR
 alter table if exists receipt_tickets disable row level security;
 grant all on receipt_tickets to anon;
+grant all on receipt_tickets to authenticated;
 
 -- Habilitar tiempo real para esta tabla de forma segura
+-- Perfiles de personal: solo usuarios autenticados pueden leer roles.
+alter table if exists staff_profiles enable row level security;
+grant select on staff_profiles to authenticated;
+
+drop policy if exists "staff can read own profile" on staff_profiles;
+create policy "staff can read own profile"
+  on staff_profiles
+  for select
+  to authenticated
+  using (auth.uid() = user_id);
+
 do $$
 begin
   -- Asegurar que la publicación existe

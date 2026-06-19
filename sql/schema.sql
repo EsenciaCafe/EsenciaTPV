@@ -62,3 +62,13 @@ create table if not exists receipt_tickets (
   payload        jsonb not null,
   created_at     timestamptz default now()
 );
+
+-- Perfiles de personal y roles de acceso
+create table if not exists staff_profiles (
+  user_id      uuid primary key references auth.users(id) on delete cascade,
+  display_name text,
+  role         text not null default 'staff' check (role in ('admin', 'manager', 'staff')),
+  active       boolean not null default true,
+  created_at   timestamptz default now(),
+  updated_at   timestamptz default now()
+);
