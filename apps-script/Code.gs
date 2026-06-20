@@ -312,7 +312,17 @@ function normalizeName_(value) {
 }
 
 function getIgnoredSenders_() {
-  const rows = supabaseFetch_('/rest/v1/supplier_sender_rules?select=email&ignored=eq.true') || [];
+  let rows = [];
+  try {
+    rows = supabaseFetch_('/rest/v1/supplier_sender_rules?select=email&ignored=eq.true') || [];
+  } catch (error) {
+    if (String(error.message || '').includes('supplier_sender_rules')) {
+      Logger.log('La tabla supplier_sender_rules aun no existe. Se continua sin remitentes ignorados.');
+      return {};
+    }
+    throw error;
+  }
+
   return rows.reduce((acc, row) => {
     acc[normalizeEmail_(row.email)] = true;
     return acc;
