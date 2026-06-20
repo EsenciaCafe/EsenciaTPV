@@ -654,7 +654,7 @@ class Store {
       upsertGridItems(gridKey, this.state.gridItems[gridKey]);
 
       if ((shortcutData.type === 'category' || shortcutData.type === 'subcategory') && shortcutData.target) {
-        this.populateCategoryGrid(shortcutData.target);
+        this.rebuildCategoryGridTree(shortcutData.target);
       }
 
       this.notify();
@@ -680,49 +680,39 @@ class Store {
     };
   }
 
-  populateCategoryGrid(categoryId) {
+  buildDefaultCategoryGrid(categoryId) {
+    const category = this.state.categories.find(c => c.id === categoryId);
+    if (!category) return Array(8).fill(null);
+
+    const childShortcuts = [
+      ...this.state.menuItems
+        .filter(item => item.category === categoryId)
+        .map(item => this.createArticleGridShortcut(item)),
+      ...this.state.categories
+        .filter(c => c.type === 'subcategory' && c.parentId === categoryId)
+        .map(c => this.createCategoryGridShortcut(c))
+    ];
+
+    return [
+      ...childShortcuts.slice(0, 8),
+      ...Array(Math.max(0, 8 - childShortcuts.length)).fill(null)
+    ];
+  }
+
+  rebuildCategoryGridTree(categoryId, visited = new Set()) {
+    if (visited.has(categoryId)) return;
+    visited.add(categoryId);
+
     const category = this.state.categories.find(c => c.id === categoryId);
     if (!category) return;
 
-    let createdGrid = false;
-    if (!this.state.gridItems[categoryId]) {
-      this.state.gridItems[categoryId] = Array(8).fill(null);
-      createdGrid = true;
-    }
+    const grid = this.buildDefaultCategoryGrid(categoryId);
+    this.state.gridItems[categoryId] = grid;
+    upsertGridItems(categoryId, grid);
 
-    const grid = [...this.state.gridItems[categoryId]];
-    const existingKeys = new Set(
-      grid
-        .filter(Boolean)
-        .map(item => item.type === 'article' ? `article:${item.itemId}` : `${item.type}:${item.target}`)
-    );
-
-    const childShortcuts = [
-      ...this.state.categories
-        .filter(c => c.type === 'subcategory' && c.parentId === categoryId)
-        .map(c => this.createCategoryGridShortcut(c)),
-      ...this.state.menuItems
-        .filter(item => item.category === categoryId)
-        .map(item => this.createArticleGridShortcut(item))
-    ];
-
-    let changed = false;
-    childShortcuts.forEach(shortcut => {
-      const key = shortcut.type === 'article' ? `article:${shortcut.itemId}` : `${shortcut.type}:${shortcut.target}`;
-      if (existingKeys.has(key)) return;
-
-      const emptyIndex = grid.findIndex(slot => slot === null);
-      if (emptyIndex === -1) return;
-
-      grid[emptyIndex] = shortcut;
-      existingKeys.add(key);
-      changed = true;
-    });
-
-    if (changed || createdGrid) {
-      this.state.gridItems[categoryId] = grid;
-      upsertGridItems(categoryId, grid);
-    }
+    this.state.categories
+      .filter(c => c.type === 'subcategory' && c.parentId === categoryId)
+      .forEach(child => this.rebuildCategoryGridTree(child.id, visited));
   }
 
   removeGridShortcut(gridKey, slotIndex) {
