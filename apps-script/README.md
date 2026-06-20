@@ -1,6 +1,6 @@
 # Automatizacion de facturas con Google Apps Script
 
-Este script revisa a diario Drive y Gmail, crea facturas en Supabase como `pending_review` y evita duplicados por `source_id`.
+Este script revisa a diario Drive y Gmail, lee facturas con Google Document AI Invoice Parser, crea facturas en Supabase como `pending_review` y evita duplicados por `source_id`.
 
 ## Cuentas
 
@@ -26,19 +26,30 @@ El script ignora `CIERRE`, revisa `FACTURAS` y tambien los archivos sueltos dent
 
 1. Ejecuta en Supabase `sql/invoice_automation_migration.sql`.
 2. Crea un proyecto en [Google Apps Script](https://script.google.com/).
-3. Copia `Code.gs` y `appsscript.json`.
-4. En Servicios avanzados de Google, activa `Drive API`.
-5. En Google Cloud del proyecto, activa tambien la API de Drive si Google lo solicita.
-6. En `Project Settings > Script Properties`, anade:
+3. En Google Cloud, activa billing y la API `Document AI API`.
+4. Crea un procesador `Invoice Parser` en Document AI, preferiblemente en region `eu`.
+5. Copia el nombre completo del procesador. Tiene este formato:
+
+```text
+projects/PROJECT_ID/locations/eu/processors/PROCESSOR_ID
+```
+
+6. Copia `Code.gs` y `appsscript.json`.
+7. En Servicios avanzados de Google, activa `Drive API`.
+8. En Google Cloud del proyecto, activa tambien la API de Drive si Google lo solicita.
+9. En `Project Settings > Script Properties`, anade:
 
 ```text
 SUPABASE_URL=https://tbqvypdxcgeofsmiqmuo.supabase.co
 SUPABASE_ANON_KEY=la_clave_anon_de_.env.local
 DRIVE_ROOT_FOLDER_NAME=Esencia Cafe
 GMAIL_QUERY=newer_than:45d has:attachment (factura OR invoice OR recibo OR ticket)
+DOCUMENT_AI_PROCESSOR_NAME=projects/PROJECT_ID/locations/eu/processors/PROCESSOR_ID
 ```
 
 `DRIVE_ROOT_FOLDER_ID` es opcional, pero mas fiable que el nombre si la carpeta esta compartida.
+
+Si `DOCUMENT_AI_PROCESSOR_NAME` no esta configurado, el script vuelve al OCR basico anterior.
 
 ## Primer uso
 
@@ -48,4 +59,4 @@ GMAIL_QUERY=newer_than:45d has:attachment (factura OR invoice OR recibo OR ticke
 4. Marca como `Ignorar` los remitentes que no sean proveedores.
 5. Ejecuta `createDailyTrigger` para dejar la revision diaria activada.
 
-Las facturas importadas quedan pendientes de revisar. Corrige importes o proveedor cuando el OCR no lo detecte bien y confirma manualmente en la app.
+Las facturas importadas quedan pendientes de revisar. Document AI tambien guarda lineas de factura en `supplier_invoice_lines`, que serviran para detectar cambios de precio por proveedor mas adelante.

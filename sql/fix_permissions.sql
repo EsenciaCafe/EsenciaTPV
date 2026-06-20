@@ -62,6 +62,10 @@ alter table if exists supplier_sender_rules disable row level security;
 grant all on supplier_sender_rules to anon;
 grant all on supplier_sender_rules to authenticated;
 
+alter table if exists supplier_invoice_lines disable row level security;
+grant all on supplier_invoice_lines to anon;
+grant all on supplier_invoice_lines to authenticated;
+
 -- Habilitar tiempo real para esta tabla de forma segura
 
 do $$

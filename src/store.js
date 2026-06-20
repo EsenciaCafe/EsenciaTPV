@@ -15,6 +15,7 @@ import {
   upsertStaffProfile,
   deleteStaffProfile as dbDeleteStaffProfile,
   loadSupplierInvoices,
+  loadSupplierInvoiceLines,
   upsertSupplierInvoice,
   deleteSupplierInvoice as dbDeleteSupplierInvoice,
   loadSupplierSenderRules,
@@ -88,6 +89,7 @@ class Store {
       gridItems: {},
       staffProfiles: [],
       supplierInvoices: [],
+      supplierInvoiceLines: [],
       supplierSenderRules: [],
 
       // ── REPORT NAVIGATION ─────────────────────────────────────
@@ -242,6 +244,10 @@ class Store {
     this.state.supplierInvoices = await loadSupplierInvoices();
   }
 
+  async loadSupplierInvoiceLines() {
+    this.state.supplierInvoiceLines = await loadSupplierInvoiceLines();
+  }
+
   async loadSupplierSenderRules() {
     this.state.supplierSenderRules = await loadSupplierSenderRules();
   }
@@ -348,6 +354,7 @@ class Store {
       this.state.gridItems = catalog.gridItems;
       await this.loadStaffDirectory();
       await this.loadSupplierInvoices();
+      await this.loadSupplierInvoiceLines();
       await this.loadSupplierSenderRules();
       
       console.log('[Store] Catálogo cargado desde Supabase:', {
@@ -481,6 +488,7 @@ class Store {
     if (!this.canAccessSettings()) return false;
     await upsertSupplierInvoice(invoiceData);
     await this.loadSupplierInvoices();
+    await this.loadSupplierInvoiceLines();
     this.notify();
     return true;
   }
@@ -504,6 +512,7 @@ class Store {
     if (!this.canAccessSettings()) return false;
     await dbDeleteSupplierInvoice(id);
     await this.loadSupplierInvoices();
+    await this.loadSupplierInvoiceLines();
     this.notify();
     return true;
   }

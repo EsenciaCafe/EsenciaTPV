@@ -604,6 +604,50 @@ body {
   font-weight: 600;
 }
 
+.supplier-lines-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  background: var(--bg-card);
+}
+
+.supplier-lines-panel h3 {
+  color: var(--text-main);
+  font-size: 0.95rem;
+}
+
+.supplier-line-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color);
+}
+
+.supplier-line-row:first-of-type {
+  border-top: 0;
+}
+
+.supplier-line-row > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.supplier-line-row strong {
+  color: var(--text-main);
+  overflow-wrap: anywhere;
+}
+
+.supplier-line-row span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
 /* View Container animation */
 .view-container {
   height: 100%;

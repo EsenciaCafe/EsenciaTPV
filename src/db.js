@@ -316,6 +316,31 @@ export async function loadSupplierInvoices() {
   }));
 }
 
+export async function loadSupplierInvoiceLines() {
+  const { data, error } = await supabase
+    .from('supplier_invoice_lines')
+    .select('*')
+    .order('invoice_date', { ascending: false });
+
+  if (error) {
+    console.warn('[DB] Error loading supplier invoice lines:', error.message);
+    return [];
+  }
+
+  return (data || []).map(row => ({
+    id: row.id,
+    invoiceId: row.invoice_id,
+    supplierName: row.supplier_name || '',
+    invoiceDate: row.invoice_date || '',
+    description: row.description || '',
+    quantity: row.quantity === null ? null : parseFloat(row.quantity || 0),
+    unitPrice: row.unit_price === null ? null : parseFloat(row.unit_price || 0),
+    totalAmount: row.total_amount === null ? null : parseFloat(row.total_amount || 0),
+    taxRate: row.tax_rate === null ? null : parseFloat(row.tax_rate || 0),
+    rawPayload: row.raw_payload || {}
+  }));
+}
+
 export async function upsertSupplierInvoice(invoice) {
   const id = invoice.id || `invoice-${Date.now()}`;
   const row = {

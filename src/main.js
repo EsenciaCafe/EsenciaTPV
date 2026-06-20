@@ -925,6 +925,19 @@ function renderAjustesView(state) {
       return '<div class="view-container"><p style="padding:24px;">Factura no encontrada.</p></div>';
     }
 
+    const invoiceLines = invoice
+      ? state.supplierInvoiceLines.filter(line => line.invoiceId === invoice.id)
+      : [];
+    const invoiceLineRows = invoiceLines.map(line => `
+      <div class="supplier-line-row">
+        <div>
+          <strong>${line.description}</strong>
+          <span>${line.quantity ?? '-'} uds. · ${line.unitPrice !== null ? `${line.unitPrice.toFixed(4)}€` : '-'} / ud.</span>
+        </div>
+        <strong>${line.totalAmount !== null ? `${line.totalAmount.toFixed(2)}€` : '-'}</strong>
+      </div>
+    `).join('');
+
     const baseAmount = Number(invoice?.baseAmount || 0);
     const taxRate = Number(invoice?.taxRate ?? state.legal?.taxRate ?? 7);
     const taxAmount = Number(invoice?.taxAmount || 0);
@@ -996,6 +1009,12 @@ function renderAjustesView(state) {
               <label class="editor-form-label">Notas</label>
               <textarea class="editor-form-input" id="invoice-notes" rows="3">${invoice?.notes || ''}</textarea>
             </div>
+            ${invoiceLines.length > 0 ? `
+              <div class="supplier-lines-panel">
+                <h3>Lineas detectadas</h3>
+                ${invoiceLineRows}
+              </div>
+            ` : ''}
             <button type="submit" class="btn btn-primary" style="height:48px; background-color:var(--secondary);">Guardar factura</button>
             ${!isNew ? `
               <button type="button" class="btn btn-secondary" id="settings-delete-invoice-btn" style="height:44px; color:var(--danger); border-color:rgba(239,68,68,.3); background:rgba(239,68,68,.08);">

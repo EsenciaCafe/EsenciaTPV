@@ -93,8 +93,7 @@ function processDriveFolderFiles_(folder, context, includeChildren, results) {
     }
 
     try {
-      const text = extractTextFromDriveFile_(file);
-      const invoice = parseInvoiceText_(text, file.getName());
+      const invoice = parseInvoiceFromDriveFile_(file);
       upsertInvoice_({
         ...invoice,
         id: makeInvoiceId_(sourceId),
@@ -148,8 +147,7 @@ function scanGmailInvoices_(ignoredSenders, results) {
         }
 
         try {
-          const text = extractTextFromBlob_(attachment.copyBlob(), name);
-          const invoice = parseInvoiceText_(text, name);
+          const invoice = parseInvoiceFromBlob_(attachment.copyBlob(), name);
           upsertInvoice_({
             ...invoice,
             id: makeInvoiceId_(sourceId),
@@ -170,6 +168,114 @@ function scanGmailInvoices_(ignoredSenders, results) {
   });
 
   return imported;
+}
+
+function parseInvoiceFromDriveFile_(file) {
+  const mimeType = file.getMimeType();
+  if (!isGoogleWorkspaceMime_(mimeType)) {
+    const documentAiInvoice = extractInvoiceWithDocumentAi_(file.getBlob(), file.getName());
+    if (documentAiInvoice) return documentAiInvoice;
+  }
+
+  const text = extractTextFromDriveFile_(file);
+  return parseInvoiceText_(text, file.getName());
+}
+
+function parseInvoiceFromBlob_(blob, name) {
+  const documentAiInvoice = extractInvoiceWithDocumentAi_(blob, name);
+  if (documentAiInvoice) return documentAiInvoice;
+
+  const text = extractTextFromBlob_(blob, name);
+  return parseInvoiceText_(text, name);
+}
+
+function extractInvoiceWithDocumentAi_(blob, name) {
+  const processorName = getProperty_('DOCUMENT_AI_PROCESSOR_NAME');
+  if (!processorName) return null;
+
+  try {
+    const location = extractDocumentAiLocation_(processorName);
+    const endpoint = `https://${location}-documentai.googleapis.com/v1/${processorName}:process`;
+    const contentType = guessDocumentMimeType_(blob, name);
+    const response = UrlFetchApp.fetch(endpoint, {
+      method: 'post',
+      contentType: 'application/json',
+      muteHttpExceptions: true,
+      payload: JSON.stringify({
+        rawDocument: {
+          content: Utilities.base64Encode(blob.getBytes()),
+          mimeType: contentType
+        }
+      }),
+      headers: {
+        Authorization: `Bearer ${ScriptApp.getOAuthToken()}`
+      }
+    });
+
+    const code = response.getResponseCode();
+    const body = response.getContentText();
+    if (code < 200 || code >= 300) {
+      throw new Error(`Document AI ${code}: ${body}`);
+    }
+
+    return parseDocumentAiInvoice_(JSON.parse(body).document || {}, name);
+  } catch (error) {
+    Logger.log(`Document AI no pudo procesar ${name}: ${error.message}`);
+    return null;
+  }
+}
+
+function parseDocumentAiInvoice_(document, fallbackName) {
+  const entities = document.entities || [];
+  const supplierName = pickEntityValue_(entities, ['supplier_name', 'vendor_name', 'supplier', 'remit_to_name']) || String(fallbackName || 'Proveedor pendiente').replace(/\.[^.]+$/, '');
+  const invoiceNumber = pickEntityValue_(entities, ['invoice_id', 'invoice_number', 'invoice_num']);
+  const invoiceDate = normalizeDocumentAiDate_(pickEntityValue_(entities, ['invoice_date', 'date']));
+  const totalAmount = pickEntityMoney_(entities, ['total_amount', 'invoice_total', 'amount_due', 'total']);
+  const baseAmount = pickEntityMoney_(entities, ['net_amount', 'subtotal_amount', 'subtotal', 'total_net_amount']);
+  const taxAmount = pickEntityMoney_(entities, ['total_tax_amount', 'tax_amount', 'vat', 'igic']);
+  const taxRate = pickEntityNumber_(entities, ['tax_rate', 'vat_rate', 'igic_rate']);
+  const computedTax = taxAmount || (baseAmount && totalAmount ? round2_(totalAmount - baseAmount) : 0);
+  const computedBase = baseAmount || (totalAmount && computedTax ? round2_(totalAmount - computedTax) : totalAmount || 0);
+  const computedRate = taxRate || (computedBase && computedTax ? round2_(computedTax / computedBase * 100) : 0);
+
+  return {
+    supplierName,
+    invoiceNumber,
+    invoiceDate: invoiceDate || Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+    baseAmount: computedBase || 0,
+    taxRate: computedRate || 0,
+    taxAmount: computedTax || 0,
+    totalAmount: totalAmount || round2_((computedBase || 0) + (computedTax || 0)),
+    deductible: true,
+    lines: extractDocumentAiLines_(entities, supplierName, invoiceDate),
+    notes: 'Importado con Google Document AI. Revisar antes de confirmar.'
+  };
+}
+
+function extractDocumentAiLines_(entities, supplierName, invoiceDate) {
+  return (entities || [])
+    .filter(entity => normalizeEntityType_(entity.type) === 'line_item')
+    .map((entity, index) => {
+      const properties = entity.properties || [];
+      const description = pickEntityValue_(properties, ['line_item/description', 'description', 'item_description', 'product_name']) || entity.mentionText || '';
+      const quantity = pickEntityNumber_(properties, ['line_item/quantity', 'quantity', 'qty']);
+      const unitPrice = pickEntityMoney_(properties, ['line_item/unit_price', 'unit_price', 'price']);
+      const totalAmount = pickEntityMoney_(properties, ['line_item/amount', 'amount', 'total_amount', 'line_total']);
+      const taxRate = pickEntityNumber_(properties, ['line_item/tax_rate', 'tax_rate', 'igic_rate', 'vat_rate']);
+
+      return {
+        id: `line-${index + 1}`,
+        supplierName,
+        invoiceDate,
+        description: String(description || '').trim(),
+        quantity,
+        unitPrice,
+        totalAmount,
+        taxRate,
+        rawPayload: entity
+      };
+    })
+    .filter(line => line.description);
 }
 
 function extractTextFromDriveFile_(file) {
@@ -249,6 +355,7 @@ function parseInvoiceText_(text, fallbackName) {
     taxAmount: computedTax || 0,
     totalAmount: totalAmount || round2_((computedBase || 0) + (computedTax || 0)),
     deductible: true,
+    lines: [],
     notes: 'Importado automaticamente. Revisar antes de confirmar.'
   };
 }
@@ -294,6 +401,82 @@ function looksLikeInvoiceFile_(name, mimeType) {
   const acceptedName = /\.(pdf|png|jpe?g|webp|tiff?)$/i.test(fileName);
   const acceptedMime = /pdf|image/i.test(String(mimeType || ''));
   return acceptedName || acceptedMime;
+}
+
+function extractDocumentAiLocation_(processorName) {
+  const match = String(processorName || '').match(/\/locations\/([^/]+)\//);
+  if (!match) throw new Error('DOCUMENT_AI_PROCESSOR_NAME debe incluir /locations/{region}/.');
+  return match[1];
+}
+
+function guessDocumentMimeType_(blob, name) {
+  const contentType = blob.getContentType();
+  if (contentType && !isGoogleWorkspaceMime_(contentType)) return contentType;
+  const fileName = String(name || '').toLowerCase();
+  if (fileName.endsWith('.pdf')) return 'application/pdf';
+  if (fileName.endsWith('.png')) return 'image/png';
+  if (fileName.endsWith('.jpg') || fileName.endsWith('.jpeg')) return 'image/jpeg';
+  if (fileName.endsWith('.tif') || fileName.endsWith('.tiff')) return 'image/tiff';
+  return 'application/pdf';
+}
+
+function pickEntityValue_(entities, names) {
+  const entity = findEntity_(entities, names);
+  if (!entity) return '';
+  return normalizedEntityText_(entity);
+}
+
+function pickEntityMoney_(entities, names) {
+  const entity = findEntity_(entities, names);
+  if (!entity) return 0;
+  return entityToNumber_(entity);
+}
+
+function pickEntityNumber_(entities, names) {
+  const entity = findEntity_(entities, names);
+  if (!entity) return 0;
+  return entityToNumber_(entity);
+}
+
+function findEntity_(entities, names) {
+  const wanted = names.map(normalizeEntityType_);
+  return (entities || []).find(entity => wanted.includes(normalizeEntityType_(entity.type)));
+}
+
+function normalizeEntityType_(type) {
+  return String(type || '').toLowerCase().replace(/^.*\//, '');
+}
+
+function normalizedEntityText_(entity) {
+  const normalized = entity.normalizedValue || {};
+  if (normalized.text) return normalized.text;
+  if (normalized.dateValue) return normalizeDocumentAiDate_(normalized.dateValue);
+  if (normalized.moneyValue) return String(entityToNumber_(entity) || '');
+  return entity.mentionText || '';
+}
+
+function entityToNumber_(entity) {
+  const normalized = entity.normalizedValue || {};
+  if (normalized.moneyValue) {
+    const money = normalized.moneyValue;
+    const units = Number(money.units || 0);
+    const nanos = Number(money.nanos || 0) / 1000000000;
+    return round2_(units + nanos);
+  }
+  if (normalized.text) return parseMoney_(normalized.text);
+  return parseMoney_(entity.mentionText);
+}
+
+function normalizeDocumentAiDate_(value) {
+  if (!value) return '';
+  if (typeof value === 'object') {
+    const year = value.year;
+    const month = String(value.month || '').padStart(2, '0');
+    const day = String(value.day || '').padStart(2, '0');
+    return year && month && day ? `${year}-${month}-${day}` : '';
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return String(value);
+  return normalizeDate_(value);
 }
 
 function getDriveRootFolder_() {
@@ -375,6 +558,46 @@ function upsertInvoice_(invoice) {
   supabaseFetch_('/rest/v1/supplier_invoices?on_conflict=id', {
     method: 'post',
     payload: JSON.stringify(payload),
+    headers: {
+      Prefer: 'resolution=merge-duplicates'
+    }
+  });
+
+  try {
+    upsertInvoiceLines_(payload.id, invoice);
+  } catch (error) {
+    Logger.log(`No se pudieron guardar las lineas de ${payload.id}: ${error.message}`);
+  }
+}
+
+function upsertInvoiceLines_(invoiceId, invoice) {
+  const lines = invoice.lines || [];
+  if (!lines.length) return;
+
+  supabaseFetch_(`/rest/v1/supplier_invoice_lines?invoice_id=eq.${encodeURIComponent(invoiceId)}`, {
+    method: 'delete',
+    headers: {
+      Prefer: 'return=minimal'
+    }
+  });
+
+  const rows = lines.map((line, index) => ({
+    id: `${invoiceId}-line-${index + 1}`,
+    invoice_id: invoiceId,
+    supplier_name: invoice.supplierName || null,
+    invoice_date: invoice.invoiceDate || null,
+    description: line.description,
+    quantity: line.quantity || null,
+    unit_price: line.unitPrice || null,
+    total_amount: line.totalAmount || null,
+    tax_rate: line.taxRate || null,
+    raw_payload: line.rawPayload || {},
+    updated_at: new Date().toISOString()
+  }));
+
+  supabaseFetch_('/rest/v1/supplier_invoice_lines?on_conflict=id', {
+    method: 'post',
+    payload: JSON.stringify(rows),
     headers: {
       Prefer: 'resolution=merge-duplicates'
     }
