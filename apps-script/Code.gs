@@ -174,8 +174,13 @@ function scanGmailInvoices_(ignoredSenders, results) {
 
 function extractTextFromDriveFile_(file) {
   const mimeType = file.getMimeType();
-  if (mimeType === MimeType.GOOGLE_DOCS) {
-    return DocumentApp.openById(file.getId()).getBody().getText();
+  if (isGoogleWorkspaceMime_(mimeType)) {
+    try {
+      return DocumentApp.openById(file.getId()).getBody().getText();
+    } catch (error) {
+      Logger.log(`No se pudo leer como documento de Google ${file.getName()}: ${error.message}`);
+      return file.getName();
+    }
   }
   return extractTextFromBlob_(file.getBlob(), file.getName());
 }
@@ -183,6 +188,12 @@ function extractTextFromDriveFile_(file) {
 function extractTextFromBlob_(blob, name) {
   let tempFileId = '';
   try {
+    const contentType = blob.getContentType();
+    if (isGoogleWorkspaceMime_(contentType)) {
+      Logger.log(`Se omite OCR de ${name}: Google ya lo entrega como ${contentType}.`);
+      return name;
+    }
+
     const resource = {
       title: `OCR temporal TPV - ${name}`,
       mimeType: MimeType.GOOGLE_DOCS
@@ -205,6 +216,10 @@ function extractTextFromBlob_(blob, name) {
       }
     }
   }
+}
+
+function isGoogleWorkspaceMime_(mimeType) {
+  return String(mimeType || '').indexOf('application/vnd.google-apps.') === 0;
 }
 
 function parseInvoiceText_(text, fallbackName) {
