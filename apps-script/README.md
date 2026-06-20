@@ -24,11 +24,12 @@ El script ignora `CIERRE`, revisa `FACTURAS` y tambien los archivos sueltos dent
 
 ## Configuracion
 
-1. Crea un proyecto en [Google Apps Script](https://script.google.com/).
-2. Copia `Code.gs` y `appsscript.json`.
-3. En Servicios avanzados de Google, activa `Drive API`.
-4. En Google Cloud del proyecto, activa tambien la API de Drive si Google lo solicita.
-5. En `Project Settings > Script Properties`, anade:
+1. Ejecuta en Supabase `sql/invoice_automation_migration.sql`.
+2. Crea un proyecto en [Google Apps Script](https://script.google.com/).
+3. Copia `Code.gs` y `appsscript.json`.
+4. En Servicios avanzados de Google, activa `Drive API`.
+5. En Google Cloud del proyecto, activa tambien la API de Drive si Google lo solicita.
+6. En `Project Settings > Script Properties`, anade:
 
 ```text
 SUPABASE_URL=https://tbqvypdxcgeofsmiqmuo.supabase.co
