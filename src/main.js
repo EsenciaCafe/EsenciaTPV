@@ -774,6 +774,10 @@ function renderAjustesView(state) {
             <span>Informes y Ventas</span>
             ${chevron}
           </button>
+          <button class="settings-tree-item" id="settings-to-compras">
+            <span>Compras y Facturas</span>
+            ${chevron}
+          </button>
           ${store.canManageStaff() ? `
             <button class="settings-tree-item" id="settings-to-staff">
               <span>Personal y PIN</span>
@@ -833,6 +837,144 @@ function renderAjustesView(state) {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (path.length === 1 && path[0] === 'compras') {
+    const selectedMonth = state.selectedReportMonth || new Date().toISOString().slice(0, 7);
+    const summary = store.getAccountingSummary(selectedMonth);
+    const monthInvoices = state.supplierInvoices
+      .filter(invoice => (invoice.invoiceDate || '').slice(0, 7) === selectedMonth)
+      .sort((a, b) => (b.invoiceDate || '').localeCompare(a.invoiceDate || ''));
+
+    const rows = monthInvoices.map(invoice => `
+      <button class="purchase-row" data-edit-invoice-id="${invoice.id}">
+        <div>
+          <strong>${invoice.supplierName}</strong>
+          <span>${invoice.invoiceDate || ''} · ${invoice.invoiceNumber || 'Sin numero'} · ${invoice.deductible === false ? 'No deducible' : 'Deducible'}</span>
+        </div>
+        <div class="purchase-row-amount">
+          <strong>${Number(invoice.totalAmount || 0).toFixed(2)}€</strong>
+          <span>IGIC ${Number(invoice.taxAmount || 0).toFixed(2)}€</span>
+        </div>
+      </button>
+    `).join('');
+
+    return `
+      <div class="view-container">
+        <div class="settings-nav-header">
+          <button class="settings-back-arrow-btn" id="settings-back-btn">
+            ${backArrow} Ajustes
+          </button>
+          <button class="btn btn-primary" id="settings-create-invoice-btn" style="height:36px; padding:0 12px; font-size:0.85rem; background-color:var(--secondary);">
+            Nueva
+          </button>
+        </div>
+        <h2 class="settings-nav-title">Compras y Facturas</h2>
+        <div class="accounting-month-bar">
+          <label>Mes</label>
+          <input type="month" id="accounting-month-input" value="${selectedMonth}">
+        </div>
+        <div class="accounting-summary-grid">
+          <div><span>Facturado</span><strong>${summary.sales.total.toFixed(2)}€</strong></div>
+          <div><span>IGIC ventas</span><strong>${summary.sales.tax.toFixed(2)}€</strong></div>
+          <div><span>Compras</span><strong>${summary.purchases.total.toFixed(2)}€</strong></div>
+          <div><span>IGIC compras</span><strong>${summary.purchases.deductibleTax.toFixed(2)}€</strong></div>
+          <div class="${summary.estimatedIgicDue < 0 ? 'is-credit' : 'is-due'}">
+            <span>${summary.estimatedIgicDue < 0 ? 'A compensar' : 'IGIC estimado'}</span>
+            <strong>${summary.estimatedIgicDue.toFixed(2)}€</strong>
+          </div>
+        </div>
+        <div class="purchase-list">
+          ${rows || '<p style="padding:24px; text-align:center; color:var(--text-muted);">No hay facturas registradas en este mes.</p>'}
+        </div>
+      </div>
+    `;
+  }
+
+  if (path.length >= 2 && path[0] === 'compras') {
+    const isNew = path[1] === 'nueva';
+    const invoice = isNew ? null : state.supplierInvoices.find(item => item.id === path[1]);
+    if (!isNew && !invoice) {
+      return '<div class="view-container"><p style="padding:24px;">Factura no encontrada.</p></div>';
+    }
+
+    const baseAmount = Number(invoice?.baseAmount || 0);
+    const taxRate = Number(invoice?.taxRate ?? state.legal?.taxRate ?? 7);
+    const taxAmount = Number(invoice?.taxAmount || 0);
+    const totalAmount = Number(invoice?.totalAmount || 0);
+
+    return `
+      <div class="view-container">
+        <div class="settings-nav-header">
+          <button class="settings-back-arrow-btn" id="settings-back-btn">
+            ${backArrow} Compras
+          </button>
+        </div>
+        <h2 class="settings-nav-title">${isNew ? 'Nueva factura' : 'Editar factura'}</h2>
+        <div class="settings-editor-container">
+          <form id="supplier-invoice-form" data-invoice-id="${invoice?.id || ''}" style="display:grid; gap:16px;">
+            <div class="editor-form-group">
+              <label class="editor-form-label">Proveedor</label>
+              <input type="text" class="editor-form-input" id="invoice-supplier-name" value="${invoice?.supplierName || ''}" required>
+            </div>
+            <div class="editor-form-group">
+              <label class="editor-form-label">Numero de factura</label>
+              <input type="text" class="editor-form-input" id="invoice-number" value="${invoice?.invoiceNumber || ''}">
+            </div>
+            <div class="editor-form-group">
+              <label class="editor-form-label">Fecha</label>
+              <input type="date" class="editor-form-input" id="invoice-date" value="${invoice?.invoiceDate || new Date().toISOString().slice(0, 10)}" required>
+            </div>
+            <div class="editor-form-group">
+              <label class="editor-form-label">Categoria</label>
+              <input type="text" class="editor-form-input" id="invoice-category" value="${invoice?.category || ''}" placeholder="Mercancia, suministros, alquiler...">
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+              <div class="editor-form-group">
+                <label class="editor-form-label">Base imponible</label>
+                <input type="number" step="0.01" min="0" class="editor-form-input" id="invoice-base-amount" value="${baseAmount || ''}" required>
+              </div>
+              <div class="editor-form-group">
+                <label class="editor-form-label">IGIC %</label>
+                <input type="number" step="0.01" min="0" class="editor-form-input" id="invoice-tax-rate" value="${taxRate}" required>
+              </div>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+              <div class="editor-form-group">
+                <label class="editor-form-label">IGIC soportado</label>
+                <input type="number" step="0.01" min="0" class="editor-form-input" id="invoice-tax-amount" value="${taxAmount || ''}" required>
+              </div>
+              <div class="editor-form-group">
+                <label class="editor-form-label">Total factura</label>
+                <input type="number" step="0.01" min="0" class="editor-form-input" id="invoice-total-amount" value="${totalAmount || ''}" required>
+              </div>
+            </div>
+            <label class="staff-active-toggle">
+              <input type="checkbox" id="invoice-deductible" ${invoice?.deductible === false ? '' : 'checked'}>
+              <span>IGIC deducible</span>
+            </label>
+            <div class="editor-form-group">
+              <label class="editor-form-label">Origen</label>
+              <select class="editor-form-input" id="invoice-source">
+                <option value="manual" ${invoice?.source === 'manual' ? 'selected' : ''}>Manual</option>
+                <option value="drive" ${invoice?.source === 'drive' ? 'selected' : ''}>Drive</option>
+                <option value="gmail" ${invoice?.source === 'gmail' ? 'selected' : ''}>Gmail</option>
+              </select>
+            </div>
+            <div class="editor-form-group">
+              <label class="editor-form-label">Notas</label>
+              <textarea class="editor-form-input" id="invoice-notes" rows="3">${invoice?.notes || ''}</textarea>
+            </div>
+            <button type="submit" class="btn btn-primary" style="height:48px; background-color:var(--secondary);">Guardar factura</button>
+            ${!isNew ? `
+              <button type="button" class="btn btn-secondary" id="settings-delete-invoice-btn" style="height:44px; color:var(--danger); border-color:rgba(239,68,68,.3); background:rgba(239,68,68,.08);">
+                Eliminar factura
+              </button>
+            ` : ''}
+          </form>
         </div>
       </div>
     `;
@@ -4786,6 +4928,121 @@ function setupEventListeners(container) {
   if (toInformesBtn) {
     toInformesBtn.addEventListener('click', () => {
       store.navigateSettings(['informes']);
+    });
+  }
+
+  const toComprasBtn = container.querySelector('#settings-to-compras');
+  if (toComprasBtn) {
+    toComprasBtn.addEventListener('click', () => {
+      store.navigateSettings(['compras']);
+    });
+  }
+
+  const accountingMonthInput = container.querySelector('#accounting-month-input');
+  if (accountingMonthInput) {
+    accountingMonthInput.addEventListener('change', (e) => {
+      store.state.selectedReportMonth = e.target.value;
+      store.notify();
+    });
+  }
+
+  const createInvoiceBtn = container.querySelector('#settings-create-invoice-btn');
+  if (createInvoiceBtn) {
+    createInvoiceBtn.addEventListener('click', () => {
+      store.navigateSettings(['compras', 'nueva']);
+    });
+  }
+
+  container.querySelectorAll('[data-edit-invoice-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      store.navigateSettings(['compras', btn.dataset.editInvoiceId]);
+    });
+  });
+
+  const invoiceForm = container.querySelector('#supplier-invoice-form');
+  if (invoiceForm) {
+    const baseInput = container.querySelector('#invoice-base-amount');
+    const rateInput = container.querySelector('#invoice-tax-rate');
+    const taxInput = container.querySelector('#invoice-tax-amount');
+    const totalInput = container.querySelector('#invoice-total-amount');
+
+    const recalcInvoiceTotals = () => {
+      const base = parseFloat(baseInput?.value || '0');
+      const rate = parseFloat(rateInput?.value || '0');
+      if (!Number.isFinite(base) || !Number.isFinite(rate)) return;
+      const tax = parseFloat((base * rate / 100).toFixed(2));
+      const total = parseFloat((base + tax).toFixed(2));
+      if (taxInput && document.activeElement !== taxInput) taxInput.value = tax ? tax.toFixed(2) : '';
+      if (totalInput && document.activeElement !== totalInput) totalInput.value = total ? total.toFixed(2) : '';
+    };
+
+    baseInput?.addEventListener('input', recalcInvoiceTotals);
+    rateInput?.addEventListener('input', recalcInvoiceTotals);
+
+    invoiceForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const id = invoiceForm.dataset.invoiceId || undefined;
+      const supplierName = (container.querySelector('#invoice-supplier-name')?.value || '').trim();
+      const invoiceNumber = (container.querySelector('#invoice-number')?.value || '').trim();
+      const invoiceDate = container.querySelector('#invoice-date')?.value || '';
+      const category = (container.querySelector('#invoice-category')?.value || '').trim();
+      const baseAmount = parseFloat(baseInput?.value || '0');
+      const taxRate = parseFloat(rateInput?.value || '0');
+      const taxAmount = parseFloat(taxInput?.value || '0');
+      const totalAmount = parseFloat(totalInput?.value || '0');
+      const deductible = container.querySelector('#invoice-deductible')?.checked !== false;
+      const source = container.querySelector('#invoice-source')?.value || 'manual';
+      const notes = (container.querySelector('#invoice-notes')?.value || '').trim();
+
+      if (!supplierName || !invoiceDate || !Number.isFinite(baseAmount) || !Number.isFinite(taxAmount) || !Number.isFinite(totalAmount)) {
+        showToast('Revisa proveedor, fecha e importes.', 'error');
+        return;
+      }
+
+      const saved = await store.saveSupplierInvoice({
+        id,
+        supplierName,
+        invoiceNumber,
+        invoiceDate,
+        category,
+        baseAmount,
+        taxRate,
+        taxAmount,
+        totalAmount,
+        deductible,
+        source,
+        notes,
+        status: 'confirmed'
+      });
+
+      if (saved) {
+        store.state.selectedReportMonth = invoiceDate.slice(0, 7);
+        store.navigateSettings(['compras']);
+        showToast('Factura guardada.', 'success');
+      } else {
+        showToast('No tienes permiso para guardar facturas.', 'error');
+      }
+    });
+  }
+
+  const deleteInvoiceBtn = container.querySelector('#settings-delete-invoice-btn');
+  if (deleteInvoiceBtn) {
+    deleteInvoiceBtn.addEventListener('click', () => {
+      const id = container.querySelector('#supplier-invoice-form')?.dataset.invoiceId;
+      if (!id) return;
+      showConfirm(
+        'Eliminar factura',
+        'La compra dejara de contar en el calculo contable. ¿Quieres continuar?',
+        async () => {
+          const deleted = await store.deleteSupplierInvoice(id);
+          if (deleted) {
+            store.navigateSettings(['compras']);
+            showToast('Factura eliminada.', 'success');
+          }
+        },
+        null,
+        true
+      );
     });
   }
 

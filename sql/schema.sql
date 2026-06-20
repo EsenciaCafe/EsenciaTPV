@@ -78,3 +78,24 @@ create table if not exists staff_profiles (
 insert into staff_profiles (id, display_name, role, pin_code, active)
 values ('admin-default', 'Administrador', 'admin', '0000', true)
 on conflict (id) do nothing;
+
+-- Facturas de proveedor / compras para control contable
+create table if not exists supplier_invoices (
+  id             text primary key,
+  supplier_name  text not null,
+  invoice_number text,
+  invoice_date   date not null,
+  category       text,
+  base_amount    numeric(10,2) not null default 0.00,
+  tax_rate       numeric(5,2) not null default 0.00,
+  tax_amount     numeric(10,2) not null default 0.00,
+  total_amount   numeric(10,2) not null default 0.00,
+  deductible     boolean not null default true,
+  status         text not null default 'pending_review' check (status in ('pending_review', 'confirmed', 'ignored')),
+  source         text not null default 'manual' check (source in ('manual', 'drive', 'gmail')),
+  file_name      text,
+  file_url       text,
+  notes          text,
+  created_at     timestamptz default now(),
+  updated_at     timestamptz default now()
+);

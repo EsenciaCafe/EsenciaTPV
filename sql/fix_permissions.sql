@@ -53,6 +53,11 @@ alter table if exists staff_profiles disable row level security;
 grant all on staff_profiles to anon;
 grant all on staff_profiles to authenticated;
 
+-- Facturas de proveedor / compras
+alter table if exists supplier_invoices disable row level security;
+grant all on supplier_invoices to anon;
+grant all on supplier_invoices to authenticated;
+
 -- Habilitar tiempo real para esta tabla de forma segura
 
 do $$
@@ -74,4 +79,3 @@ end $$;
 -- Modificar restricción de longitud del PIN (4 a 8 dígitos)
 alter table staff_profiles drop constraint if exists staff_profiles_pin_code_check;
 alter table staff_profiles add constraint staff_profiles_pin_code_check check (pin_code ~ '^[0-9]{4,8}$');
-

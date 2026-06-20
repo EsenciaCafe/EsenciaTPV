@@ -13,7 +13,10 @@ import {
   loadStaffProfiles,
   findStaffByPin,
   upsertStaffProfile,
-  deleteStaffProfile as dbDeleteStaffProfile
+  deleteStaffProfile as dbDeleteStaffProfile,
+  loadSupplierInvoices,
+  upsertSupplierInvoice,
+  deleteSupplierInvoice as dbDeleteSupplierInvoice
 } from './db.js';
 import { supabase } from './supabase.js';
 
@@ -82,6 +85,7 @@ class Store {
       menuItems: [],
       gridItems: {},
       staffProfiles: [],
+      supplierInvoices: [],
 
       // ── REPORT NAVIGATION ─────────────────────────────────────
       // ISO date string YYYY-MM-DD (default = today)
@@ -231,6 +235,10 @@ class Store {
     this.state.staffProfiles = await loadStaffProfiles();
   }
 
+  async loadSupplierInvoices() {
+    this.state.supplierInvoices = await loadSupplierInvoices();
+  }
+
   async loadAuthSession() {
     this.state.auth.isLoading = true;
     try {
@@ -332,6 +340,7 @@ class Store {
       this.state.modifiers = catalog.modifiers;
       this.state.gridItems = catalog.gridItems;
       await this.loadStaffDirectory();
+      await this.loadSupplierInvoices();
       
       console.log('[Store] Catálogo cargado desde Supabase:', {
         categorias: catalog.categories.length,
@@ -458,6 +467,64 @@ class Store {
     }
     this.state.settingsPath = [];
     this.notify();
+  }
+
+  async saveSupplierInvoice(invoiceData) {
+    if (!this.canAccessSettings()) return false;
+    await upsertSupplierInvoice(invoiceData);
+    await this.loadSupplierInvoices();
+    this.notify();
+    return true;
+  }
+
+  async deleteSupplierInvoice(id) {
+    if (!this.canAccessSettings()) return false;
+    await dbDeleteSupplierInvoice(id);
+    await this.loadSupplierInvoices();
+    this.notify();
+    return true;
+  }
+
+  getTransactionTaxDetails(tx) {
+    const total = Number(tx.total || 0);
+    const legal = tx.legalData || this.state.legal || {};
+    const taxRate = Number(legal.taxRate ?? this.state.legal.taxRate ?? 0);
+    const base = taxRate > 0 ? total / (1 + taxRate / 100) : total;
+    const tax = total - base;
+    return { base, tax, taxRate };
+  }
+
+  getAccountingSummary(month = this.state.selectedReportMonth) {
+    const monthPrefix = month || new Date().toISOString().slice(0, 7);
+    const sales = this.state.transactions.filter(tx => (tx.createdAt || '').slice(0, 7) === monthPrefix);
+    const purchases = this.state.supplierInvoices.filter(invoice => (invoice.invoiceDate || '').slice(0, 7) === monthPrefix);
+
+    const salesTotals = sales.reduce((acc, tx) => {
+      const { base, tax } = this.getTransactionTaxDetails(tx);
+      acc.total += Number(tx.total || 0);
+      acc.base += base;
+      acc.tax += tax;
+      return acc;
+    }, { total: 0, base: 0, tax: 0 });
+
+    const purchaseTotals = purchases.reduce((acc, invoice) => {
+      acc.total += Number(invoice.totalAmount || 0);
+      acc.base += Number(invoice.baseAmount || 0);
+      if (invoice.deductible !== false) {
+        acc.deductibleTax += Number(invoice.taxAmount || 0);
+      }
+      acc.tax += Number(invoice.taxAmount || 0);
+      return acc;
+    }, { total: 0, base: 0, tax: 0, deductibleTax: 0 });
+
+    return {
+      month: monthPrefix,
+      salesCount: sales.length,
+      purchaseCount: purchases.length,
+      sales: salesTotals,
+      purchases: purchaseTotals,
+      estimatedIgicDue: salesTotals.tax - purchaseTotals.deductibleTax
+    };
   }
 
   setActivePosTab(tab) {

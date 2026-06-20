@@ -450,6 +450,110 @@ body {
   font-weight: 700;
 }
 
+.accounting-month-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px 14px;
+}
+
+.accounting-month-bar label {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.accounting-month-bar input {
+  min-width: 150px;
+  height: 38px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  background: var(--bg-item);
+  color: var(--text-main);
+  font-family: var(--font-family);
+  font-weight: 700;
+  padding: 0 10px;
+}
+
+.accounting-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0 16px 16px;
+}
+
+.accounting-summary-grid > div {
+  display: grid;
+  gap: 4px;
+  min-height: 70px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  background: var(--bg-item);
+}
+
+.accounting-summary-grid span {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.accounting-summary-grid strong {
+  color: var(--text-main);
+  font-size: 1.05rem;
+}
+
+.accounting-summary-grid .is-due strong {
+  color: var(--warning);
+}
+
+.accounting-summary-grid .is-credit strong {
+  color: var(--secondary);
+}
+
+.purchase-list {
+  display: grid;
+  gap: 10px;
+  padding: 0 16px 24px;
+  overflow-y: auto;
+}
+
+.purchase-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 70px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  background: var(--bg-item);
+  color: var(--text-main);
+  font-family: var(--font-family);
+  text-align: left;
+  cursor: pointer;
+}
+
+.purchase-row > div {
+  display: grid;
+  gap: 4px;
+}
+
+.purchase-row span,
+.purchase-row-amount span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.purchase-row-amount {
+  text-align: right;
+  flex-shrink: 0;
+}
+
 /* View Container animation */
 .view-container {
   height: 100%;

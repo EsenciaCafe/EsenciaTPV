@@ -283,6 +283,68 @@ export async function deleteStaffProfile(id) {
   if (error) notifyDbError('deleteStaffProfile', error.message);
 }
 
+export async function loadSupplierInvoices() {
+  const { data, error } = await supabase
+    .from('supplier_invoices')
+    .select('*')
+    .order('invoice_date', { ascending: false });
+
+  if (error) {
+    console.warn('[DB] Error loading supplier invoices:', error.message);
+    return [];
+  }
+
+  return (data || []).map(row => ({
+    id: row.id,
+    supplierName: row.supplier_name,
+    invoiceNumber: row.invoice_number,
+    invoiceDate: row.invoice_date,
+    category: row.category || '',
+    baseAmount: parseFloat(row.base_amount || 0),
+    taxRate: parseFloat(row.tax_rate || 0),
+    taxAmount: parseFloat(row.tax_amount || 0),
+    totalAmount: parseFloat(row.total_amount || 0),
+    deductible: row.deductible !== false,
+    status: row.status || 'pending_review',
+    source: row.source || 'manual',
+    fileName: row.file_name || '',
+    fileUrl: row.file_url || '',
+    notes: row.notes || '',
+    createdAt: row.created_at
+  }));
+}
+
+export async function upsertSupplierInvoice(invoice) {
+  const id = invoice.id || `invoice-${Date.now()}`;
+  const row = {
+    id,
+    supplier_name: invoice.supplierName,
+    invoice_number: invoice.invoiceNumber || null,
+    invoice_date: invoice.invoiceDate,
+    category: invoice.category || null,
+    base_amount: invoice.baseAmount || 0,
+    tax_rate: invoice.taxRate || 0,
+    tax_amount: invoice.taxAmount || 0,
+    total_amount: invoice.totalAmount || 0,
+    deductible: invoice.deductible !== false,
+    status: invoice.status || 'pending_review',
+    source: invoice.source || 'manual',
+    file_name: invoice.fileName || null,
+    file_url: invoice.fileUrl || null,
+    notes: invoice.notes || null,
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = await supabase.from('supplier_invoices').upsert(row, { onConflict: 'id' });
+  if (error) notifyDbError('upsertSupplierInvoice', error.message);
+  return id;
+}
+
+export async function deleteSupplierInvoice(id) {
+  const { error } = await supabase.from('supplier_invoices').delete().eq('id', id);
+  if (error) notifyDbError('deleteSupplierInvoice', error.message);
+}
+
 export async function loadTPVState() {
   const { data, error } = await supabase
     .from('tpv_state')
