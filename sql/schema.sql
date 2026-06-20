@@ -64,7 +64,6 @@ create table if not exists receipt_tickets (
 );
 
 -- Perfiles de personal y roles de acceso
-drop table if exists staff_profiles;
 create table if not exists staff_profiles (
   id           text primary key,
   display_name text not null,
@@ -93,9 +92,28 @@ create table if not exists supplier_invoices (
   deductible     boolean not null default true,
   status         text not null default 'pending_review' check (status in ('pending_review', 'confirmed', 'ignored')),
   source         text not null default 'manual' check (source in ('manual', 'drive', 'gmail')),
+  source_id      text,
+  sender_email   text,
   file_name      text,
   file_url       text,
   notes          text,
   created_at     timestamptz default now(),
   updated_at     timestamptz default now()
+);
+
+alter table supplier_invoices add column if not exists source_id text;
+alter table supplier_invoices add column if not exists sender_email text;
+alter table supplier_invoices add column if not exists file_name text;
+alter table supplier_invoices add column if not exists file_url text;
+
+create unique index if not exists supplier_invoices_source_id_idx
+on supplier_invoices (source_id)
+where source_id is not null;
+
+create table if not exists supplier_sender_rules (
+  email      text primary key,
+  label      text,
+  ignored    boolean not null default false,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
 );

@@ -849,6 +849,25 @@ function renderAjustesView(state) {
       .filter(invoice => (invoice.invoiceDate || '').slice(0, 7) === selectedMonth)
       .sort((a, b) => (b.invoiceDate || '').localeCompare(a.invoiceDate || ''));
 
+    const senderEmails = [...new Set(state.supplierInvoices.map(invoice => invoice.senderEmail).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b));
+    const senderRules = new Map(state.supplierSenderRules.map(rule => [rule.email, rule]));
+    const senderRows = senderEmails.map(email => {
+      const rule = senderRules.get(email);
+      const ignored = rule?.ignored === true;
+      return `
+        <div class="sender-rule-row">
+          <div>
+            <strong>${email}</strong>
+            <span>${ignored ? 'Ignorado por la automatizacion' : 'Activo para revisar facturas'}</span>
+          </div>
+          <button class="btn btn-secondary supplier-sender-toggle" data-sender-email="${email}" style="height:34px; padding:0 10px;">
+            ${ignored ? 'Activar' : 'Ignorar'}
+          </button>
+        </div>
+      `;
+    }).join('');
+
     const rows = monthInvoices.map(invoice => `
       <button class="purchase-row" data-edit-invoice-id="${invoice.id}">
         <div>
@@ -889,6 +908,11 @@ function renderAjustesView(state) {
         </div>
         <div class="purchase-list">
           ${rows || '<p style="padding:24px; text-align:center; color:var(--text-muted);">No hay facturas registradas en este mes.</p>'}
+        </div>
+        <div class="sender-rules-panel">
+          <h3>Remitentes de Gmail</h3>
+          <p>Cuando la automatizacion detecte facturas desde el correo, aqui podras ignorar remitentes que no sean proveedores de Esencia.</p>
+          ${senderRows || '<p>No hay remitentes detectados todavia.</p>'}
         </div>
       </div>
     `;
@@ -963,6 +987,10 @@ function renderAjustesView(state) {
                 <option value="drive" ${invoice?.source === 'drive' ? 'selected' : ''}>Drive</option>
                 <option value="gmail" ${invoice?.source === 'gmail' ? 'selected' : ''}>Gmail</option>
               </select>
+            </div>
+            <div class="editor-form-group">
+              <label class="editor-form-label">Remitente email</label>
+              <input type="email" class="editor-form-input" id="invoice-sender-email" value="${invoice?.senderEmail || ''}" placeholder="proveedor@ejemplo.com">
             </div>
             <div class="editor-form-group">
               <label class="editor-form-label">Notas</label>
@@ -4992,6 +5020,7 @@ function setupEventListeners(container) {
       const totalAmount = parseFloat(totalInput?.value || '0');
       const deductible = container.querySelector('#invoice-deductible')?.checked !== false;
       const source = container.querySelector('#invoice-source')?.value || 'manual';
+      const senderEmail = (container.querySelector('#invoice-sender-email')?.value || '').trim().toLowerCase();
       const notes = (container.querySelector('#invoice-notes')?.value || '').trim();
 
       if (!supplierName || !invoiceDate || !Number.isFinite(baseAmount) || !Number.isFinite(taxAmount) || !Number.isFinite(totalAmount)) {
@@ -5011,6 +5040,7 @@ function setupEventListeners(container) {
         totalAmount,
         deductible,
         source,
+        senderEmail,
         notes,
         status: 'confirmed'
       });
@@ -5045,6 +5075,15 @@ function setupEventListeners(container) {
       );
     });
   }
+
+  container.querySelectorAll('.supplier-sender-toggle').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const email = btn.dataset.senderEmail;
+      const updated = await store.toggleSupplierSenderIgnored(email);
+      if (updated) showToast('Regla de remitente actualizada.', 'success');
+    });
+  });
 
   const toStaffBtn = container.querySelector('#settings-to-staff');
   if (toStaffBtn) {

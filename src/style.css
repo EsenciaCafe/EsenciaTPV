@@ -554,6 +554,56 @@ body {
   flex-shrink: 0;
 }
 
+.sender-rules-panel {
+  display: grid;
+  gap: 10px;
+  margin: 0 16px 24px;
+  padding: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  background: var(--bg-item);
+}
+
+.sender-rules-panel h3 {
+  color: var(--text-main);
+  font-size: 1rem;
+}
+
+.sender-rules-panel p {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.sender-rule-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.sender-rule-row:first-of-type {
+  border-top: 0;
+}
+
+.sender-rule-row div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sender-rule-row strong {
+  overflow-wrap: anywhere;
+}
+
+.sender-rule-row span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
 /* View Container animation */
 .view-container {
   height: 100%;

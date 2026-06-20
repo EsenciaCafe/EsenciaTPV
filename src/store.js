@@ -16,7 +16,9 @@ import {
   deleteStaffProfile as dbDeleteStaffProfile,
   loadSupplierInvoices,
   upsertSupplierInvoice,
-  deleteSupplierInvoice as dbDeleteSupplierInvoice
+  deleteSupplierInvoice as dbDeleteSupplierInvoice,
+  loadSupplierSenderRules,
+  upsertSupplierSenderRule
 } from './db.js';
 import { supabase } from './supabase.js';
 
@@ -86,6 +88,7 @@ class Store {
       gridItems: {},
       staffProfiles: [],
       supplierInvoices: [],
+      supplierSenderRules: [],
 
       // ── REPORT NAVIGATION ─────────────────────────────────────
       // ISO date string YYYY-MM-DD (default = today)
@@ -239,6 +242,10 @@ class Store {
     this.state.supplierInvoices = await loadSupplierInvoices();
   }
 
+  async loadSupplierSenderRules() {
+    this.state.supplierSenderRules = await loadSupplierSenderRules();
+  }
+
   async loadAuthSession() {
     this.state.auth.isLoading = true;
     try {
@@ -341,6 +348,7 @@ class Store {
       this.state.gridItems = catalog.gridItems;
       await this.loadStaffDirectory();
       await this.loadSupplierInvoices();
+      await this.loadSupplierSenderRules();
       
       console.log('[Store] Catálogo cargado desde Supabase:', {
         categorias: catalog.categories.length,
@@ -473,6 +481,21 @@ class Store {
     if (!this.canAccessSettings()) return false;
     await upsertSupplierInvoice(invoiceData);
     await this.loadSupplierInvoices();
+    this.notify();
+    return true;
+  }
+
+  async toggleSupplierSenderIgnored(email) {
+    if (!this.canAccessSettings()) return false;
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) return false;
+    const existing = this.state.supplierSenderRules.find(rule => rule.email === normalizedEmail);
+    await upsertSupplierSenderRule({
+      email: normalizedEmail,
+      label: existing?.label || '',
+      ignored: !(existing?.ignored === true)
+    });
+    await this.loadSupplierSenderRules();
     this.notify();
     return true;
   }

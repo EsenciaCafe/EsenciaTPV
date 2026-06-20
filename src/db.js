@@ -307,6 +307,8 @@ export async function loadSupplierInvoices() {
     deductible: row.deductible !== false,
     status: row.status || 'pending_review',
     source: row.source || 'manual',
+    sourceId: row.source_id || '',
+    senderEmail: row.sender_email || '',
     fileName: row.file_name || '',
     fileUrl: row.file_url || '',
     notes: row.notes || '',
@@ -329,6 +331,8 @@ export async function upsertSupplierInvoice(invoice) {
     deductible: invoice.deductible !== false,
     status: invoice.status || 'pending_review',
     source: invoice.source || 'manual',
+    source_id: invoice.sourceId || null,
+    sender_email: invoice.senderEmail || null,
     file_name: invoice.fileName || null,
     file_url: invoice.fileUrl || null,
     notes: invoice.notes || null,
@@ -343,6 +347,38 @@ export async function upsertSupplierInvoice(invoice) {
 export async function deleteSupplierInvoice(id) {
   const { error } = await supabase.from('supplier_invoices').delete().eq('id', id);
   if (error) notifyDbError('deleteSupplierInvoice', error.message);
+}
+
+export async function loadSupplierSenderRules() {
+  const { data, error } = await supabase
+    .from('supplier_sender_rules')
+    .select('*')
+    .order('email');
+
+  if (error) {
+    console.warn('[DB] Error loading supplier sender rules:', error.message);
+    return [];
+  }
+
+  return (data || []).map(row => ({
+    email: row.email,
+    label: row.label || '',
+    ignored: row.ignored === true
+  }));
+}
+
+export async function upsertSupplierSenderRule(rule) {
+  const email = String(rule.email || '').trim().toLowerCase();
+  if (!email) return;
+
+  const { error } = await supabase.from('supplier_sender_rules').upsert({
+    email,
+    label: rule.label || null,
+    ignored: rule.ignored === true,
+    updated_at: new Date().toISOString()
+  }, { onConflict: 'email' });
+
+  if (error) notifyDbError('upsertSupplierSenderRule', error.message);
 }
 
 export async function loadTPVState() {
