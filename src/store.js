@@ -652,7 +652,76 @@ class Store {
     if (this.state.gridItems[gridKey]) {
       this.state.gridItems[gridKey][slotIndex] = shortcutData;
       upsertGridItems(gridKey, this.state.gridItems[gridKey]);
+
+      if ((shortcutData.type === 'category' || shortcutData.type === 'subcategory') && shortcutData.target) {
+        this.populateCategoryGrid(shortcutData.target);
+      }
+
       this.notify();
+    }
+  }
+
+  createCategoryGridShortcut(category) {
+    return {
+      type: category.type,
+      target: category.id,
+      name: category.name,
+      color: category.type === 'category' ? 'blue' : 'green'
+    };
+  }
+
+  createArticleGridShortcut(item) {
+    return {
+      type: 'article',
+      itemId: item.id,
+      name: item.name,
+      price: item.price,
+      ...(item.image ? { image: item.image } : {})
+    };
+  }
+
+  populateCategoryGrid(categoryId) {
+    const category = this.state.categories.find(c => c.id === categoryId);
+    if (!category) return;
+
+    let createdGrid = false;
+    if (!this.state.gridItems[categoryId]) {
+      this.state.gridItems[categoryId] = Array(8).fill(null);
+      createdGrid = true;
+    }
+
+    const grid = [...this.state.gridItems[categoryId]];
+    const existingKeys = new Set(
+      grid
+        .filter(Boolean)
+        .map(item => item.type === 'article' ? `article:${item.itemId}` : `${item.type}:${item.target}`)
+    );
+
+    const childShortcuts = [
+      ...this.state.categories
+        .filter(c => c.type === 'subcategory' && c.parentId === categoryId)
+        .map(c => this.createCategoryGridShortcut(c)),
+      ...this.state.menuItems
+        .filter(item => item.category === categoryId)
+        .map(item => this.createArticleGridShortcut(item))
+    ];
+
+    let changed = false;
+    childShortcuts.forEach(shortcut => {
+      const key = shortcut.type === 'article' ? `article:${shortcut.itemId}` : `${shortcut.type}:${shortcut.target}`;
+      if (existingKeys.has(key)) return;
+
+      const emptyIndex = grid.findIndex(slot => slot === null);
+      if (emptyIndex === -1) return;
+
+      grid[emptyIndex] = shortcut;
+      existingKeys.add(key);
+      changed = true;
+    });
+
+    if (changed || createdGrid) {
+      this.state.gridItems[categoryId] = grid;
+      upsertGridItems(categoryId, grid);
     }
   }
 
