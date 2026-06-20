@@ -523,14 +523,15 @@ body {
   transform: scale(0.9);
 }
 
-/* Rigid 3x3 Grid */
+/* Flexible shortcut grid */
 .grid-3x3 {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(3, 1fr);
+  grid-auto-rows: minmax(112px, 128px);
   gap: 8px;
   padding: 12px;
-  flex-grow: 1;
+  align-content: start;
+  min-height: 100%;
   box-sizing: border-box;
 }
 
@@ -546,7 +547,7 @@ body {
   position: relative;
   transition: transform var(--transition-fast);
   overflow: hidden;
-  aspect-ratio: 1.1; /* Keeps buttons comfortable and square-ish */
+  min-height: 112px;
 }
 
 .grid-card:active {
@@ -1479,6 +1480,10 @@ body.light-theme .btn-quick-pay {
 @media (min-width: 768px) {
   .app-shell {
     flex-direction: row;
+  }
+
+  .grid-3x3 {
+    grid-auto-rows: minmax(128px, 150px);
   }
   
   .bottom-nav {

@@ -248,6 +248,9 @@ function renderAtajosView(state) {
   
   const isNested = state.gridPath.length > 1;
   const gridHTML = [];
+  const visibleSlots = state.isEditingGrid
+    ? Math.max(items.length + 3, isNested ? 8 : 9)
+    : Math.max(items.length, isNested ? 8 : 9);
 
   // If nested, slot 1 is ALWAYS the back button (Volver)
   if (isNested) {
@@ -260,11 +263,7 @@ function renderAtajosView(state) {
   }
 
   // Map elements to the grid
-  for (let i = 0; i < 9; i++) {
-    // Skip slot 1 for back button if nested
-    if (isNested && i === 0) continue;
-
-    const slotIndex = isNested ? i - 1 : i;
+  for (let slotIndex = 0; slotIndex < visibleSlots; slotIndex++) {
     const item = items[slotIndex];
 
     if (!item) {
@@ -275,7 +274,7 @@ function renderAtajosView(state) {
             <span style="font-size: 1.6rem; font-weight: bold; color: var(--text-muted);">+</span>
           </div>
         `);
-      } else {
+      } else if (slotIndex < 9) {
         gridHTML.push(`<div class="grid-card placeholder-card"></div>`);
       }
     } else {

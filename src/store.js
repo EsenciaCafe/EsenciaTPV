@@ -682,7 +682,7 @@ class Store {
 
   buildDefaultCategoryGrid(categoryId) {
     const category = this.state.categories.find(c => c.id === categoryId);
-    if (!category) return Array(8).fill(null);
+    if (!category) return [];
 
     const childShortcuts = [
       ...this.state.menuItems
@@ -693,10 +693,7 @@ class Store {
         .map(c => this.createCategoryGridShortcut(c))
     ];
 
-    return [
-      ...childShortcuts.slice(0, 8),
-      ...Array(Math.max(0, 8 - childShortcuts.length)).fill(null)
-    ];
+    return childShortcuts;
   }
 
   rebuildCategoryGridTree(categoryId, visited = new Set()) {
