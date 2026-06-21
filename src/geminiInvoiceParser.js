@@ -169,6 +169,13 @@ function parseLastNumber(value) {
   return parseNumber(matches[matches.length - 1]);
 }
 
+function stripMarkdown(value) {
+  return normalizeSpaces(value)
+    .replace(/\*\*/g, '')
+    .replace(/^#+\s*/, '')
+    .trim();
+}
+
 function parseQuantity(value) {
   const clean = normalizeSpaces(value).replace(',', '.');
   const match = clean.match(/(-?\d+(?:\.\d+)?)\s*([a-zA-ZáéíóúÁÉÍÓÚñÑ./]*)?/);
@@ -378,7 +385,42 @@ function extractInvoiceTotals(rawText) {
   return result;
 }
 
-function groupInvoices(rows, taxRate = 7, invoiceTotals = null) {
+function extractSectionInvoiceTotals(rawText) {
+  const map = new Map();
+  String(rawText || '')
+    .split(/(?=^###\s+\**Factura detectada\**)/gim)
+    .forEach(section => {
+      const sectionTotals = {};
+      let invoiceNumber = '';
+
+      section
+        .split(/\n+/)
+        .map(stripMarkdown)
+        .filter(Boolean)
+        .forEach(line => {
+          const key = normalizeKey(line);
+          const value = line.replace(/^[^:]+:\s*/, '').trim();
+          const amount = parseLastNumber(line);
+
+          if (key.startsWith('factura ') && value && !key.includes('detectada')) {
+            invoiceNumber = value;
+          }
+          if (amount === null) return;
+          if (key.startsWith('total factura')) sectionTotals.totalAmount = amount;
+          if (key.startsWith('base imponible')) sectionTotals.baseAmount = amount;
+          if (key === 'igic' || key.startsWith('igic ')) sectionTotals.taxAmount = amount;
+        });
+
+      const invoiceKey = normalizeInvoiceNumber(invoiceNumber);
+      if (invoiceKey && sectionTotals.totalAmount) {
+        map.set(invoiceKey, sectionTotals);
+      }
+    });
+
+  return map;
+}
+
+function groupInvoices(rows, taxRate = 7, invoiceTotals = null, invoiceTotalsByNumber = new Map()) {
   const map = new Map();
   rows.forEach(row => {
     const key = `${row.proveedor}__${row.fecha}__${row.factura}`;
@@ -400,12 +442,14 @@ function groupInvoices(rows, taxRate = 7, invoiceTotals = null) {
 
   return invoices.map(invoice => {
     const lineTotal = Number(invoice.totalAmount.toFixed(2));
-    const totalAmount = shouldApplyTotals ? Number(invoiceTotals.totalAmount.toFixed(2)) : lineTotal;
-    const baseAmount = shouldApplyTotals
-      ? Number((invoiceTotals.baseAmount ?? lineTotal).toFixed(2))
+    const sectionTotals = invoiceTotalsByNumber.get(normalizeInvoiceNumber(invoice.invoiceNumber));
+    const totals = sectionTotals || (shouldApplyTotals ? invoiceTotals : null);
+    const totalAmount = totals?.totalAmount ? Number(totals.totalAmount.toFixed(2)) : lineTotal;
+    const baseAmount = totals
+      ? Number((totals.baseAmount ?? lineTotal).toFixed(2))
       : Number((totalAmount / (1 + (taxRate / 100))).toFixed(2));
-    const taxAmount = shouldApplyTotals
-      ? Number((invoiceTotals.taxAmount ?? Math.max(0, totalAmount - baseAmount)).toFixed(2))
+    const taxAmount = totals
+      ? Number((totals.taxAmount ?? Math.max(0, totalAmount - baseAmount)).toFixed(2))
       : Number((totalAmount - baseAmount).toFixed(2));
     const effectiveTaxRate = baseAmount > 0
       ? Number(((taxAmount / baseAmount) * 100).toFixed(2))
@@ -517,15 +561,17 @@ export function parseGeminiInvoiceText(rawText, options = {}) {
     .map((line, index) => rowFromParts(splitLine(line), dictionary, index))
     .filter(Boolean);
   const invoiceTotals = extractInvoiceTotals(cleanText);
+  const invoiceTotalsByNumber = extractSectionInvoiceTotals(cleanText);
+  const invoices = groupInvoices(rows, taxRate, invoiceTotals, invoiceTotalsByNumber);
 
   const result = {
     rows,
-    invoices: groupInvoices(rows, taxRate, invoiceTotals),
+    invoices,
     summaries: summarizeRows(rows),
     totals: {
       rows: rows.length,
-      invoices: new Set(rows.map(row => `${row.proveedor}__${row.fecha}__${row.factura}`)).size,
-      totalAmount: Number(rows.reduce((sum, row) => sum + Number(row.importe || 0), 0).toFixed(2)),
+      invoices: invoices.length,
+      totalAmount: Number(invoices.reduce((sum, invoice) => sum + Number(invoice.totalAmount || 0), 0).toFixed(2)),
       reviewRows: rows.filter(row => row.revision_necesaria).length
     }
   };

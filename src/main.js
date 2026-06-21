@@ -91,6 +91,55 @@ Usa fecha en formato dd/mm/aaaa si aparece.
 Si aparece un total final de factura distinto a la suma de líneas por IGIC u otros ajustes, añade debajo de la tabla una línea de texto: Total factura: X.
 Si un dato no aparece claro, escribe "REVISAR".`;
 
+const GEMINI_FOLDER_INVOICE_PROMPT = `Quiero que analices todas las facturas visibles en esta carpeta, una por una, sin saltarte ninguna.
+
+Objetivo:
+Extraer todos y cada uno de los articulos comprados, con proveedor, fecha, numero de factura, cantidad, precio unitario e importe.
+
+Reglas obligatorias:
+1. Primero lista cuantas facturas/archivos detectas y sus nombres o numeros.
+2. Procesa las facturas una por una.
+3. No resumas articulos.
+4. No agrupes articulos parecidos.
+5. No cambies nombres importantes.
+6. Conserva codigos de producto o variantes, por ejemplo B13, AL26, 62306, 67850.
+7. Si un articulo dice "Smoothie B13 - 20 x 150g", el articulo debe ser "Smoothie B13".
+8. Si un articulo dice "Croissant Masa Madre (40u)", conserva esa descripcion.
+9. Si un articulo dice "Rebanada Pan Payes (18px5u)", conserva esa descripcion.
+10. En facturas de Europastry, la columna "Precio" puede no ser el precio unitario real de compra. Usa "Importe" como importe de linea y calcula "Precio Unit." como Importe / Cantidad.
+11. Si una factura tiene total final, base imponible o IGIC, indicalo en los campos de la seccion de esa factura.
+12. Si tienes dudas con una linea, no la inventes: escribe REVISAR.
+13. Si la respuesta es demasiado larga, divide automaticamente la salida en varias partes consecutivas: PARTE 1, PARTE 2, PARTE 3, etc.
+14. No me preguntes si quiero continuar. Continua directamente con la siguiente parte siempre que la plataforma te lo permita.
+15. No repitas facturas ya procesadas entre partes.
+16. Si por limite tecnico no puedes continuar, termina exactamente con: CONTINUAR DESDE: [nombre de la ultima factura pendiente].
+
+Formato obligatorio para cada factura:
+
+### Factura detectada
+
+**Proveedor:** 
+**Fecha:** 
+**Factura:** 
+**Archivo:** 
+**Total factura:** 
+**Base imponible:** 
+**IGIC:** 
+
+| Proveedor | Fecha | Factura | Articulo | Cant. | Precio Unit. | Importe |
+| :-------- | :---- | :------ | :------- | :---- | :----------- | :------ |
+| ... | ... | ... | ... | ... | ... | ... |
+
+Despues de procesar todas las facturas, anade esta seccion final:
+
+### Control final
+Facturas detectadas:
+Facturas procesadas:
+Facturas con dudas:
+Facturas posiblemente duplicadas:
+Total general:
+Observaciones:`;
+
 function escapeHtml(value = '') {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -977,14 +1026,14 @@ function renderAjustesView(state) {
           <div class="gemini-prompt-panel">
             <div>
               <h3>Prompt para Gemini</h3>
-              <p>Usa este texto cuando abras una factura individual en Drive. Es mejor procesarlas una a una para evitar mezclas.</p>
+              <p>Usa este texto para que Gemini analice una carpeta completa y devuelva las facturas por partes, sin pedir permiso para continuar.</p>
             </div>
-            <textarea class="editor-form-input" id="gemini-prompt-text" rows="7" readonly>${escapeHtml(GEMINI_SINGLE_INVOICE_PROMPT)}</textarea>
+            <textarea class="editor-form-input" id="gemini-prompt-text" rows="12" readonly>${escapeHtml(GEMINI_FOLDER_INVOICE_PROMPT)}</textarea>
             <button class="btn btn-secondary" id="gemini-copy-prompt-btn" type="button">Copiar prompt</button>
           </div>
           <div class="editor-form-group">
-            <label class="editor-form-label">Respuesta de Gemini para una factura</label>
-            <textarea class="editor-form-input" id="gemini-invoice-raw-text" rows="10" placeholder="Proveedor | Fecha | Factura | Articulo | Cant. | Precio Unit. | Importe">${escapeHtml(geminiInvoiceRawText)}</textarea>
+            <label class="editor-form-label">Respuesta de Gemini</label>
+            <textarea class="editor-form-input" id="gemini-invoice-raw-text" rows="12" placeholder="Pega aqui una o varias partes de la respuesta de Gemini">${escapeHtml(geminiInvoiceRawText)}</textarea>
           </div>
           <div class="gemini-import-actions">
             <button class="btn btn-secondary" id="gemini-clear-btn" type="button">Limpiar</button>
@@ -1026,7 +1075,7 @@ function renderAjustesView(state) {
               Importar ${importableInvoices.length} factura${importableInvoices.length === 1 ? '' : 's'} nueva${importableInvoices.length === 1 ? '' : 's'}
             </button>
           ` : `
-            <p class="gemini-muted">Pega aqui la tabla de una sola factura y pulsa analizar. Al importar, esta pantalla quedara lista para la siguiente factura.</p>
+            <p class="gemini-muted">Pega aqui una respuesta completa o varias partes de Gemini. La app separara las facturas por numero, aplicara los totales de cada seccion y marcara duplicados.</p>
           `}
         </div>
       </div>
@@ -5359,7 +5408,7 @@ function setupEventListeners(container) {
   if (geminiCopyPromptBtn) {
     geminiCopyPromptBtn.addEventListener('click', async () => {
       try {
-        await navigator.clipboard.writeText(GEMINI_SINGLE_INVOICE_PROMPT);
+        await navigator.clipboard.writeText(GEMINI_FOLDER_INVOICE_PROMPT);
         showToast('Prompt copiado.', 'success');
       } catch (error) {
         const promptBox = container.querySelector('#gemini-prompt-text');
