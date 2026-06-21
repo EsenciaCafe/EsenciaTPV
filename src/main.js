@@ -76,6 +76,17 @@ let dbStatus = 'loading'; // 'loading' | 'connected' | 'fallback' | 'error'
 let selectedReportsTab = 'horas'; // 'horas' | 'diaria' | 'semanal' | 'mensual' | 'anual'
 let geminiInvoiceRawText = '';
 let geminiInvoicePreview = null;
+const GEMINI_SINGLE_INVOICE_PROMPT = `Analiza únicamente esta factura.
+
+Devuélveme solo una tabla Markdown con estas columnas exactas:
+
+Proveedor | Fecha | Factura | Artículo | Cant. | Precio Unit. | Importe
+
+No añadas resumen, explicación ni texto adicional.
+Usa una fila por cada artículo.
+Mantén el número de factura exacto.
+Usa fecha en formato dd/mm/aaaa si aparece.
+Si un dato no aparece claro, escribe "REVISAR".`;
 
 function escapeHtml(value = '') {
   return String(value)
@@ -982,10 +993,18 @@ function renderAjustesView(state) {
             ${backArrow} Compras
           </button>
         </div>
-        <h2 class="settings-nav-title">Importar resumen de Gemini</h2>
+        <h2 class="settings-nav-title">Importar factura desde Gemini</h2>
         <div class="settings-editor-container gemini-import-panel">
+          <div class="gemini-prompt-panel">
+            <div>
+              <h3>Prompt para Gemini</h3>
+              <p>Usa este texto cuando abras una factura individual en Drive. Es mejor procesarlas una a una para evitar mezclas.</p>
+            </div>
+            <textarea class="editor-form-input" id="gemini-prompt-text" rows="7" readonly>${escapeHtml(GEMINI_SINGLE_INVOICE_PROMPT)}</textarea>
+            <button class="btn btn-secondary" id="gemini-copy-prompt-btn" type="button">Copiar prompt</button>
+          </div>
           <div class="editor-form-group">
-            <label class="editor-form-label">Texto tabular de Gemini</label>
+            <label class="editor-form-label">Respuesta de Gemini para una factura</label>
             <textarea class="editor-form-input" id="gemini-invoice-raw-text" rows="10" placeholder="Proveedor | Fecha | Factura | Articulo | Cant. | Precio Unit. | Importe">${escapeHtml(geminiInvoiceRawText)}</textarea>
           </div>
           <div class="gemini-import-actions">
@@ -1028,7 +1047,7 @@ function renderAjustesView(state) {
               Importar ${importableInvoices.length} factura${importableInvoices.length === 1 ? '' : 's'} nueva${importableInvoices.length === 1 ? '' : 's'}
             </button>
           ` : `
-            <p class="gemini-muted">Pega aqui el resumen de Gemini y pulsa analizar. Antes de guardar veras una vista previa completa.</p>
+            <p class="gemini-muted">Pega aqui la tabla de una sola factura y pulsa analizar. Al importar, esta pantalla quedara lista para la siguiente factura.</p>
           `}
         </div>
       </div>
@@ -5357,6 +5376,20 @@ function setupEventListeners(container) {
     });
   }
 
+  const geminiCopyPromptBtn = container.querySelector('#gemini-copy-prompt-btn');
+  if (geminiCopyPromptBtn) {
+    geminiCopyPromptBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(GEMINI_SINGLE_INVOICE_PROMPT);
+        showToast('Prompt copiado.', 'success');
+      } catch (error) {
+        const promptBox = container.querySelector('#gemini-prompt-text');
+        promptBox?.select();
+        showToast('Selecciona y copia el prompt manualmente.', 'warning');
+      }
+    });
+  }
+
   const geminiClearBtn = container.querySelector('#gemini-clear-btn');
   if (geminiClearBtn) {
     geminiClearBtn.addEventListener('click', () => {
@@ -5382,8 +5415,8 @@ function setupEventListeners(container) {
         if (month) store.state.selectedReportMonth = month;
         geminiInvoicePreview = null;
         geminiInvoiceRawText = '';
-        store.navigateSettings(['compras']);
-        showToast(`${importedCount} factura${importedCount === 1 ? '' : 's'} importada${importedCount === 1 ? '' : 's'}${skippedCount ? `, ${skippedCount} duplicada${skippedCount === 1 ? '' : 's'} omitida${skippedCount === 1 ? '' : 's'}` : ''}.`, 'success');
+        render(store.state);
+        showToast(`${importedCount} factura${importedCount === 1 ? '' : 's'} importada${importedCount === 1 ? '' : 's'}${skippedCount ? `, ${skippedCount} duplicada${skippedCount === 1 ? '' : 's'} omitida${skippedCount === 1 ? '' : 's'}` : ''}. Lista para la siguiente.`, 'success');
       } else {
         showToast('No tienes permiso para importar facturas.', 'error');
       }

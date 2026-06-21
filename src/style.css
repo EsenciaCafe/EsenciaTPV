@@ -614,6 +614,35 @@ body {
   grid-template-columns: 1fr 1fr;
 }
 
+.gemini-prompt-panel {
+  background: var(--bg-item);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.gemini-prompt-panel h3 {
+  color: var(--text-main);
+  font-size: 0.95rem;
+  margin: 0 0 4px;
+}
+
+.gemini-prompt-panel p {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.gemini-prompt-panel textarea {
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
 .gemini-preview-summary {
   display: grid;
   gap: 8px;
