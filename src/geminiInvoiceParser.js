@@ -355,7 +355,7 @@ function groupInvoices(rows, taxRate = 7) {
       taxRate,
       taxAmount,
       deductible: true,
-      status: invoice.lines.some(line => line.revision_necesaria) ? 'pending_review' : 'ready',
+      status: 'pending_review',
       source: 'drive',
       notes: `Importado desde resumen de Gemini. Lineas: ${invoice.lines.length}.`
     };
