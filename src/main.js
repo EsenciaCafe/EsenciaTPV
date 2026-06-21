@@ -85,8 +85,10 @@ Proveedor | Fecha | Factura | Artículo | Cant. | Precio Unit. | Importe
 No añadas resumen, explicación ni texto adicional.
 Usa una fila por cada artículo.
 Conserva los códigos de producto que identifiquen variantes, por ejemplo "B13", "AL26" o combinaciones letra+número. Si la factura dice "Smoothie B13 - 20 x 150g", el artículo debe ser "Smoothie B13", no solo "Smoothie".
+En facturas de Europastry, la columna "Precio" puede no ser el precio unitario real de compra. Usa la columna "Importe" como importe de la línea y calcula "Precio Unit." como Importe / Cantidad. Conserva descripciones completas como "Croissant Masa Madre (40u)" o "Rebanada Pan Payes (18px5u)".
 Mantén el número de factura exacto.
 Usa fecha en formato dd/mm/aaaa si aparece.
+Si aparece un total final de factura distinto a la suma de líneas por IGIC u otros ajustes, añade debajo de la tabla una línea de texto: Total factura: X.
 Si un dato no aparece claro, escribe "REVISAR".`;
 
 function escapeHtml(value = '') {

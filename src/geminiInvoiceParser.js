@@ -163,6 +163,12 @@ function parseNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parseLastNumber(value) {
+  const matches = normalizeSpaces(value).match(/\d+(?:[.,]\d+)?/g);
+  if (!matches?.length) return null;
+  return parseNumber(matches[matches.length - 1]);
+}
+
 function parseQuantity(value) {
   const clean = normalizeSpaces(value).replace(',', '.');
   const match = clean.match(/(-?\d+(?:\.\d+)?)\s*([a-zA-ZáéíóúÁÉÍÓÚñÑ./]*)?/);
@@ -229,8 +235,26 @@ function extractSmoothieCode(article) {
   return match?.[1] || '';
 }
 
+function titleCaseArticle(article) {
+  return normalizeSpaces(article)
+    .toLowerCase()
+    .replace(/\b\p{L}/gu, char => char.toUpperCase());
+}
+
+function preserveDescriptiveBakeryName(article) {
+  const clean = normalizeSpaces(article);
+  const key = normalizeKey(clean);
+  const isSpecificCroissant = key.includes('croissant') && key !== 'croissant';
+  const isSpecificPayes = key.includes('payes') || key.includes('rebanada pan');
+  if (!isSpecificCroissant && !isSpecificPayes) return '';
+  return titleCaseArticle(clean);
+}
+
 function normalizeArticleName(article, dictionary) {
   const key = normalizeKey(article);
+  const bakeryName = preserveDescriptiveBakeryName(article);
+  if (bakeryName) return bakeryName;
+
   const match = Object.entries(dictionary)
     .map(([needle, label]) => ({ needle, label, normalizedNeedle: normalizeKey(needle) }))
     .sort((a, b) => b.normalizedNeedle.length - a.normalizedNeedle.length)
@@ -242,9 +266,7 @@ function normalizeArticleName(article, dictionary) {
     }
     return match.label;
   }
-  return normalizeSpaces(article)
-    .toLowerCase()
-    .replace(/\b\p{L}/gu, char => char.toUpperCase());
+  return titleCaseArticle(article);
 }
 
 function detectCategory(article) {
@@ -339,7 +361,24 @@ function summarizeRows(rows) {
   };
 }
 
-function groupInvoices(rows, taxRate = 7) {
+function extractInvoiceTotals(rawText) {
+  const result = {};
+  String(rawText || '')
+    .split(/\n+/)
+    .map(normalizeSpaces)
+    .filter(Boolean)
+    .forEach(line => {
+      const key = normalizeKey(line);
+      const amount = parseLastNumber(line);
+      if (amount === null) return;
+      if (key.includes('total factura') || key === 'total') result.totalAmount = amount;
+      if (key.includes('base imponible')) result.baseAmount = amount;
+      if (key.includes('igic') && !key.includes('base')) result.taxAmount = amount;
+    });
+  return result;
+}
+
+function groupInvoices(rows, taxRate = 7, invoiceTotals = null) {
   const map = new Map();
   rows.forEach(row => {
     const key = `${row.proveedor}__${row.fecha}__${row.factura}`;
@@ -356,15 +395,26 @@ function groupInvoices(rows, taxRate = 7) {
     map.set(key, current);
   });
 
-  return Array.from(map.values()).map(invoice => {
-    const totalAmount = Number(invoice.totalAmount.toFixed(2));
-    const baseAmount = Number((totalAmount / (1 + (taxRate / 100))).toFixed(2));
-    const taxAmount = Number((totalAmount - baseAmount).toFixed(2));
+  const invoices = Array.from(map.values());
+  const shouldApplyTotals = invoices.length === 1 && invoiceTotals?.totalAmount;
+
+  return invoices.map(invoice => {
+    const lineTotal = Number(invoice.totalAmount.toFixed(2));
+    const totalAmount = shouldApplyTotals ? Number(invoiceTotals.totalAmount.toFixed(2)) : lineTotal;
+    const baseAmount = shouldApplyTotals
+      ? Number((invoiceTotals.baseAmount ?? lineTotal).toFixed(2))
+      : Number((totalAmount / (1 + (taxRate / 100))).toFixed(2));
+    const taxAmount = shouldApplyTotals
+      ? Number((invoiceTotals.taxAmount ?? Math.max(0, totalAmount - baseAmount)).toFixed(2))
+      : Number((totalAmount - baseAmount).toFixed(2));
+    const effectiveTaxRate = baseAmount > 0
+      ? Number(((taxAmount / baseAmount) * 100).toFixed(2))
+      : taxRate;
     return {
       ...invoice,
       totalAmount,
       baseAmount,
-      taxRate,
+      taxRate: effectiveTaxRate,
       taxAmount,
       deductible: true,
       status: 'pending_review',
@@ -466,10 +516,11 @@ export function parseGeminiInvoiceText(rawText, options = {}) {
   const rows = lines
     .map((line, index) => rowFromParts(splitLine(line), dictionary, index))
     .filter(Boolean);
+  const invoiceTotals = extractInvoiceTotals(cleanText);
 
   const result = {
     rows,
-    invoices: groupInvoices(rows, taxRate),
+    invoices: groupInvoices(rows, taxRate, invoiceTotals),
     summaries: summarizeRows(rows),
     totals: {
       rows: rows.length,
