@@ -84,6 +84,7 @@ Proveedor | Fecha | Factura | Artículo | Cant. | Precio Unit. | Importe
 
 No añadas resumen, explicación ni texto adicional.
 Usa una fila por cada artículo.
+Conserva los códigos de producto que identifiquen variantes, por ejemplo "B13", "AL26" o combinaciones letra+número. Si la factura dice "Smoothie B13 - 20 x 150g", el artículo debe ser "Smoothie B13", no solo "Smoothie".
 Mantén el número de factura exacto.
 Usa fecha en formato dd/mm/aaaa si aparece.
 Si un dato no aparece claro, escribe "REVISAR".`;

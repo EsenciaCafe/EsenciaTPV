@@ -223,13 +223,25 @@ function normalizeDate(value) {
   return clean;
 }
 
+function extractSmoothieCode(article) {
+  const clean = normalizeSpaces(article).toUpperCase();
+  const match = clean.match(/\b([A-Z]\d{1,3})\b/);
+  return match?.[1] || '';
+}
+
 function normalizeArticleName(article, dictionary) {
   const key = normalizeKey(article);
   const match = Object.entries(dictionary)
     .map(([needle, label]) => ({ needle, label, normalizedNeedle: normalizeKey(needle) }))
     .sort((a, b) => b.normalizedNeedle.length - a.normalizedNeedle.length)
     .find(item => key.includes(item.normalizedNeedle));
-  if (match) return match.label;
+  if (match) {
+    if (normalizeKey(match.label) === 'smoothie') {
+      const code = extractSmoothieCode(article);
+      return code ? `Smoothie ${code}` : match.label;
+    }
+    return match.label;
+  }
   return normalizeSpaces(article)
     .toLowerCase()
     .replace(/\b\p{L}/gu, char => char.toUpperCase());
