@@ -604,6 +604,110 @@ body {
   font-weight: 600;
 }
 
+.gemini-import-panel {
+  gap: 14px;
+}
+
+.gemini-import-actions {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.gemini-preview-summary {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.gemini-preview-summary div {
+  background: var(--bg-item);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  text-align: center;
+}
+
+.gemini-preview-summary span {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.gemini-preview-summary strong {
+  color: var(--text-main);
+  font-size: 1rem;
+}
+
+.gemini-preview-summary .needs-review {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.gemini-summary-panel,
+.gemini-lines-panel {
+  background: var(--bg-item);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.gemini-summary-panel h3,
+.gemini-lines-panel h3 {
+  color: var(--text-main);
+  font-size: 0.95rem;
+}
+
+.gemini-summary-row,
+.gemini-preview-row {
+  align-items: center;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding-top: 10px;
+}
+
+.gemini-summary-row:first-of-type,
+.gemini-preview-row:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.gemini-preview-row > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gemini-preview-row > div:last-child {
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.gemini-preview-row span,
+.gemini-preview-row em,
+.gemini-muted {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.gemini-preview-row em {
+  color: #fbbf24;
+  font-style: normal;
+}
+
+.gemini-preview-row.needs-review {
+  border-left: 3px solid #f59e0b;
+  padding-left: 8px;
+}
+
 .supplier-lines-panel {
   display: grid;
   gap: 10px;
@@ -2553,6 +2657,118 @@ body.light-theme .btn-quick-pay {
 .payment-method-card:hover {
   border-color: var(--text-muted);
   background-color: rgba(255, 255, 255, 0.02) !important;
+}
+
+.payment-loyalty-box {
+  background: var(--bg-item);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  margin-bottom: 14px;
+  padding: 12px;
+}
+
+.payment-loyalty-header {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  font-size: 0.72rem;
+  font-weight: 800;
+  justify-content: space-between;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.payment-loyalty-link {
+  background: transparent;
+  border: 0;
+  color: var(--secondary);
+  cursor: pointer;
+  font-family: var(--font-family);
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 0;
+}
+
+.payment-loyalty-search {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr auto;
+}
+
+.payment-loyalty-search .search-input {
+  height: 42px;
+  margin: 0;
+}
+
+.payment-loyalty-search .btn {
+  height: 42px;
+  padding: 0 14px;
+}
+
+.payment-loyalty-status {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin: 8px 0 0;
+}
+
+.payment-loyalty-status--awarded {
+  color: #fbbf24;
+  font-weight: 800;
+}
+
+.payment-loyalty-customer {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.payment-loyalty-customer strong {
+  color: var(--text-main);
+  display: block;
+  font-size: 0.98rem;
+  line-height: 1.2;
+}
+
+.payment-loyalty-customer small {
+  color: var(--text-muted);
+  display: block;
+  font-size: 0.78rem;
+  margin-top: 3px;
+}
+
+.payment-loyalty-points {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.26);
+  border-radius: var(--border-radius-sm);
+  color: var(--secondary);
+  flex-shrink: 0;
+  font-size: 0.92rem;
+  font-weight: 900;
+  padding: 8px 10px;
+}
+
+.payment-loyalty-manual-btn {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.24);
+  border-radius: var(--border-radius-md);
+  color: #fbbf24;
+  cursor: pointer;
+  font-family: var(--font-family);
+  font-size: 0.82rem;
+  font-weight: 800;
+  height: 40px;
+  margin-top: 10px;
+  width: 100%;
+}
+
+.payment-loyalty-manual-btn:disabled {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--border-color);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 
 .cash-quick-btn {

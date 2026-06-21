@@ -17,6 +17,7 @@ import {
   loadSupplierInvoices,
   loadSupplierInvoiceLines,
   upsertSupplierInvoice,
+  replaceSupplierInvoiceLines,
   deleteSupplierInvoice as dbDeleteSupplierInvoice,
   loadSupplierSenderRules,
   upsertSupplierSenderRule
@@ -136,13 +137,19 @@ class Store {
             name: savedTable.name || defaultTable.name,
             type: savedTable.type || defaultTable.type || 'table',
             status,
-            items
+            items,
+            ...(items.length > 0 && savedTable.loyaltyAwarded ? { loyaltyAwarded: savedTable.loyaltyAwarded } : {})
           };
         });
       }
 
       if (savedState.directSaleTicket && Array.isArray(savedState.directSaleTicket.items)) {
-        this.state.directSaleTicket = { items: savedState.directSaleTicket.items };
+        this.state.directSaleTicket = {
+          items: savedState.directSaleTicket.items,
+          ...(savedState.directSaleTicket.items.length > 0 && savedState.directSaleTicket.loyaltyAwarded
+            ? { loyaltyAwarded: savedState.directSaleTicket.loyaltyAwarded }
+            : {})
+        };
       }
 
       if (Array.isArray(savedState.transactions)) {
@@ -285,6 +292,11 @@ class Store {
     }
     this.setStaffSession(profile);
     return profile;
+  }
+
+  async verifyAdminPin(pinCode) {
+    const profile = await findStaffByPin(pinCode);
+    return profile?.role === 'admin' ? profile : null;
   }
 
   async signOut() {
@@ -487,6 +499,36 @@ class Store {
   async saveSupplierInvoice(invoiceData) {
     if (!this.canAccessSettings()) return false;
     await upsertSupplierInvoice(invoiceData);
+    await this.loadSupplierInvoices();
+    await this.loadSupplierInvoiceLines();
+    this.notify();
+    return true;
+  }
+
+  async importGeminiInvoices(parsedInvoices) {
+    if (!this.canAccessSettings()) return false;
+
+    for (const invoice of parsedInvoices) {
+      const invoiceId = invoice.id || `gemini-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      await upsertSupplierInvoice({
+        id: invoiceId,
+        supplierName: invoice.supplierName,
+        invoiceNumber: invoice.invoiceNumber,
+        invoiceDate: invoice.invoiceDate,
+        category: invoice.category,
+        baseAmount: invoice.baseAmount,
+        taxRate: invoice.taxRate,
+        taxAmount: invoice.taxAmount,
+        totalAmount: invoice.totalAmount,
+        deductible: invoice.deductible,
+        status: invoice.status || 'pending_review',
+        source: 'drive',
+        sourceId: `gemini-${invoiceId}`,
+        notes: invoice.notes || 'Importado desde resumen de Gemini.'
+      });
+      await replaceSupplierInvoiceLines(invoiceId, invoice.lines || []);
+    }
+
     await this.loadSupplierInvoices();
     await this.loadSupplierInvoiceLines();
     this.notify();
@@ -954,6 +996,38 @@ class Store {
     }
   }
 
+  getActiveLoyaltyAward() {
+    if (this.state.selectedTableId !== null) {
+      const table = this.state.tables.find(t => t.id === this.state.selectedTableId);
+      return table?.loyaltyAwarded || null;
+    }
+    return this.state.directSaleTicket.loyaltyAwarded || null;
+  }
+
+  markActiveTicketLoyaltyAwarded(award) {
+    const loyaltyAwarded = {
+      ...award,
+      awardedAt: award.awardedAt || new Date().toISOString()
+    };
+
+    if (this.state.selectedTableId !== null) {
+      const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
+      if (tableIndex === -1) return false;
+      this.state.tables[tableIndex] = {
+        ...this.state.tables[tableIndex],
+        loyaltyAwarded
+      };
+    } else {
+      this.state.directSaleTicket = {
+        ...this.state.directSaleTicket,
+        loyaltyAwarded
+      };
+    }
+
+    this.notify();
+    return true;
+  }
+
   addItemToActiveTicket(itemId, selectedOptions = []) {
     const menuItem = this.state.menuItems.find(item => item.id === itemId);
     if (!menuItem) return;
@@ -1042,7 +1116,12 @@ class Store {
       let newStatus = table.status;
       if (newItems.length === 0) newStatus = 'available';
 
-      this.state.tables[tableIndex] = { ...table, items: newItems, status: newStatus };
+      this.state.tables[tableIndex] = {
+        ...table,
+        items: newItems,
+        status: newStatus,
+        ...(newItems.length > 0 && table.loyaltyAwarded ? { loyaltyAwarded: table.loyaltyAwarded } : { loyaltyAwarded: undefined })
+      };
     } else {
       const newItems = [...this.state.directSaleTicket.items];
       const existingIdx = newItems.findIndex(i => i.ticketItemId === ticketItemId);
@@ -1054,7 +1133,13 @@ class Store {
       } else {
         newItems[existingIdx] = { ...newItems[existingIdx], qty: newQty };
       }
-      this.state.directSaleTicket.items = newItems;
+      this.state.directSaleTicket = {
+        ...this.state.directSaleTicket,
+        items: newItems,
+        ...(newItems.length > 0 && this.state.directSaleTicket.loyaltyAwarded
+          ? { loyaltyAwarded: this.state.directSaleTicket.loyaltyAwarded }
+          : { loyaltyAwarded: undefined })
+      };
     }
     this.notify();
   }
@@ -1218,6 +1303,7 @@ class Store {
 
     const tableItems = [...table.items];
     const sourceItems = this.state.directSaleTicket.items;
+    const sourceLoyaltyAward = this.state.directSaleTicket.loyaltyAwarded || null;
 
     sourceItems.forEach(sourceItem => {
       const sortedOptions = [...(sourceItem.selectedOptions || [])].sort((a, b) => a.id.localeCompare(b.id));
@@ -1240,10 +1326,11 @@ class Store {
     this.state.tables[tableIndex] = { 
       ...table, 
       items: tableItems, 
-      status: status 
+      status: status,
+      ...(table.loyaltyAwarded || sourceLoyaltyAward ? { loyaltyAwarded: table.loyaltyAwarded || sourceLoyaltyAward } : {})
     };
 
-    this.state.directSaleTicket.items = [];
+    this.state.directSaleTicket = { items: [] };
     this.state.selectedTableId = null;
     this.state.activeTab = 'inicio';
     this.state.gridPath = ['root'];
@@ -1259,15 +1346,18 @@ class Store {
     
     // Get source items (either from the current selected table or from the direct sale ticket)
     let sourceItems = [];
+    let sourceLoyaltyAward = null;
     const previousTableId = this.state.selectedTableId;
     
     if (previousTableId !== null) {
       const prevTable = this.state.tables.find(t => t.id === previousTableId);
       if (prevTable) {
         sourceItems = [...prevTable.items];
+        sourceLoyaltyAward = prevTable.loyaltyAwarded || null;
       }
     } else {
       sourceItems = [...this.state.directSaleTicket.items];
+      sourceLoyaltyAward = this.state.directSaleTicket.loyaltyAwarded || null;
     }
 
     // Merge source items into target table items
@@ -1293,7 +1383,8 @@ class Store {
     this.state.tables[tableIndex] = { 
       ...table, 
       items: tableItems, 
-      status: status 
+      status: status,
+      ...(table.loyaltyAwarded || sourceLoyaltyAward ? { loyaltyAwarded: table.loyaltyAwarded || sourceLoyaltyAward } : {})
     };
 
     // Clear source items (if target is different)
@@ -1304,12 +1395,13 @@ class Store {
           this.state.tables[prevTableIndex] = {
             ...this.state.tables[prevTableIndex],
             items: [],
-            status: 'available'
+            status: 'available',
+            loyaltyAwarded: undefined
           };
         }
       }
     } else {
-      this.state.directSaleTicket.items = [];
+      this.state.directSaleTicket = { items: [] };
     }
 
     // Set selected table
@@ -1319,7 +1411,7 @@ class Store {
     this.notify();
   }
 
-  payActiveTicket(paymentMethod = 'Tarjeta') {
+  payActiveTicket(paymentMethod = 'Tarjeta', options = {}) {
     const items = this.getActiveItems();
     if (items.length === 0) return;
 
@@ -1352,7 +1444,8 @@ class Store {
       items: transactionItems,
       createdAt: dateNow.toISOString(),
       receiptToken: this.createReceiptToken(),
-      legalData: { ...this.state.legal }
+      legalData: { ...this.state.legal },
+      ...(options.loyaltyCustomer ? { loyaltyCustomer: { ...options.loyaltyCustomer } } : {})
     };
 
     this.state.transactions.unshift(transaction);
@@ -1361,25 +1454,36 @@ class Store {
     if (this.state.selectedTableId !== null) {
       const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
       if (tableIndex > -1) {
-        this.state.tables[tableIndex] = { ...this.state.tables[tableIndex], status: 'available', items: [] };
+        this.state.tables[tableIndex] = {
+          ...this.state.tables[tableIndex],
+          status: 'available',
+          items: [],
+          loyaltyAwarded: undefined
+        };
       }
       this.state.selectedTableId = null;
     } else {
-      this.state.directSaleTicket.items = [];
+      this.state.directSaleTicket = { items: [] };
     }
     this.state.activeTab = 'inicio';
     this.state.gridPath = ['root'];
     this.notify();
+    return transaction;
   }
 
   clearActiveTicket() {
     if (this.state.selectedTableId !== null) {
       const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
       if (tableIndex > -1) {
-        this.state.tables[tableIndex] = { ...this.state.tables[tableIndex], status: 'available', items: [] };
+        this.state.tables[tableIndex] = {
+          ...this.state.tables[tableIndex],
+          status: 'available',
+          items: [],
+          loyaltyAwarded: undefined
+        };
       }
     } else {
-      this.state.directSaleTicket.items = [];
+      this.state.directSaleTicket = { items: [] };
     }
     this.notify();
   }

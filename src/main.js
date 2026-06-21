@@ -1,5 +1,14 @@
 import { store } from './store.js';
 import QRCode from 'qrcode';
+import { parseGeminiInvoiceText } from './geminiInvoiceParser.js';
+import {
+  addLoyaltyPurchase,
+  addManualLoyaltyPointsWithoutPurchase,
+  calculateLoyaltyPoints,
+  findLoyaltyCustomerByRfid,
+  isLoyaltyConfigured,
+  normalizeRfidUid
+} from './loyalty.js';
 
 // SVG Icons
 const ICONS = {
@@ -65,6 +74,17 @@ let productSearchText = '';
 let isDrawerOpen = false;
 let dbStatus = 'loading'; // 'loading' | 'connected' | 'fallback' | 'error'
 let selectedReportsTab = 'horas'; // 'horas' | 'diaria' | 'semanal' | 'mensual' | 'anual'
+let geminiInvoiceRawText = '';
+let geminiInvoicePreview = null;
+
+function escapeHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 // ─────────────────────────────────────────
 // Toast notification system
@@ -890,6 +910,9 @@ function renderAjustesView(state) {
           <button class="btn btn-primary" id="settings-create-invoice-btn" style="height:36px; padding:0 12px; font-size:0.85rem; background-color:var(--secondary);">
             Nueva
           </button>
+          <button class="btn btn-secondary" id="settings-import-gemini-btn" style="height:36px; padding:0 12px; font-size:0.85rem;">
+            Importar Gemini
+          </button>
         </div>
         <h2 class="settings-nav-title">Compras y Facturas</h2>
         <div class="accounting-month-bar">
@@ -913,6 +936,88 @@ function renderAjustesView(state) {
           <h3>Remitentes de Gmail</h3>
           <p>Cuando la automatizacion detecte facturas desde el correo, aqui podras ignorar remitentes que no sean proveedores de Esencia.</p>
           ${senderRows || '<p>No hay remitentes detectados todavia.</p>'}
+        </div>
+      </div>
+    `;
+  }
+
+  if (path.length >= 2 && path[0] === 'compras' && path[1] === 'importar-gemini') {
+    const preview = geminiInvoicePreview;
+    const rows = preview?.rows || [];
+    const invoices = preview?.invoices || [];
+    const providerRows = (preview?.summaries?.gasto_por_proveedor || []).map(item => `
+      <div class="gemini-summary-row">
+        <span>${escapeHtml(item.proveedor)}</span>
+        <strong>${Number(item.total || 0).toFixed(2)}€</strong>
+      </div>
+    `).join('');
+    const lineRows = rows.slice(0, 80).map(row => `
+      <div class="gemini-preview-row ${row.revision_necesaria ? 'needs-review' : ''}">
+        <div>
+          <strong>${escapeHtml(row.articulo_normalizado)}</strong>
+          <span>${escapeHtml(row.proveedor)} · ${escapeHtml(row.fecha)} · ${escapeHtml(row.factura)}</span>
+          ${row.revision_necesaria ? `<em>${escapeHtml(row.motivo_revision || 'Revisar linea')}</em>` : ''}
+        </div>
+        <div>
+          <strong>${Number(row.importe || 0).toFixed(2)}€</strong>
+          <span>${row.cantidad ?? '-'} ${escapeHtml(row.unidad || '')} · ${row.precio_unitario !== null ? Number(row.precio_unitario).toFixed(4) : '-'}€/${escapeHtml(row.unidad_precio || 'ud')}</span>
+        </div>
+      </div>
+    `).join('');
+
+    return `
+      <div class="view-container">
+        <div class="settings-nav-header">
+          <button class="settings-back-arrow-btn" id="settings-back-btn">
+            ${backArrow} Compras
+          </button>
+        </div>
+        <h2 class="settings-nav-title">Importar resumen de Gemini</h2>
+        <div class="settings-editor-container gemini-import-panel">
+          <div class="editor-form-group">
+            <label class="editor-form-label">Texto tabular de Gemini</label>
+            <textarea class="editor-form-input" id="gemini-invoice-raw-text" rows="10" placeholder="Proveedor | Fecha | Factura | Articulo | Cant. | Precio Unit. | Importe">${escapeHtml(geminiInvoiceRawText)}</textarea>
+          </div>
+          <div class="gemini-import-actions">
+            <button class="btn btn-secondary" id="gemini-clear-btn" type="button">Limpiar</button>
+            <button class="btn btn-primary" id="gemini-preview-btn" type="button" style="background:var(--secondary); border-color:var(--secondary);">Analizar texto</button>
+          </div>
+
+          ${preview ? `
+            <div class="gemini-preview-summary">
+              <div><span>Lineas</span><strong>${preview.totals.rows}</strong></div>
+              <div><span>Facturas</span><strong>${preview.totals.invoices}</strong></div>
+              <div><span>Total</span><strong>${preview.totals.totalAmount.toFixed(2)}€</strong></div>
+              <div class="${preview.totals.reviewRows > 0 ? 'needs-review' : ''}"><span>Dudosas</span><strong>${preview.totals.reviewRows}</strong></div>
+            </div>
+
+            <div class="gemini-summary-panel">
+              <h3>Gasto por proveedor</h3>
+              ${providerRows || '<p>No se detectaron proveedores.</p>'}
+            </div>
+
+            <div class="gemini-summary-panel">
+              <h3>Facturas que se guardaran</h3>
+              ${invoices.map(invoice => `
+                <div class="gemini-summary-row">
+                  <span>${escapeHtml(invoice.supplierName)} · ${escapeHtml(invoice.invoiceDate)} · ${escapeHtml(invoice.invoiceNumber || 'Sin numero')}</span>
+                  <strong>${Number(invoice.totalAmount || 0).toFixed(2)}€</strong>
+                </div>
+              `).join('') || '<p>No se detectaron facturas.</p>'}
+            </div>
+
+            <div class="gemini-lines-panel">
+              <h3>Lineas detectadas</h3>
+              ${lineRows || '<p>No hay lineas para revisar.</p>'}
+              ${rows.length > 80 ? `<p class="gemini-muted">Mostrando 80 de ${rows.length} lineas.</p>` : ''}
+            </div>
+
+            <button class="btn btn-primary" id="gemini-import-confirm-btn" type="button" ${invoices.length === 0 ? 'disabled' : ''} style="height:48px; background:var(--secondary); border-color:var(--secondary);">
+              Importar ${invoices.length} factura${invoices.length === 1 ? '' : 's'}
+            </button>
+          ` : `
+            <p class="gemini-muted">Pega aqui el resumen de Gemini y pulsa analizar. Antes de guardar veras una vista previa completa.</p>
+          `}
         </div>
       </div>
     `;
@@ -3011,6 +3116,48 @@ function showConfirm(title, message, onConfirm, onCancel = null, isDanger = fals
 }
 
 // Modal para elegir en qué mesa guardar la comanda
+function showAdminPinModal({ title = 'Confirmar administrador', onConfirm }) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.id = 'admin-pin-modal';
+  modal.style.zIndex = '1200';
+
+  modal.innerHTML = `
+    <div class="modal-dialog" style="max-width: 360px; width: 92%; padding: 22px; text-align: center;">
+      <h3 style="margin:0 0 8px; font-size:1.15rem; font-weight:800; color:var(--text-main);">${title}</h3>
+      <p style="margin:0 0 16px; color:var(--text-muted); font-size:0.86rem; line-height:1.35;">Introduce el PIN de administrador para continuar.</p>
+      <input id="admin-pin-input" class="search-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" placeholder="PIN admin" style="margin:0 0 16px; text-align:center; font-size:1.25rem; font-weight:800; letter-spacing:0.12em;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <button class="btn btn-secondary" id="admin-pin-cancel-btn" style="height:42px; font-weight:700;">Cancelar</button>
+        <button class="btn btn-primary" id="admin-pin-confirm-btn" style="height:42px; font-weight:700; background:var(--secondary); border-color:var(--secondary); color:white;">Aceptar</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  const input = modal.querySelector('#admin-pin-input');
+  const close = () => modal.remove();
+  const confirm = async () => {
+    const pinCode = (input?.value || '').trim();
+    if (!pinCode) return;
+    const adminProfile = await store.verifyAdminPin(pinCode);
+    if (!adminProfile) {
+      showToast('PIN de administrador no valido.', 'error');
+      return;
+    }
+    close();
+    if (onConfirm) onConfirm(adminProfile);
+  };
+
+  modal.querySelector('#admin-pin-cancel-btn').addEventListener('click', close);
+  modal.querySelector('#admin-pin-confirm-btn').addEventListener('click', confirm);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') confirm();
+  });
+  setTimeout(() => input.focus(), 30);
+}
+
 function showTableSelectionModal() {
   const activeItems = store.getActiveItems();
   if (activeItems.length === 0) {
@@ -3218,6 +3365,125 @@ function showPaymentModal(totalAmount) {
   let selectedMethod = 'Tarjeta'; // 'Tarjeta' | 'Efectivo' | 'Dividir'
   let splitType = 'iguales'; // 'iguales' | 'articulos' | 'libre'
   let cashReceived = totalAmount;
+  let loyaltyRfidInput = '';
+  let loyaltyCustomer = null;
+  let loyaltyStatus = isLoyaltyConfigured ? '' : 'Configura fidelidad para activar RFID.';
+  let loyaltyBusy = false;
+
+  const getEstimatedLoyaltyPoints = () => {
+    if (!loyaltyCustomer) return 0;
+    if (store.getActiveLoyaltyAward()) return 0;
+    return calculateLoyaltyPoints(totalAmount, loyaltyCustomer.tier);
+  };
+
+  const identifyLoyaltyCustomer = async () => {
+    const cleanUid = normalizeRfidUid(loyaltyRfidInput);
+    if (!cleanUid) {
+      loyaltyStatus = 'Escanea o introduce un RFID.';
+      renderPaymentContent();
+      return;
+    }
+    if (!isLoyaltyConfigured) {
+      loyaltyStatus = 'Falta conectar la base de fidelidad.';
+      renderPaymentContent();
+      return;
+    }
+
+    loyaltyBusy = true;
+    loyaltyStatus = 'Buscando cliente...';
+    renderPaymentContent();
+
+    try {
+      const customer = await findLoyaltyCustomerByRfid(cleanUid);
+      loyaltyCustomer = customer;
+      loyaltyStatus = customer ? '' : 'Llavero no encontrado.';
+    } catch (error) {
+      console.warn(error);
+      loyaltyCustomer = null;
+      loyaltyStatus = error.message || 'No se pudo buscar el cliente.';
+    } finally {
+      loyaltyBusy = false;
+      renderPaymentContent();
+    }
+  };
+
+  const clearLoyaltyCustomer = () => {
+    loyaltyCustomer = null;
+    loyaltyRfidInput = '';
+    loyaltyStatus = '';
+    renderPaymentContent();
+  };
+
+  const awardManualLoyalty = () => {
+    if (!loyaltyCustomer) {
+      showToast('Identifica primero al cliente.', 'warning');
+      return;
+    }
+    if (store.getActiveLoyaltyAward()) {
+      showToast('Esta comanda ya tiene puntos asignados.', 'warning');
+      return;
+    }
+
+    showAdminPinModal({
+      title: 'Sumar puntos sin cobrar',
+      onConfirm: async () => {
+        try {
+          const result = await addManualLoyaltyPointsWithoutPurchase({
+            customer: loyaltyCustomer,
+            amount: totalAmount
+          });
+          store.markActiveTicketLoyaltyAwarded({
+            mode: 'manual',
+            customerId: result.customerId,
+            customerName: result.customerName,
+            rfidUid: loyaltyCustomer.rfidUid,
+            points: result.points,
+            amount: totalAmount
+          });
+          modal.remove();
+          showToast(`Puntos sumados a ${result.customerName}: +${result.points}. La comanda queda abierta.`, 'success');
+        } catch (error) {
+          console.warn(error);
+          showToast(error.message || 'No se pudieron sumar los puntos.', 'error');
+        }
+      }
+    });
+  };
+
+  const completePaidTicket = async (paymentMethod, successMessage) => {
+    const loyaltySnapshot = loyaltyCustomer ? { ...loyaltyCustomer } : null;
+    const existingLoyaltyAward = store.getActiveLoyaltyAward();
+    const transaction = store.payActiveTicket(paymentMethod, loyaltySnapshot ? {
+      loyaltyCustomer: {
+        id: loyaltySnapshot.id,
+        name: loyaltySnapshot.name,
+        rfidUid: loyaltySnapshot.rfidUid,
+        tier: loyaltySnapshot.tier
+      }
+    } : {});
+
+    if (transaction && loyaltySnapshot && !existingLoyaltyAward) {
+      try {
+        const result = await addLoyaltyPurchase({
+          customer: loyaltySnapshot,
+          amount: transaction.total,
+          transactionId: transaction.id,
+          paymentMethod
+        });
+        showToast(`${successMessage} +${result.points} puntos para ${result.customerName}.`, 'success');
+      } catch (error) {
+        console.warn(error);
+        showToast('Venta cobrada, pero no se pudieron sumar los puntos.', 'warning');
+      }
+    } else if (transaction && existingLoyaltyAward) {
+      showToast(`${successMessage} Puntos ya asignados anteriormente a ${existingLoyaltyAward.customerName}.`, 'success');
+    } else {
+      showToast(successMessage, 'success');
+    }
+
+    isDrawerOpen = false;
+    modal.remove();
+  };
 
   // ── 1. Estado Partes Iguales
   let numParts = 2;
@@ -3295,6 +3561,41 @@ function showPaymentModal(totalAmount) {
     const change = getChangeAmount();
     const isEfectivo = selectedMethod === 'Efectivo';
     const isDividir = selectedMethod === 'Dividir';
+    const existingLoyaltyAward = store.getActiveLoyaltyAward();
+    const loyaltyPoints = getEstimatedLoyaltyPoints();
+    const loyaltyHTML = `
+      <div class="payment-loyalty-box">
+        <div class="payment-loyalty-header">
+          <span>Cliente fidelidad</span>
+          ${loyaltyCustomer ? `<button type="button" class="payment-loyalty-link" id="loyalty-clear-btn">Quitar</button>` : ''}
+        </div>
+        ${loyaltyCustomer ? `
+          <div class="payment-loyalty-customer">
+            <div>
+              <strong>${loyaltyCustomer.name}</strong>
+              <small>${loyaltyCustomer.tier} · ${loyaltyCustomer.points.toLocaleString('es-ES')} pts</small>
+            </div>
+            <div class="payment-loyalty-points">+${loyaltyPoints} pts</div>
+          </div>
+        ` : `
+          <div class="payment-loyalty-search">
+            <input type="text" class="search-input" id="loyalty-rfid-input" value="${loyaltyRfidInput}" placeholder="Escanear RFID" ${!isLoyaltyConfigured || loyaltyBusy ? 'disabled' : ''}>
+            <button type="button" class="btn btn-secondary" id="loyalty-search-btn" ${!isLoyaltyConfigured || loyaltyBusy ? 'disabled' : ''}>
+              ${loyaltyBusy ? '...' : 'Buscar'}
+            </button>
+          </div>
+          ${loyaltyStatus ? `<p class="payment-loyalty-status">${loyaltyStatus}</p>` : ''}
+        `}
+        ${existingLoyaltyAward ? `
+          <p class="payment-loyalty-status payment-loyalty-status--awarded">
+            Puntos ya asignados a ${existingLoyaltyAward.customerName}: +${existingLoyaltyAward.points}.
+          </p>
+        ` : ''}
+        <button type="button" class="payment-loyalty-manual-btn" id="loyalty-manual-award-btn" ${!loyaltyCustomer || existingLoyaltyAward ? 'disabled' : ''}>
+          ${existingLoyaltyAward ? 'Puntos ya asignados en esta comanda' : loyaltyCustomer ? 'Sumar puntos sin cobrar' : 'Identifica cliente para sumar sin cobrar'}
+        </button>
+      </div>
+    `;
 
     let methodSpecificHTML = '';
     if (isEfectivo) {
@@ -3518,7 +3819,9 @@ function showPaymentModal(totalAmount) {
             <div style="font-size: 1.8rem; font-weight: 800; color: var(--secondary);">${totalAmount.toFixed(2)}€</div>
           </div>
 
+          ${loyaltyHTML}
           <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">Método de Pago</div>
+
           <div class="payment-methods-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px;">
             <button class="payment-method-card ${selectedMethod === 'Tarjeta' ? 'active' : ''}" data-method="Tarjeta" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:12px 6px; display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.8rem; transition:all 0.2s ease;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:20px; height:20px; color:${selectedMethod === 'Tarjeta' ? 'var(--secondary)' : 'var(--text-muted)'};"><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></svg>
@@ -3560,21 +3863,43 @@ function showPaymentModal(totalAmount) {
       modal.remove();
     });
 
+    const loyaltyInput = modal.querySelector('#loyalty-rfid-input');
+    if (loyaltyInput) {
+      loyaltyInput.addEventListener('input', (e) => {
+        loyaltyRfidInput = e.target.value;
+      });
+      loyaltyInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') identifyLoyaltyCustomer();
+      });
+      setTimeout(() => {
+        if (!loyaltyCustomer && isLoyaltyConfigured) loyaltyInput.focus();
+      }, 30);
+    }
+
+    const loyaltySearchBtn = modal.querySelector('#loyalty-search-btn');
+    if (loyaltySearchBtn) {
+      loyaltySearchBtn.addEventListener('click', identifyLoyaltyCustomer);
+    }
+
+    const loyaltyClearBtn = modal.querySelector('#loyalty-clear-btn');
+    if (loyaltyClearBtn) {
+      loyaltyClearBtn.addEventListener('click', clearLoyaltyCustomer);
+    }
+
+    const loyaltyManualBtn = modal.querySelector('#loyalty-manual-award-btn');
+    if (loyaltyManualBtn) {
+      loyaltyManualBtn.addEventListener('click', awardManualLoyalty);
+    }
+
     // Botón Confirmar Pago Directo (no dividido)
     const confirmBtn = modal.querySelector('#payment-confirm-btn');
     if (confirmBtn) {
-      confirmBtn.addEventListener('click', () => {
+      confirmBtn.addEventListener('click', async () => {
         if (selectedMethod === 'Efectivo') {
           const change = getChangeAmount();
-          store.payActiveTicket('Efectivo');
-          isDrawerOpen = false;
-          modal.remove();
-          showToast(`Pago en efectivo registrado. Cambio: ${change.toFixed(2)}€.`, 'success');
+          await completePaidTicket('Efectivo', `Pago en efectivo registrado. Cambio: ${change.toFixed(2)} euros.`);
         } else if (selectedMethod === 'Tarjeta') {
-          store.payActiveTicket('Tarjeta');
-          isDrawerOpen = false;
-          modal.remove();
-          showToast('Pago con tarjeta procesado correctamente.', 'success');
+          await completePaidTicket('Tarjeta', 'Pago con tarjeta procesado correctamente.');
         }
       });
     }
@@ -3719,10 +4044,7 @@ function showPaymentModal(totalAmount) {
       const paymentMethodsUsed = [...new Set(parts.map(p => p.status === 'paid-card' ? 'Tarjeta' : 'Efectivo'))];
       const methodText = paymentMethodsUsed.length > 1 ? 'Mixto (Partes)' : (paymentMethodsUsed[0] === 'paid-card' ? 'Tarjeta' : 'Efectivo');
       
-      store.payActiveTicket(methodText);
-      isDrawerOpen = false;
-      modal.remove();
-      showToast('Cobro por partes completado con éxito.', 'success');
+      void completePaidTicket(methodText, 'Cobro por partes completado con exito.');
       return true;
     }
     return false;
@@ -3749,10 +4071,7 @@ function showPaymentModal(totalAmount) {
       const methodsUsed = [...new Set(freePayments.map(p => p.method))];
       const methodText = methodsUsed.length > 1 ? 'Mixto (Libre)' : methodsUsed[0];
       
-      store.payActiveTicket(methodText);
-      isDrawerOpen = false;
-      modal.remove();
-      showToast('Cobro libre completado con éxito.', 'success');
+      void completePaidTicket(methodText, 'Cobro libre completado con exito.');
     } else {
       renderPaymentContent();
     }
@@ -3785,10 +4104,7 @@ function showPaymentModal(totalAmount) {
       const methodsUsed = [...new Set(articlePayments.map(p => p.method))];
       const methodText = methodsUsed.length > 1 ? 'Mixto (Artículos)' : methodsUsed[0];
       
-      store.payActiveTicket(methodText);
-      isDrawerOpen = false;
-      modal.remove();
-      showToast('Cobro por artículos completado con éxito.', 'success');
+      void completePaidTicket(methodText, 'Cobro por articulos completado con exito.');
     } else {
       renderPaymentContent();
     }
@@ -4914,8 +5230,9 @@ function setupEventListeners(container) {
           store.state.tables.forEach(t => {
             t.status = 'available';
             t.items = [];
+            t.loyaltyAwarded = undefined;
           });
-          store.state.directSaleTicket.items = [];
+          store.state.directSaleTicket = { items: [] };
           store.selectTable(null);
           store.navigateSettings([]); // reset settings view too
           showToast('TPV Restablecido.', 'success');
@@ -4997,6 +5314,64 @@ function setupEventListeners(container) {
   if (createInvoiceBtn) {
     createInvoiceBtn.addEventListener('click', () => {
       store.navigateSettings(['compras', 'nueva']);
+    });
+  }
+
+  const importGeminiBtn = container.querySelector('#settings-import-gemini-btn');
+  if (importGeminiBtn) {
+    importGeminiBtn.addEventListener('click', () => {
+      store.navigateSettings(['compras', 'importar-gemini']);
+    });
+  }
+
+  const geminiPreviewBtn = container.querySelector('#gemini-preview-btn');
+  if (geminiPreviewBtn) {
+    geminiPreviewBtn.addEventListener('click', () => {
+      geminiInvoiceRawText = container.querySelector('#gemini-invoice-raw-text')?.value || '';
+      if (!geminiInvoiceRawText.trim()) {
+        showToast('Pega primero el texto de Gemini.', 'warning');
+        return;
+      }
+      geminiInvoicePreview = parseGeminiInvoiceText(geminiInvoiceRawText, {
+        taxRate: store.state.legal?.taxRate ?? 7
+      });
+      if (geminiInvoicePreview.totals.rows === 0) {
+        showToast('No pude detectar lineas de factura en el texto.', 'warning');
+      } else {
+        showToast(`Detectadas ${geminiInvoicePreview.totals.rows} lineas.`, 'success');
+      }
+      render();
+    });
+  }
+
+  const geminiClearBtn = container.querySelector('#gemini-clear-btn');
+  if (geminiClearBtn) {
+    geminiClearBtn.addEventListener('click', () => {
+      geminiInvoiceRawText = '';
+      geminiInvoicePreview = null;
+      render();
+    });
+  }
+
+  const geminiImportConfirmBtn = container.querySelector('#gemini-import-confirm-btn');
+  if (geminiImportConfirmBtn) {
+    geminiImportConfirmBtn.addEventListener('click', async () => {
+      if (!geminiInvoicePreview?.invoices?.length) {
+        showToast('No hay facturas para importar.', 'warning');
+        return;
+      }
+      const imported = await store.importGeminiInvoices(geminiInvoicePreview.invoices);
+      if (imported) {
+        const importedCount = geminiInvoicePreview.invoices.length;
+        const month = geminiInvoicePreview.invoices[0]?.invoiceDate?.slice(0, 7);
+        if (month) store.state.selectedReportMonth = month;
+        geminiInvoicePreview = null;
+        geminiInvoiceRawText = '';
+        store.navigateSettings(['compras']);
+        showToast(`${importedCount} factura${importedCount === 1 ? '' : 's'} importada${importedCount === 1 ? '' : 's'}.`, 'success');
+      } else {
+        showToast('No tienes permiso para importar facturas.', 'error');
+      }
     });
   }
 

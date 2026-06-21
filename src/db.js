@@ -369,6 +369,37 @@ export async function upsertSupplierInvoice(invoice) {
   return id;
 }
 
+export async function replaceSupplierInvoiceLines(invoiceId, lines = []) {
+  if (!invoiceId) return;
+
+  const { error: deleteError } = await supabase
+    .from('supplier_invoice_lines')
+    .delete()
+    .eq('invoice_id', invoiceId);
+  if (deleteError) {
+    notifyDbError('replaceSupplierInvoiceLines:delete', deleteError.message);
+    return;
+  }
+
+  if (!lines.length) return;
+
+  const rows = lines.map((line, index) => ({
+    id: `${invoiceId}-line-${String(index + 1).padStart(3, '0')}`,
+    invoice_id: invoiceId,
+    supplier_name: line.proveedor || line.supplierName || '',
+    invoice_date: line.fecha || line.invoiceDate || null,
+    description: line.articulo_normalizado || line.description || '',
+    quantity: line.cantidad ?? line.quantity ?? null,
+    unit_price: line.precio_unitario ?? line.unitPrice ?? null,
+    total_amount: line.importe ?? line.totalAmount ?? null,
+    tax_rate: line.taxRate ?? null,
+    raw_payload: line
+  }));
+
+  const { error } = await supabase.from('supplier_invoice_lines').insert(rows);
+  if (error) notifyDbError('replaceSupplierInvoiceLines:insert', error.message);
+}
+
 export async function deleteSupplierInvoice(id) {
   const { error } = await supabase.from('supplier_invoices').delete().eq('id', id);
   if (error) notifyDbError('deleteSupplierInvoice', error.message);
