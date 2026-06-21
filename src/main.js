@@ -2594,7 +2594,7 @@ function renderDrawerOverlay() {
 }
 
 // Master Shell Render Engine
-function render(state) {
+function render(state = store.state) {
   const appRoot = document.getElementById('app-root');
   if (!appRoot) return;
 
@@ -5340,7 +5340,7 @@ function setupEventListeners(container) {
       } else {
         showToast(`Detectadas ${geminiInvoicePreview.totals.rows} lineas.`, 'success');
       }
-      render();
+      render(store.state);
     });
   }
 
@@ -5349,7 +5349,7 @@ function setupEventListeners(container) {
     geminiClearBtn.addEventListener('click', () => {
       geminiInvoiceRawText = '';
       geminiInvoicePreview = null;
-      render();
+      render(store.state);
     });
   }
 
