@@ -23,32 +23,91 @@ const MOJIBAKE_REPLACEMENTS = {
 const DEFAULT_ARTICLE_DICTIONARY = {
   'aceite oliva': 'Aceite de oliva',
   aguacate: 'Aguacate',
+  almogrote: 'Almogrote',
+  aranda: 'Tarrina Aranda',
   azucar: 'Azúcar',
+  batata: 'Batata',
+  bolsa: 'Bolsa',
   cafe: 'Café',
   croissant: 'Croissant',
+  fresa: 'Fresa',
+  freson: 'Fresa',
   harina: 'Harina',
   huevo: 'Huevos',
   jamon: 'Jamón',
+  kiwi: 'Kiwi',
+  lavavajilla: 'Lavavajilla',
   leche: 'Leche',
   limon: 'Limón',
+  manzana: 'Manzana',
   mantequilla: 'Mantequilla',
   matcha: 'Matcha',
+  nata: 'Nata',
+  naranja: 'Naranja',
+  nutella: 'Nutella',
   pan: 'Pan',
   platano: 'Plátano',
   queso: 'Queso',
-  rucula: 'Rúcula',
+  sal: 'Sal',
   salmon: 'Salmón',
+  rucula: 'Rúcula',
+  sirope: 'Sirope',
+  smoothie: 'Smoothie',
   tomate: 'Tomate'
 };
 
 const CATEGORY_KEYWORDS = [
-  { category: 'Cafe y bebidas', keywords: ['cafe', 'matcha', 'te ', 'leche', 'zumo', 'bebida', 'agua'] },
-  { category: 'Fruta y verdura', keywords: ['platano', 'limon', 'tomate', 'rucula', 'aguacate', 'lechuga', 'cebolla', 'fruta'] },
-  { category: 'Panaderia', keywords: ['pan', 'croissant', 'harina', 'masa', 'bolleria'] },
-  { category: 'Proteina', keywords: ['huevo', 'jamon', 'salmon', 'pollo', 'atun', 'queso'] },
-  { category: 'Suministros', keywords: ['servilleta', 'vaso', 'tapa', 'bolsa', 'limpieza', 'papel'] },
+  { category: 'Fruta y verdura', keywords: ['aguacate', 'batata', 'fresa', 'freson', 'kiwi', 'manzana', 'naranja', 'platano', 'limon', 'tomate', 'rucula', 'lechuga', 'cebolla', 'fruta'] },
+  { category: 'Cafe y bebidas', keywords: ['cafe', 'campanini', 'matcha', 'te ', 'leche', 'zumo', 'bebida', 'agua', 'smoothie', 'mango', 'lambda'] },
+  { category: 'Panaderia', keywords: ['pan', 'payes', 'croissant', 'harina', 'masa', 'bolleria'] },
+  { category: 'Proteina y lacteos', keywords: ['almogrote', 'huevo', 'jamon', 'nata', 'salmon', 'pollo', 'atun', 'queso'] },
+  { category: 'Dulces y toppings', keywords: ['azucar', 'lotus', 'nutella', 'sirope'] },
+  { category: 'Suministros y limpieza', keywords: ['servilleta', 'vaso', 'tapa', 'bolsa', 'limpieza', 'papel', 'fregona', 'lavavajilla', 'vileda', 'cristales'] },
   { category: 'Otros', keywords: [] }
 ];
+
+const MONTHS = {
+  jan: '01',
+  january: '01',
+  ene: '01',
+  enero: '01',
+  feb: '02',
+  february: '02',
+  febrero: '02',
+  mar: '03',
+  march: '03',
+  marzo: '03',
+  apr: '04',
+  april: '04',
+  abr: '04',
+  abril: '04',
+  may: '05',
+  mayo: '05',
+  jun: '06',
+  june: '06',
+  junio: '06',
+  jul: '07',
+  july: '07',
+  julio: '07',
+  aug: '08',
+  august: '08',
+  ago: '08',
+  agosto: '08',
+  sep: '09',
+  sept: '09',
+  september: '09',
+  septiembre: '09',
+  oct: '10',
+  october: '10',
+  octubre: '10',
+  nov: '11',
+  november: '11',
+  noviembre: '11',
+  dec: '12',
+  december: '12',
+  dic: '12',
+  diciembre: '12'
+};
 
 function fixMojibake(text) {
   let fixed = String(text || '');
@@ -138,20 +197,33 @@ function looksLikeHeader(parts) {
 }
 
 function normalizeDate(value) {
-  const clean = normalizeSpaces(value);
+  const clean = normalizeSpaces(value).replace(',', '');
   const iso = clean.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
   if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
 
   const es = clean.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})/);
-  if (!es) return clean;
-  const year = es[3].length === 2 ? `20${es[3]}` : es[3];
-  return `${year}-${es[2].padStart(2, '0')}-${es[1].padStart(2, '0')}`;
+  if (es) {
+    const year = es[3].length === 2 ? `20${es[3]}` : es[3];
+    return `${year}-${es[2].padStart(2, '0')}-${es[1].padStart(2, '0')}`;
+  }
+
+  const named = clean.match(/^([a-zA-ZáéíóúÁÉÍÓÚñÑ.]+)\s+(\d{1,2})\s+(\d{4})$/);
+  if (named) {
+    const monthKey = normalizeKey(named[1].replace('.', ''));
+    const month = MONTHS[monthKey];
+    if (month) return `${named[3]}-${month}-${named[2].padStart(2, '0')}`;
+  }
+
+  return clean;
 }
 
 function normalizeArticleName(article, dictionary) {
   const key = normalizeKey(article);
-  const match = Object.entries(dictionary).find(([needle]) => key.includes(normalizeKey(needle)));
-  if (match) return match[1];
+  const match = Object.entries(dictionary)
+    .map(([needle, label]) => ({ needle, label, normalizedNeedle: normalizeKey(needle) }))
+    .sort((a, b) => b.normalizedNeedle.length - a.normalizedNeedle.length)
+    .find(item => key.includes(item.normalizedNeedle));
+  if (match) return match.label;
   return normalizeSpaces(article)
     .toLowerCase()
     .replace(/\b\p{L}/gu, char => char.toUpperCase());
