@@ -135,6 +135,12 @@ function normalizeKey(text) {
     .trim();
 }
 
+function normalizeInvoiceNumber(value) {
+  return normalizeSpaces(value)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
 function parseNumber(value) {
   const raw = normalizeSpaces(value)
     .replace(/[€$]/g, '')
@@ -356,6 +362,86 @@ function groupInvoices(rows, taxRate = 7) {
   });
 }
 
+function applyDuplicateDetection(result, existingInvoices = []) {
+  const existingByExactKey = new Map();
+  const existingByNumber = new Map();
+  const incomingByExactKey = new Map();
+  const incomingByNumber = new Map();
+
+  existingInvoices.forEach(invoice => {
+    const numberKey = normalizeInvoiceNumber(invoice.invoiceNumber);
+    if (!numberKey) return;
+    const supplierKey = normalizeKey(invoice.supplierName || '');
+    const exactKey = `${supplierKey}__${numberKey}`;
+    existingByExactKey.set(exactKey, invoice);
+    if (!existingByNumber.has(numberKey)) existingByNumber.set(numberKey, []);
+    existingByNumber.get(numberKey).push(invoice);
+  });
+
+  result.invoices.forEach(invoice => {
+    const numberKey = normalizeInvoiceNumber(invoice.invoiceNumber);
+    const supplierKey = normalizeKey(invoice.supplierName || '');
+    const exactKey = `${supplierKey}__${numberKey}`;
+    if (!numberKey) return;
+    if (!incomingByExactKey.has(exactKey)) incomingByExactKey.set(exactKey, []);
+    incomingByExactKey.get(exactKey).push(invoice);
+    if (!incomingByNumber.has(numberKey)) incomingByNumber.set(numberKey, []);
+    incomingByNumber.get(numberKey).push(invoice);
+  });
+
+  result.invoices = result.invoices.map(invoice => {
+    const numberKey = normalizeInvoiceNumber(invoice.invoiceNumber);
+    const supplierKey = normalizeKey(invoice.supplierName || '');
+    const exactKey = `${supplierKey}__${numberKey}`;
+    const duplicateReasons = [];
+    const exactExisting = existingByExactKey.get(exactKey);
+    const numberExisting = existingByNumber.get(numberKey) || [];
+    const exactIncoming = incomingByExactKey.get(exactKey) || [];
+    const numberIncoming = incomingByNumber.get(numberKey) || [];
+
+    if (exactExisting) {
+      duplicateReasons.push(`Ya existe una factura con este proveedor y numero (${exactExisting.supplierName || 'proveedor guardado'}).`);
+    } else if (numberExisting.length > 0) {
+      duplicateReasons.push(`El numero ya existe con otro proveedor: ${numberExisting.map(item => item.supplierName || 'sin proveedor').join(', ')}.`);
+    }
+
+    if (exactIncoming.length > 1) {
+      duplicateReasons.push('Este proveedor y numero aparece repetido en el texto pegado.');
+    } else if (numberIncoming.length > 1) {
+      const suppliers = [...new Set(numberIncoming.map(item => item.supplierName || 'sin proveedor'))];
+      duplicateReasons.push(`El mismo numero aparece en el texto con proveedores distintos: ${suppliers.join(', ')}.`);
+    }
+
+    const isDuplicate = duplicateReasons.length > 0;
+    const nextInvoice = {
+      ...invoice,
+      duplicate: isDuplicate,
+      duplicateReasons,
+      importable: !isDuplicate
+    };
+
+    nextInvoice.lines = invoice.lines.map(line => ({
+      ...line,
+      revision_necesaria: line.revision_necesaria || isDuplicate,
+      motivo_revision: isDuplicate
+        ? [...new Set([line.motivo_revision, ...duplicateReasons].filter(Boolean))].join(' ')
+        : line.motivo_revision
+    }));
+
+    return nextInvoice;
+  });
+
+  result.rows = result.invoices.flatMap(invoice => invoice.lines);
+  result.totals = {
+    ...result.totals,
+    importableInvoices: result.invoices.filter(invoice => invoice.importable !== false).length,
+    duplicateInvoices: result.invoices.filter(invoice => invoice.duplicate).length,
+    reviewRows: result.rows.filter(row => row.revision_necesaria).length
+  };
+
+  return result;
+}
+
 export function parseGeminiInvoiceText(rawText, options = {}) {
   const dictionary = { ...DEFAULT_ARTICLE_DICTIONARY, ...(options.dictionary || {}) };
   const taxRate = Number(options.taxRate ?? 7);
@@ -369,7 +455,7 @@ export function parseGeminiInvoiceText(rawText, options = {}) {
     .map((line, index) => rowFromParts(splitLine(line), dictionary, index))
     .filter(Boolean);
 
-  return {
+  const result = {
     rows,
     invoices: groupInvoices(rows, taxRate),
     summaries: summarizeRows(rows),
@@ -380,4 +466,6 @@ export function parseGeminiInvoiceText(rawText, options = {}) {
       reviewRows: rows.filter(row => row.revision_necesaria).length
     }
   };
+
+  return applyDuplicateDetection(result, options.existingInvoices || []);
 }

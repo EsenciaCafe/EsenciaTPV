@@ -945,10 +945,20 @@ function renderAjustesView(state) {
     const preview = geminiInvoicePreview;
     const rows = preview?.rows || [];
     const invoices = preview?.invoices || [];
+    const importableInvoices = invoices.filter(invoice => invoice.importable !== false);
     const providerRows = (preview?.summaries?.gasto_por_proveedor || []).map(item => `
       <div class="gemini-summary-row">
         <span>${escapeHtml(item.proveedor)}</span>
         <strong>${Number(item.total || 0).toFixed(2)}€</strong>
+      </div>
+    `).join('');
+    const invoiceRows = invoices.map(invoice => `
+      <div class="gemini-summary-row ${invoice.duplicate ? 'needs-review' : ''}">
+        <span>
+          ${escapeHtml(invoice.supplierName)} · ${escapeHtml(invoice.invoiceDate)} · ${escapeHtml(invoice.invoiceNumber || 'Sin numero')}
+          ${invoice.duplicate ? `<em>${escapeHtml(invoice.duplicateReasons?.join(' ') || 'Factura duplicada')}</em>` : ''}
+        </span>
+        <strong>${Number(invoice.totalAmount || 0).toFixed(2)}€</strong>
       </div>
     `).join('');
     const lineRows = rows.slice(0, 80).map(row => `
@@ -989,6 +999,8 @@ function renderAjustesView(state) {
               <div><span>Facturas</span><strong>${preview.totals.invoices}</strong></div>
               <div><span>Total</span><strong>${preview.totals.totalAmount.toFixed(2)}€</strong></div>
               <div class="${preview.totals.reviewRows > 0 ? 'needs-review' : ''}"><span>Dudosas</span><strong>${preview.totals.reviewRows}</strong></div>
+              <div class="${preview.totals.duplicateInvoices > 0 ? 'needs-review' : ''}"><span>Duplicadas</span><strong>${preview.totals.duplicateInvoices || 0}</strong></div>
+              <div><span>Importables</span><strong>${preview.totals.importableInvoices ?? invoices.length}</strong></div>
             </div>
 
             <div class="gemini-summary-panel">
@@ -997,9 +1009,9 @@ function renderAjustesView(state) {
             </div>
 
             <div class="gemini-summary-panel">
-              <h3>Facturas que se guardaran</h3>
+              <h3>Facturas detectadas</h3>
               ${invoices.map(invoice => `
-                <div class="gemini-summary-row">
+                <div class="gemini-summary-row ${invoice.duplicate ? 'needs-review' : ''}">
                   <span>${escapeHtml(invoice.supplierName)} · ${escapeHtml(invoice.invoiceDate)} · ${escapeHtml(invoice.invoiceNumber || 'Sin numero')}</span>
                   <strong>${Number(invoice.totalAmount || 0).toFixed(2)}€</strong>
                 </div>
@@ -1012,8 +1024,8 @@ function renderAjustesView(state) {
               ${rows.length > 80 ? `<p class="gemini-muted">Mostrando 80 de ${rows.length} lineas.</p>` : ''}
             </div>
 
-            <button class="btn btn-primary" id="gemini-import-confirm-btn" type="button" ${invoices.length === 0 ? 'disabled' : ''} style="height:48px; background:var(--secondary); border-color:var(--secondary);">
-              Importar ${invoices.length} factura${invoices.length === 1 ? '' : 's'}
+            <button class="btn btn-primary" id="gemini-import-confirm-btn" type="button" ${importableInvoices.length === 0 ? 'disabled' : ''} style="height:48px; background:var(--secondary); border-color:var(--secondary);">
+              Importar ${importableInvoices.length} factura${importableInvoices.length === 1 ? '' : 's'} nueva${importableInvoices.length === 1 ? '' : 's'}
             </button>
           ` : `
             <p class="gemini-muted">Pega aqui el resumen de Gemini y pulsa analizar. Antes de guardar veras una vista previa completa.</p>
@@ -5333,7 +5345,8 @@ function setupEventListeners(container) {
         return;
       }
       geminiInvoicePreview = parseGeminiInvoiceText(geminiInvoiceRawText, {
-        taxRate: store.state.legal?.taxRate ?? 7
+        taxRate: store.state.legal?.taxRate ?? 7,
+        existingInvoices: store.state.supplierInvoices || []
       });
       if (geminiInvoicePreview.totals.rows === 0) {
         showToast('No pude detectar lineas de factura en el texto.', 'warning');
@@ -5360,15 +5373,17 @@ function setupEventListeners(container) {
         showToast('No hay facturas para importar.', 'warning');
         return;
       }
-      const imported = await store.importGeminiInvoices(geminiInvoicePreview.invoices);
+      const invoicesToImport = geminiInvoicePreview.invoices.filter(invoice => invoice.importable !== false);
+      const imported = await store.importGeminiInvoices(invoicesToImport);
       if (imported) {
-        const importedCount = geminiInvoicePreview.invoices.length;
-        const month = geminiInvoicePreview.invoices[0]?.invoiceDate?.slice(0, 7);
+        const importedCount = invoicesToImport.length;
+        const skippedCount = geminiInvoicePreview.invoices.length - invoicesToImport.length;
+        const month = invoicesToImport[0]?.invoiceDate?.slice(0, 7);
         if (month) store.state.selectedReportMonth = month;
         geminiInvoicePreview = null;
         geminiInvoiceRawText = '';
         store.navigateSettings(['compras']);
-        showToast(`${importedCount} factura${importedCount === 1 ? '' : 's'} importada${importedCount === 1 ? '' : 's'}.`, 'success');
+        showToast(`${importedCount} factura${importedCount === 1 ? '' : 's'} importada${importedCount === 1 ? '' : 's'}${skippedCount ? `, ${skippedCount} duplicada${skippedCount === 1 ? '' : 's'} omitida${skippedCount === 1 ? '' : 's'}` : ''}.`, 'success');
       } else {
         showToast('No tienes permiso para importar facturas.', 'error');
       }

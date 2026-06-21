@@ -508,7 +508,9 @@ class Store {
   async importGeminiInvoices(parsedInvoices) {
     if (!this.canAccessSettings()) return false;
 
-    for (const invoice of parsedInvoices) {
+    const invoicesToImport = parsedInvoices.filter(invoice => invoice.importable !== false);
+
+    for (const invoice of invoicesToImport) {
       const invoiceId = invoice.id || `gemini-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       await upsertSupplierInvoice({
         id: invoiceId,
