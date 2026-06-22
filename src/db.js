@@ -234,6 +234,165 @@ export async function loadReceiptTicket(token) {
   return data?.payload || null;
 }
 
+function mapSaleRow(row, lines = [], payments = []) {
+  const payload = row.payload || {};
+  return {
+    ...payload,
+    id: row.id,
+    type: row.type || payload.type || 'sale',
+    parentId: row.parent_sale_id || payload.parentId,
+    date: payload.date || new Date(row.closed_at || row.created_at).toLocaleString('es-ES', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).replace(' ', ''),
+    table: row.table_name || payload.table || 'Venta Directa',
+    total: parseFloat(row.total_amount || payload.total || 0),
+    paymentMethod: row.payment_method || payload.paymentMethod || '',
+    itemsCount: Number(row.items_count || payload.itemsCount || 0),
+    receiptToken: row.receipt_token || payload.receiptToken,
+    createdAt: row.created_at || payload.createdAt,
+    legalData: row.legal_data || payload.legalData || {},
+    loyaltyCustomer: row.loyalty_data?.customer || payload.loyaltyCustomer,
+    refundAmount: parseFloat(row.refund_amount || payload.refundAmount || 0),
+    reason: row.refund_reason || payload.reason || '',
+    hasRefund: row.has_refund || payload.hasRefund || false,
+    items: lines.map(line => ({
+      ...(line.raw_payload || {}),
+      ticketItemId: line.ticket_item_id,
+      id: line.item_id,
+      name: line.name,
+      qty: parseFloat(line.quantity || 0),
+      price: parseFloat(line.unit_price || 0),
+      total: parseFloat(line.total_amount || 0),
+      selectedOptions: line.selected_options || []
+    })),
+    payments: payments.map(payment => ({
+      ...(payment.raw_payload || {}),
+      id: payment.id,
+      method: payment.method,
+      amount: parseFloat(payment.amount || 0),
+      provider: payment.provider || '',
+      externalRef: payment.external_ref || ''
+    }))
+  };
+}
+
+export async function loadSales(limit = 1000) {
+  const { data: sales, error: salesError } = await supabase
+    .from('sales')
+    .select('*')
+    .order('closed_at', { ascending: false })
+    .limit(limit);
+
+  if (salesError) {
+    console.warn('[DB] Error loading normalized sales:', salesError.message);
+    return null;
+  }
+
+  const saleIds = (sales || []).map(row => row.id);
+  if (saleIds.length === 0) return [];
+
+  const [
+    { data: lines, error: linesError },
+    { data: payments, error: paymentsError }
+  ] = await Promise.all([
+    supabase.from('sale_lines').select('*').in('sale_id', saleIds),
+    supabase.from('sale_payments').select('*').in('sale_id', saleIds)
+  ]);
+
+  if (linesError) console.warn('[DB] Error loading sale lines:', linesError.message);
+  if (paymentsError) console.warn('[DB] Error loading sale payments:', paymentsError.message);
+
+  const linesBySale = new Map();
+  (lines || []).forEach(line => {
+    if (!linesBySale.has(line.sale_id)) linesBySale.set(line.sale_id, []);
+    linesBySale.get(line.sale_id).push(line);
+  });
+
+  const paymentsBySale = new Map();
+  (payments || []).forEach(payment => {
+    if (!paymentsBySale.has(payment.sale_id)) paymentsBySale.set(payment.sale_id, []);
+    paymentsBySale.get(payment.sale_id).push(payment);
+  });
+
+  return (sales || []).map(row => mapSaleRow(row, linesBySale.get(row.id) || [], paymentsBySale.get(row.id) || []));
+}
+
+export async function upsertSaleRecord(transaction) {
+  if (!transaction?.id) return null;
+
+  const saleRow = {
+    id: transaction.id,
+    type: transaction.type || 'sale',
+    parent_sale_id: transaction.parentId || null,
+    table_name: transaction.table || null,
+    total_amount: transaction.total || 0,
+    payment_method: transaction.paymentMethod || '',
+    items_count: transaction.itemsCount || 0,
+    receipt_token: transaction.receiptToken || null,
+    staff_id: transaction.staff?.id || transaction.staffId || null,
+    staff_name: transaction.staff?.name || transaction.staffName || null,
+    closed_at: transaction.createdAt || new Date().toISOString(),
+    created_at: transaction.createdAt || new Date().toISOString(),
+    legal_data: transaction.legalData || {},
+    loyalty_data: transaction.loyaltyCustomer ? { customer: transaction.loyaltyCustomer } : {},
+    refund_amount: transaction.refundAmount || 0,
+    refund_reason: transaction.reason || null,
+    has_refund: transaction.hasRefund === true,
+    payload: transaction
+  };
+
+  const { error: saleError } = await supabase.from('sales').upsert(saleRow, { onConflict: 'id' });
+  if (saleError) {
+    notifyDbError('upsertSaleRecord:sales', saleError.message);
+    return null;
+  }
+
+  await supabase.from('sale_lines').delete().eq('sale_id', transaction.id);
+  await supabase.from('sale_payments').delete().eq('sale_id', transaction.id);
+
+  const lines = (transaction.items || []).map((item, index) => ({
+    id: `${transaction.id}-line-${String(index + 1).padStart(3, '0')}`,
+    sale_id: transaction.id,
+    item_id: item.id || null,
+    ticket_item_id: item.ticketItemId || null,
+    name: item.name || 'Articulo',
+    quantity: item.qty || 0,
+    unit_price: item.price || 0,
+    total_amount: item.total ?? ((item.price || 0) * (item.qty || 0)),
+    selected_options: item.selectedOptions || [],
+    raw_payload: item
+  }));
+
+  if (lines.length > 0) {
+    const { error: linesError } = await supabase.from('sale_lines').insert(lines);
+    if (linesError) notifyDbError('upsertSaleRecord:lines', linesError.message);
+  }
+
+  const paymentRows = (transaction.payments?.length ? transaction.payments : [{
+    method: transaction.paymentMethod || '',
+    amount: transaction.total || 0
+  }]).map((payment, index) => ({
+    id: `${transaction.id}-payment-${String(index + 1).padStart(3, '0')}`,
+    sale_id: transaction.id,
+    method: payment.method || transaction.paymentMethod || '',
+    amount: payment.amount || 0,
+    provider: payment.provider || null,
+    external_ref: payment.externalRef || null,
+    raw_payload: payment
+  }));
+
+  if (paymentRows.length > 0) {
+    const { error: paymentsError } = await supabase.from('sale_payments').insert(paymentRows);
+    if (paymentsError) notifyDbError('upsertSaleRecord:payments', paymentsError.message);
+  }
+
+  return transaction.id;
+}
+
 export async function loadStaffProfiles() {
   const { data, error } = await supabase
     .from('staff_profiles')

@@ -10,6 +10,8 @@ import {
   loadTPVState,
   saveTPVState,
   upsertReceiptTicket,
+  loadSales,
+  upsertSaleRecord,
   loadStaffProfiles,
   findStaffByPin,
   upsertStaffProfile,
@@ -107,6 +109,7 @@ class Store {
     };
     
     this.restoreDiningState();
+    this.salesPersistenceReady = false;
     this.listeners = [];
   }
 
@@ -336,6 +339,13 @@ class Store {
     });
   }
 
+  persistSaleRecord(transaction) {
+    if (!this.salesPersistenceReady) return;
+    upsertSaleRecord(transaction).catch(err => {
+      console.warn('[Store] No se pudo guardar la venta normalizada.', err);
+    });
+  }
+
   ensureTransactionReceiptToken(transactionId) {
     const txIndex = this.state.transactions.findIndex(tx => tx.id === transactionId);
     if (txIndex === -1) return null;
@@ -403,6 +413,17 @@ class Store {
         }
       } catch (err) {
         console.warn('[Store] No se pudo cargar el estado del TPV desde la BD, usando local.', err);
+      }
+
+      try {
+        const normalizedSales = await loadSales();
+        this.salesPersistenceReady = Array.isArray(normalizedSales);
+        if (normalizedSales?.length > 0) {
+          this.state.transactions = normalizedSales;
+        }
+      } catch (err) {
+        this.salesPersistenceReady = false;
+        console.warn('[Store] No se pudieron cargar las ventas normalizadas.', err);
       }
 
       // Suscribirse a cambios en tiempo real
@@ -1444,14 +1465,25 @@ class Store {
       paymentMethod: paymentMethod,
       itemsCount: itemsCount,
       items: transactionItems,
+      payments: options.payments || [{
+        method: paymentMethod,
+        amount: parseFloat(total.toFixed(2)),
+        provider: paymentMethod.toLowerCase().includes('tarjeta') ? 'BBVA' : ''
+      }],
       createdAt: dateNow.toISOString(),
       receiptToken: this.createReceiptToken(),
       legalData: { ...this.state.legal },
+      staff: this.state.auth.profile ? {
+        id: this.state.auth.profile.id,
+        name: this.state.auth.profile.display_name,
+        role: this.state.auth.profile.role
+      } : null,
       ...(options.loyaltyCustomer ? { loyaltyCustomer: { ...options.loyaltyCustomer } } : {})
     };
 
     this.state.transactions.unshift(transaction);
     this.publishReceiptTicket(transaction);
+    this.persistSaleRecord(transaction);
 
     if (this.state.selectedTableId !== null) {
       const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
@@ -1537,6 +1569,11 @@ class Store {
       reason,
       itemsCount: 0,
       items: [],
+      payments: [{
+        method: parent.paymentMethod,
+        amount: -Math.abs(refundAmount),
+        provider: (parent.paymentMethod || '').toLowerCase().includes('tarjeta') ? 'BBVA' : ''
+      }],
       legalData: { ...this.state.legal }
     };
 
@@ -1551,6 +1588,8 @@ class Store {
     }
 
     this.state.transactions.unshift(refundTx);
+    this.persistSaleRecord(this.state.transactions[parentIdx] || parent);
+    this.persistSaleRecord(refundTx);
     this.notify();
     return refundTx;
   }

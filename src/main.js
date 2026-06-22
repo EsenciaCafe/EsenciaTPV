@@ -3509,7 +3509,7 @@ function showPaymentModal(totalAmount) {
     });
   };
 
-  const completePaidTicket = async (paymentMethod, successMessage) => {
+  const completePaidTicket = async (paymentMethod, successMessage, paymentBreakdown = null) => {
     const loyaltySnapshot = loyaltyCustomer ? { ...loyaltyCustomer } : null;
     const existingLoyaltyAward = store.getActiveLoyaltyAward();
     const transaction = store.payActiveTicket(paymentMethod, loyaltySnapshot ? {
@@ -3518,8 +3518,9 @@ function showPaymentModal(totalAmount) {
         name: loyaltySnapshot.name,
         rfidUid: loyaltySnapshot.rfidUid,
         tier: loyaltySnapshot.tier
-      }
-    } : {});
+      },
+      ...(paymentBreakdown ? { payments: paymentBreakdown } : {})
+    } : (paymentBreakdown ? { payments: paymentBreakdown } : {}));
 
     if (transaction && loyaltySnapshot && !existingLoyaltyAward) {
       try {
@@ -4103,7 +4104,12 @@ function showPaymentModal(totalAmount) {
       const paymentMethodsUsed = [...new Set(parts.map(p => p.status === 'paid-card' ? 'Tarjeta' : 'Efectivo'))];
       const methodText = paymentMethodsUsed.length > 1 ? 'Mixto (Partes)' : (paymentMethodsUsed[0] === 'paid-card' ? 'Tarjeta' : 'Efectivo');
       
-      void completePaidTicket(methodText, 'Cobro por partes completado con exito.');
+      const breakdown = parts.map(part => ({
+        method: part.status === 'paid-card' ? 'Tarjeta' : 'Efectivo',
+        amount: part.amount,
+        provider: part.status === 'paid-card' ? 'BBVA' : ''
+      }));
+      void completePaidTicket(methodText, 'Cobro por partes completado con exito.', breakdown);
       return true;
     }
     return false;
@@ -4130,7 +4136,12 @@ function showPaymentModal(totalAmount) {
       const methodsUsed = [...new Set(freePayments.map(p => p.method))];
       const methodText = methodsUsed.length > 1 ? 'Mixto (Libre)' : methodsUsed[0];
       
-      void completePaidTicket(methodText, 'Cobro libre completado con exito.');
+      const breakdown = freePayments.map(payment => ({
+        method: payment.method,
+        amount: payment.amount,
+        provider: payment.method === 'Tarjeta' ? 'BBVA' : ''
+      }));
+      void completePaidTicket(methodText, 'Cobro libre completado con exito.', breakdown);
     } else {
       renderPaymentContent();
     }
@@ -4163,7 +4174,13 @@ function showPaymentModal(totalAmount) {
       const methodsUsed = [...new Set(articlePayments.map(p => p.method))];
       const methodText = methodsUsed.length > 1 ? 'Mixto (Artículos)' : methodsUsed[0];
       
-      void completePaidTicket(methodText, 'Cobro por articulos completado con exito.');
+      const breakdown = articlePayments.map(payment => ({
+        method: payment.method,
+        amount: payment.amount,
+        provider: payment.method === 'Tarjeta' ? 'BBVA' : '',
+        itemsText: payment.itemsText
+      }));
+      void completePaidTicket(methodText, 'Cobro por articulos completado con exito.', breakdown);
     } else {
       renderPaymentContent();
     }

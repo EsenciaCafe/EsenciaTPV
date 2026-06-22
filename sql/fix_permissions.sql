@@ -48,6 +48,16 @@ alter table if exists receipt_tickets disable row level security;
 grant all on receipt_tickets to anon;
 grant all on receipt_tickets to authenticated;
 
+alter table if exists sales disable row level security;
+alter table if exists sale_lines disable row level security;
+alter table if exists sale_payments disable row level security;
+grant all on sales to anon;
+grant all on sale_lines to anon;
+grant all on sale_payments to anon;
+grant all on sales to authenticated;
+grant all on sale_lines to authenticated;
+grant all on sale_payments to authenticated;
+
 -- Perfiles de personal por PIN
 alter table if exists staff_profiles disable row level security;
 grant all on staff_profiles to anon;
