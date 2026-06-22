@@ -728,7 +728,7 @@ function showTransactionDetailModal(transactionId) {
           <button class="pay-btn-opt primary tx-detail-share-btn" id="tx-detail-share-btn" style="height: 40px; font-size: 0.9rem;">
             Mostrar QR del ticket
           </button>
-          ${(!tx.hasRefund && tx.type !== 'refund') ? `
+          ${(!tx.hasRefund && tx.type !== 'refund' && store.canIssueRefunds()) ? `
             <button class="pay-btn-opt danger tx-detail-refund-btn" id="tx-detail-refund-btn" style="height: 40px; font-size: 0.9rem; margin: 0;">
               Registrar Devolución
             </button>
@@ -758,6 +758,11 @@ function showTransactionDetailModal(transactionId) {
 }
 
 function showRefundModal(tx) {
+  if (!store.canIssueRefunds()) {
+    showToast('Solo administrador o encargado pueden registrar devoluciones.', 'error');
+    return;
+  }
+
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop';
   
@@ -837,6 +842,30 @@ function renderAjustesView(state) {
   // Icons
   const chevron = `<svg class="settings-tree-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg>`;
   const backArrow = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:18px; height:18px;"><path d="m15 18-6-6 6-6"/></svg>`;
+  const firstPath = path[0];
+  const restrictedSettingsPath =
+    (firstPath === 'articulos' && !store.canManageCatalog()) ||
+    (firstPath === 'legal' && !store.canManageAccounting()) ||
+    (firstPath === 'compras' && !store.canManageAccounting()) ||
+    (firstPath === 'informes' && !store.canViewReports()) ||
+    (firstPath === 'cierre' && !store.canCloseCash()) ||
+    (firstPath === 'staff' && !store.canManageStaff());
+
+  if (restrictedSettingsPath) {
+    return `
+      <div class="view-container">
+        <div class="settings-nav-header">
+          <button class="settings-back-arrow-btn" id="settings-back-btn">
+            ${backArrow} Ajustes
+          </button>
+        </div>
+        <div class="settings-editor-container">
+          <h2 class="settings-nav-title">Sin permiso</h2>
+          <p class="gemini-muted">Tu perfil no tiene acceso a este apartado.</p>
+        </div>
+      </div>
+    `;
+  }
 
   if (path.length === 0) {
     // 1. Root Settings Menu
@@ -846,11 +875,45 @@ function renderAjustesView(state) {
     }).join('');
 
     const totalRevenue = state.transactions.reduce((sum, tx) => sum + tx.total, 0);
+    const settingsMenuItems = [
+      store.canManageCatalog() ? `
+          <button class="settings-tree-item" id="settings-to-articulos">
+            <span>ArtÃ­culos</span>
+            ${chevron}
+          </button>` : '',
+      store.canManageAccounting() ? `
+          <button class="settings-tree-item" id="settings-to-legal">
+            <span>Datos Fiscales</span>
+            ${chevron}
+          </button>` : '',
+      store.canViewReports() ? `
+          <button class="settings-tree-item" id="settings-to-informes">
+            <span>Informes y Ventas</span>
+            ${chevron}
+          </button>` : '',
+      store.canCloseCash() ? `
+          <button class="settings-tree-item" id="settings-to-cierre">
+            <span>Cierre de Caja</span>
+            ${chevron}
+          </button>` : '',
+      store.canManageAccounting() ? `
+          <button class="settings-tree-item" id="settings-to-compras">
+            <span>Compras y Facturas</span>
+            ${chevron}
+          </button>` : '',
+      store.canManageStaff() ? `
+          <button class="settings-tree-item" id="settings-to-staff">
+            <span>Personal y PIN</span>
+            ${chevron}
+          </button>` : ''
+    ].join('');
 
     return `
       <div class="view-container">
         <h2 class="settings-nav-title">Ajustes</h2>
         <div class="settings-tree-list">
+          ${settingsMenuItems}
+          <div style="display:none;">
           <button class="settings-tree-item" id="settings-to-articulos">
             <span>Artículos</span>
             ${chevron}
@@ -877,6 +940,7 @@ function renderAjustesView(state) {
               ${chevron}
             </button>
           ` : ''}
+          </div>
           
           <div style="margin-top: 24px; border-top: 1px solid var(--border-color); padding-top: 16px;">
             <div style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Configuración de Dispositivo</div>
@@ -920,7 +984,7 @@ function renderAjustesView(state) {
               ${chevron}
             </div>
 
-            <div class="settings-row" style="padding: 16px 0; display:flex; justify-content:space-between; align-items:center;">
+            <div class="settings-row" style="padding: 16px 0; display:${store.canResetTerminal() ? 'flex' : 'none'}; justify-content:space-between; align-items:center;">
               <div>
                 <div class="settings-row-title" style="color:var(--danger); font-weight:600;">Restablecer Terminal</div>
                 <div class="settings-row-desc" style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Vaciar tickets y borrar transacciones</div>
@@ -5742,6 +5806,10 @@ function setupEventListeners(container) {
   const settingsReset = container.querySelector('#settings-reset-btn');
   if (settingsReset) {
     settingsReset.addEventListener('click', () => {
+      if (!store.canResetTerminal()) {
+        showToast('Solo el administrador puede restablecer el terminal.', 'error');
+        return;
+      }
       showConfirm(
         '¡Restablecer de Fábrica!',
         '¿CUIDADO!\n¿Deseas restablecer de fábrica todo el TPV?\nSe borrará el historial de ventas y los tickets de las mesas.',
@@ -5794,7 +5862,7 @@ function setupEventListeners(container) {
         return;
       }
 
-      store.updateLegalSettings({
+      const saved = store.updateLegalSettings({
         businessName,
         companyName,
         nif,
@@ -5802,6 +5870,11 @@ function setupEventListeners(container) {
         taxName,
         taxRate
       });
+
+      if (!saved) {
+        showToast('Solo el administrador puede modificar los datos fiscales.', 'error');
+        return;
+      }
 
       store.navigateSettings([]);
       showToast('Datos fiscales guardados y sincronizados.', 'success');

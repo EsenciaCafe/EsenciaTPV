@@ -216,6 +216,30 @@ class Store {
     return ['admin', 'manager'].includes(this.state.auth.role);
   }
 
+  canManageCatalog() {
+    return this.state.auth.role === 'admin';
+  }
+
+  canManageAccounting() {
+    return this.state.auth.role === 'admin';
+  }
+
+  canViewReports() {
+    return ['admin', 'manager'].includes(this.state.auth.role);
+  }
+
+  canCloseCash() {
+    return ['admin', 'manager'].includes(this.state.auth.role);
+  }
+
+  canIssueRefunds() {
+    return ['admin', 'manager'].includes(this.state.auth.role);
+  }
+
+  canResetTerminal() {
+    return this.state.auth.role === 'admin';
+  }
+
   canManageStaff() {
     return this.state.auth.role === 'admin';
   }
@@ -514,12 +538,14 @@ class Store {
   }
 
   updateLegalSettings(legalData) {
+    if (!this.canManageAccounting()) return false;
     this.state.legal = {
       ...this.state.legal,
       ...legalData,
       taxRate: parseFloat(legalData.taxRate || 0)
     };
     this.notify();
+    return true;
   }
 
   setActiveTab(tab) {
@@ -535,7 +561,7 @@ class Store {
   }
 
   async saveSupplierInvoice(invoiceData) {
-    if (!this.canAccessSettings()) return false;
+    if (!this.canManageAccounting()) return false;
     await upsertSupplierInvoice(invoiceData);
     await this.loadSupplierInvoices();
     await this.loadSupplierInvoiceLines();
@@ -544,7 +570,7 @@ class Store {
   }
 
   async importGeminiInvoices(parsedInvoices) {
-    if (!this.canAccessSettings()) return false;
+    if (!this.canManageAccounting()) return false;
 
     const invoicesToImport = parsedInvoices.filter(invoice => invoice.importable !== false);
 
@@ -576,7 +602,7 @@ class Store {
   }
 
   async toggleSupplierSenderIgnored(email) {
-    if (!this.canAccessSettings()) return false;
+    if (!this.canManageAccounting()) return false;
     const normalizedEmail = String(email || '').trim().toLowerCase();
     if (!normalizedEmail) return false;
     const existing = this.state.supplierSenderRules.find(rule => rule.email === normalizedEmail);
@@ -591,7 +617,7 @@ class Store {
   }
 
   async deleteSupplierInvoice(id) {
-    if (!this.canAccessSettings()) return false;
+    if (!this.canManageAccounting()) return false;
     await dbDeleteSupplierInvoice(id);
     await this.loadSupplierInvoices();
     await this.loadSupplierInvoiceLines();
@@ -715,7 +741,7 @@ class Store {
   }
 
   async saveCashClosure(data) {
-    if (!this.canAccessSettings() || !this.cashClosurePersistenceReady) return false;
+    if (!this.canCloseCash() || !this.cashClosurePersistenceReady) return false;
     const alreadyClosed = this.state.cashClosures.some(closure => closure.businessDate === data.businessDate);
     if (alreadyClosed) return false;
 
@@ -785,6 +811,8 @@ class Store {
   }
 
   addMenuItem({ name, price, category, modifiers = [], image = null }) {
+    if (!this.canManageCatalog()) return null;
+
     // Generate unique ID from name
     let id = name.toLowerCase()
       .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove accents
@@ -822,6 +850,7 @@ class Store {
   }
 
   updateMenuItem(itemId, updatedData) {
+    if (!this.canManageCatalog()) return false;
 
     const itemIndex = this.state.menuItems.findIndex(item => item.id === itemId);
     if (itemIndex > -1) {
@@ -897,15 +926,20 @@ class Store {
         this.state.modifiers.forEach(mod => upsertModifier(mod));
       }
       this.notify();
+      return true;
     }
+    return false;
   }
 
   toggleEditingGrid() {
+    if (!this.canManageCatalog()) return;
     this.state.isEditingGrid = !this.state.isEditingGrid;
     this.notify();
   }
 
   deleteMenuItem(itemId) {
+    if (!this.canManageCatalog()) return false;
+
     // Remove from menuItems
     this.state.menuItems = this.state.menuItems.filter(i => i.id !== itemId);
 
@@ -931,10 +965,13 @@ class Store {
     });
 
     this.notify();
+    return true;
   }
 
 
   addGridShortcut(gridKey, slotIndex, shortcutData) {
+    if (!this.canManageCatalog()) return;
+
     if (this.state.gridItems[gridKey]) {
       this.state.gridItems[gridKey][slotIndex] = shortcutData;
       upsertGridItems(gridKey, this.state.gridItems[gridKey]);
@@ -999,6 +1036,8 @@ class Store {
   }
 
   removeGridShortcut(gridKey, slotIndex) {
+    if (!this.canManageCatalog()) return;
+
     if (this.state.gridItems[gridKey]) {
       this.state.gridItems[gridKey][slotIndex] = null;
       upsertGridItems(gridKey, this.state.gridItems[gridKey]);
@@ -1007,6 +1046,8 @@ class Store {
   }
 
   addCategory({ name, type, parentId = null }) {
+    if (!this.canManageCatalog()) return null;
+
     let id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     if (!id || this.state.categories.some(c => c.id === id)) {
       id = `${id}-${Date.now()}`;
@@ -1045,6 +1086,8 @@ class Store {
   }
 
   updateCategory(id, { name, type, parentId = null }) {
+    if (!this.canManageCatalog()) return false;
+
     const catIndex = this.state.categories.findIndex(c => c.id === id);
     if (catIndex > -1) {
       const oldCategory = this.state.categories[catIndex];
@@ -1089,10 +1132,14 @@ class Store {
       }
       
       this.notify();
+      return true;
     }
+    return false;
   }
 
   deleteCategory(id) {
+    if (!this.canManageCatalog()) return false;
+
     const catToDelete = this.state.categories.find(c => c.id === id);
     if (!catToDelete) return;
     
@@ -1130,6 +1177,7 @@ class Store {
     }
     
     this.notify();
+    return true;
   }
 
   getActiveItems() {
@@ -1340,6 +1388,8 @@ class Store {
   }
 
   addModifier({ name }) {
+    if (!this.canManageCatalog()) return null;
+
     const id = 'mod-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') + '-' + Date.now();
     const newModifier = { id, name, options: [], assignedItems: [] };
     this.state.modifiers.push(newModifier);
@@ -1349,6 +1399,8 @@ class Store {
   }
 
   updateModifier(id, { name, options, assignedItems }) {
+    if (!this.canManageCatalog()) return false;
+
     const modIndex = this.state.modifiers.findIndex(m => m.id === id);
     if (modIndex > -1) {
       const oldMod = this.state.modifiers[modIndex];
@@ -1394,10 +1446,14 @@ class Store {
       
       upsertModifier(this.state.modifiers[modIndex]);
       this.notify();
+      return true;
     }
+    return false;
   }
 
   deleteModifier(id) {
+    if (!this.canManageCatalog()) return false;
+
     this.state.modifiers = this.state.modifiers.filter(m => m.id !== id);
     
     this.state.menuItems.forEach((item, idx) => {
@@ -1409,6 +1465,7 @@ class Store {
     
     dbDeleteModifier(id);
     this.notify();
+    return true;
   }
 
   printBill() {
@@ -1669,6 +1726,8 @@ class Store {
   // Devoluciones / Refunds
   // ─────────────────────────────────────────────────────────────────
   registerRefund({ parentTransactionId, amount, reason = '' }) {
+    if (!this.canIssueRefunds()) return null;
+
     const parent = this.state.transactions.find(t => t.id === parentTransactionId);
     if (!parent) return null;
 
