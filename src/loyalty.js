@@ -48,6 +48,17 @@ export function mapLoyaltyCustomer(row) {
   };
 }
 
+function mapLoyaltyDashboard(row) {
+  return {
+    totalCustomers: Number(row?.total_customers || 0),
+    customersWithRfid: Number(row?.customers_with_rfid || 0),
+    totalPoints: Number(row?.total_points || 0),
+    totalVisits: Number(row?.total_visits || 0),
+    totalSpent: Number(row?.total_spent || 0),
+    pendingVouchers: Number(row?.pending_vouchers || 0)
+  };
+}
+
 function requireLoyaltyClient() {
   if (!loyaltySupabase) {
     throw new Error('Falta configurar la conexion con fidelidad');
@@ -71,33 +82,30 @@ export async function findLoyaltyCustomerByRfid(rfidUid) {
 export async function searchLoyaltyCustomers(query = '') {
   const client = requireLoyaltyClient();
   const cleanQuery = String(query || '').trim();
-  let request = client
-    .from('customers')
-    .select('id, name, email, phone, rfid_uid, points, visits, total_spent, tier')
-    .order('name', { ascending: true })
-    .limit(40);
 
-  if (cleanQuery) {
-    const escaped = cleanQuery.replace(/[%_]/g, '\\$&');
-    const pattern = `%${escaped}%`;
-    request = request.or(`name.ilike.${pattern},email.ilike.${pattern},phone.ilike.${pattern},rfid_uid.ilike.${pattern}`);
-  }
+  const { data, error } = await client.rpc('tpv_search_loyalty_customers', {
+    p_query: cleanQuery
+  });
 
-  const { data, error } = await request;
   if (error) throw error;
   return (data || []).map(mapLoyaltyCustomer).filter(Boolean);
+}
+
+export async function getLoyaltyDashboard() {
+  const client = requireLoyaltyClient();
+  const { data, error } = await client.rpc('tpv_get_loyalty_dashboard');
+  if (error) throw error;
+  return mapLoyaltyDashboard(Array.isArray(data) ? data[0] : data);
 }
 
 export async function getLoyaltyCustomerPurchases(customerId, limit = 8) {
   const client = requireLoyaltyClient();
   if (!customerId) return [];
 
-  const { data, error } = await client
-    .from('purchases')
-    .select('id, amount, points, created_at')
-    .eq('customer_id', customerId)
-    .order('created_at', { ascending: false })
-    .limit(limit);
+  const { data, error } = await client.rpc('tpv_get_loyalty_customer_purchases', {
+    p_customer_id: customerId,
+    p_limit: limit
+  });
 
   if (error) throw error;
   return (data || []).map(row => ({
@@ -106,6 +114,19 @@ export async function getLoyaltyCustomerPurchases(customerId, limit = 8) {
     points: Number(row.points || 0),
     createdAt: row.created_at || null
   }));
+}
+
+export async function createLoyaltyCustomer({ name, email = '', phone = '', rfidUid = '' }) {
+  const client = requireLoyaltyClient();
+  const { data, error } = await client.rpc('tpv_create_loyalty_customer', {
+    p_name: String(name || '').trim(),
+    p_email: String(email || '').trim(),
+    p_phone: String(phone || '').trim(),
+    p_rfid_uid: normalizeRfidUid(rfidUid)
+  });
+
+  if (error) throw error;
+  return mapLoyaltyCustomer(Array.isArray(data) ? data[0] : data);
 }
 
 export async function addLoyaltyPurchase({ customer, amount, transactionId, paymentMethod }) {

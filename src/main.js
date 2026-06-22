@@ -5,7 +5,9 @@ import {
   addLoyaltyPurchase,
   addManualLoyaltyPointsWithoutPurchase,
   calculateLoyaltyPoints,
+  createLoyaltyCustomer,
   findLoyaltyCustomerByRfid,
+  getLoyaltyDashboard,
   getLoyaltyCustomerPurchases,
   isLoyaltyConfigured,
   normalizeRfidUid,
@@ -82,6 +84,7 @@ let loyaltyAdminQuery = '';
 let loyaltyAdminCustomers = [];
 let loyaltyAdminSelectedCustomer = null;
 let loyaltyAdminPurchases = [];
+let loyaltyAdminDashboard = null;
 let loyaltyAdminLoading = false;
 let loyaltyAdminError = '';
 const GEMINI_SINGLE_INVOICE_PROMPT = `Analiza únicamente esta factura.
@@ -205,7 +208,12 @@ async function loadLoyaltyAdminCustomers({ keepSelection = true } = {}) {
   render(store.state);
 
   try {
-    loyaltyAdminCustomers = await searchLoyaltyCustomers(loyaltyAdminQuery);
+    const [dashboard, customers] = await Promise.all([
+      getLoyaltyDashboard(),
+      searchLoyaltyCustomers(loyaltyAdminQuery)
+    ]);
+    loyaltyAdminDashboard = dashboard;
+    loyaltyAdminCustomers = customers;
     if (keepSelection && loyaltyAdminSelectedCustomer) {
       loyaltyAdminSelectedCustomer = loyaltyAdminCustomers.find(customer => customer.id === loyaltyAdminSelectedCustomer.id) || loyaltyAdminSelectedCustomer;
     } else {
@@ -235,6 +243,72 @@ async function selectLoyaltyAdminCustomer(customerId) {
     loyaltyAdminError = error.message || 'No se pudieron cargar las compras del cliente.';
   }
   render(store.state);
+}
+
+function showCreateLoyaltyCustomerModal() {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.id = 'create-loyalty-customer-modal';
+  modal.innerHTML = `
+    <div class="modal-dialog" style="max-width: 440px; width: 94%; padding: 20px;">
+      <div class="modal-header" style="border-bottom:1px solid var(--border-color); padding-bottom:12px; margin-bottom:16px;">
+        <h3>Nuevo cliente fidelidad</h3>
+        <button class="modal-close-btn" id="loyalty-create-close-btn" aria-label="Cerrar">&times;</button>
+      </div>
+      <form id="loyalty-create-form" style="display:grid; gap:14px;">
+        <div class="editor-form-group">
+          <label class="editor-form-label">Nombre</label>
+          <input class="editor-form-input" id="loyalty-create-name" autocomplete="off" required>
+        </div>
+        <div class="editor-form-group">
+          <label class="editor-form-label">Email</label>
+          <input class="editor-form-input" id="loyalty-create-email" type="email" autocomplete="off">
+        </div>
+        <div class="editor-form-group">
+          <label class="editor-form-label">Teléfono</label>
+          <input class="editor-form-input" id="loyalty-create-phone" inputmode="tel" autocomplete="off">
+        </div>
+        <div class="editor-form-group">
+          <label class="editor-form-label">RFID</label>
+          <input class="editor-form-input" id="loyalty-create-rfid" autocomplete="off" placeholder="Opcional">
+        </div>
+        <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:10px; border-top:1px solid var(--border-color); padding-top:14px;">
+          <button type="button" class="btn btn-secondary" id="loyalty-create-cancel-btn" style="height:42px;">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="loyalty-create-save-btn" style="height:42px; background:var(--secondary); border-color:var(--secondary); color:white;">Crear</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  const close = () => modal.remove();
+  modal.querySelector('#loyalty-create-close-btn').addEventListener('click', close);
+  modal.querySelector('#loyalty-create-cancel-btn').addEventListener('click', close);
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  modal.querySelector('#loyalty-create-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const saveBtn = modal.querySelector('#loyalty-create-save-btn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Creando...';
+    try {
+      const customer = await createLoyaltyCustomer({
+        name: modal.querySelector('#loyalty-create-name')?.value,
+        email: modal.querySelector('#loyalty-create-email')?.value,
+        phone: modal.querySelector('#loyalty-create-phone')?.value,
+        rfidUid: modal.querySelector('#loyalty-create-rfid')?.value
+      });
+      loyaltyAdminQuery = customer?.name || '';
+      close();
+      await loadLoyaltyAdminCustomers({ keepSelection: false });
+      if (customer?.id) await selectLoyaltyAdminCustomer(customer.id);
+      showToast('Cliente creado en fidelidad.', 'success');
+    } catch (error) {
+      showToast(error.message || 'No se pudo crear el cliente.', 'error');
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Crear';
+    }
+  });
+  setTimeout(() => modal.querySelector('#loyalty-create-name')?.focus(), 50);
 }
 
 // 1. Header component renderer
@@ -1121,6 +1195,14 @@ function renderAjustesView(state) {
 
   if (path.length === 1 && path[0] === 'fidelidad') {
     const selected = loyaltyAdminSelectedCustomer;
+    const dashboard = loyaltyAdminDashboard || {
+      totalCustomers: 0,
+      customersWithRfid: 0,
+      totalPoints: 0,
+      totalVisits: 0,
+      totalSpent: 0,
+      pendingVouchers: 0
+    };
     const customerRows = loyaltyAdminCustomers.map(customer => `
       <button class="loyalty-admin-row ${selected?.id === customer.id ? 'is-selected' : ''}" data-loyalty-customer-id="${customer.id}">
         <span>
@@ -1146,10 +1228,21 @@ function renderAjustesView(state) {
           <button class="btn btn-secondary" id="loyalty-admin-refresh-btn" style="height:36px; padding:0 12px; font-size:0.85rem;">
             Actualizar
           </button>
+          <button class="btn btn-primary" id="loyalty-admin-create-btn" style="height:36px; padding:0 12px; font-size:0.85rem; background-color:var(--secondary); color:white;">
+            Nuevo
+          </button>
         </div>
         <h2 class="settings-nav-title">Fidelidad</h2>
         <div class="settings-editor-container loyalty-admin-panel">
           ${isLoyaltyConfigured ? `
+            <div class="loyalty-admin-dashboard">
+              <div><span>Clientes</span><strong>${dashboard.totalCustomers.toLocaleString('es-ES')}</strong></div>
+              <div><span>Con RFID</span><strong>${dashboard.customersWithRfid.toLocaleString('es-ES')}</strong></div>
+              <div><span>Puntos vivos</span><strong>${dashboard.totalPoints.toLocaleString('es-ES')}</strong></div>
+              <div><span>Canjes pendientes</span><strong>${dashboard.pendingVouchers.toLocaleString('es-ES')}</strong></div>
+              <div><span>Visitas</span><strong>${dashboard.totalVisits.toLocaleString('es-ES')}</strong></div>
+              <div><span>Gasto fidelizado</span><strong>${dashboard.totalSpent.toFixed(2)}€</strong></div>
+            </div>
             <div class="loyalty-admin-search">
               <input class="search-input" id="loyalty-admin-search-input" value="${escapeHtml(loyaltyAdminQuery)}" placeholder="Buscar cliente, email, telefono o RFID">
               <button class="btn btn-primary" id="loyalty-admin-search-btn" ${loyaltyAdminLoading ? 'disabled' : ''}>
@@ -1160,7 +1253,7 @@ function renderAjustesView(state) {
             <div class="loyalty-admin-layout">
               <div class="loyalty-admin-list">
                 <div class="loyalty-admin-section-title">Clientes</div>
-                ${customerRows || `<p class="gemini-muted">${loyaltyAdminLoading ? 'Cargando clientes...' : 'Busca o pulsa Actualizar para cargar clientes.'}</p>`}
+                ${customerRows || `<p class="gemini-muted">${loyaltyAdminLoading ? 'Cargando clientes...' : 'Pulsa Actualizar. Si sigue vacio, ejecuta supabase/loyalty_admin_bridge.sql en la base de fidelidad.'}</p>`}
               </div>
               <div class="loyalty-admin-detail">
                 ${selected ? `
@@ -6146,6 +6239,13 @@ function setupEventListeners(container) {
   if (loyaltyAdminRefreshBtn) {
     loyaltyAdminRefreshBtn.addEventListener('click', () => {
       loadLoyaltyAdminCustomers({ keepSelection: true });
+    });
+  }
+
+  const loyaltyAdminCreateBtn = container.querySelector('#loyalty-admin-create-btn');
+  if (loyaltyAdminCreateBtn) {
+    loyaltyAdminCreateBtn.addEventListener('click', () => {
+      showCreateLoyaltyCustomerModal();
     });
   }
 
