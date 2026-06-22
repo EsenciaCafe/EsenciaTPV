@@ -5,7 +5,9 @@
 
 create table if not exists cash_closures (
   id               text primary key,
-  business_date    date not null unique,
+  business_date    date not null,
+  shift_number     integer not null default 1,
+  shift_start_at   timestamptz,
   opening_cash     numeric(10,2) not null default 0.00,
   expected_cash    numeric(10,2) not null default 0.00,
   counted_cash     numeric(10,2) not null default 0.00,
@@ -26,6 +28,11 @@ create table if not exists cash_closures (
 );
 
 create index if not exists cash_closures_business_date_idx on cash_closures (business_date desc);
+create unique index if not exists cash_closures_business_date_shift_idx on cash_closures (business_date, shift_number);
+create index if not exists cash_closures_closed_at_idx on cash_closures (closed_at desc);
+
+alter table if exists tpv_state
+  add column if not exists role_permissions jsonb;
 
 alter table if exists cash_closures disable row level security;
 grant all on cash_closures to anon;

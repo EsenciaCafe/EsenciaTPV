@@ -848,7 +848,7 @@ function renderAjustesView(state) {
     (firstPath === 'legal' && !store.canManageAccounting()) ||
     (firstPath === 'compras' && !store.canManageAccounting()) ||
     (firstPath === 'informes' && !store.canViewReports()) ||
-    (firstPath === 'cierre' && !store.canCloseCash()) ||
+    (firstPath === 'cierre' && !store.canCloseCash() && !store.canOpenShift()) ||
     (firstPath === 'staff' && !store.canManageStaff());
 
   if (restrictedSettingsPath) {
@@ -894,7 +894,7 @@ function renderAjustesView(state) {
             <span>Informes y Ventas</span>
             ${chevron}
           </button>` : '',
-      store.canCloseCash() ? `
+      (store.canCloseCash() || store.canOpenShift()) ? `
           <button class="settings-tree-item" id="settings-to-cierre">
             <span>Cierre de Caja</span>
             ${chevron}
@@ -1060,31 +1060,43 @@ function renderAjustesView(state) {
   if (path.length === 1 && path[0] === 'cierre') {
     const selectedDate = state.selectedReportDate || new Date().toISOString().slice(0, 10);
     const selectedMonth = state.selectedReportMonth || selectedDate.slice(0, 7);
-    const summary = store.getCashClosureSummary(selectedDate);
-    const existingClosure = state.cashClosures.find(item => item.businessDate === selectedDate);
+    const lastClosure = store.getLatestCashClosure();
+    const shiftStartAt = lastClosure?.closedAt || null;
+    const summary = store.getCashClosureSummary(selectedDate, {
+      sinceTime: shiftStartAt ? new Date(shiftStartAt).getTime() : 0
+    });
+    const nextShiftNumber = store.getNextCashClosureShiftNumber(selectedDate);
     const monthClosures = state.cashClosures
       .filter(item => String(item.businessDate || '').startsWith(selectedMonth))
-      .sort((a, b) => String(a.businessDate).localeCompare(String(b.businessDate)));
+      .sort((a, b) => {
+        const byDate = String(a.businessDate).localeCompare(String(b.businessDate));
+        return byDate || Number(a.shiftNumber || 1) - Number(b.shiftNumber || 1);
+      });
     const monthSalesDates = [...new Set(state.transactions
       .filter(tx => store.getTransactionDateKey(tx).startsWith(selectedMonth) && tx.type !== 'refund')
       .map(tx => store.getTransactionDateKey(tx)))]
       .sort();
-    const closedDates = new Set(monthClosures.map(closure => closure.businessDate));
-    const missingClosureDates = monthSalesDates.filter(date => !closedDates.has(date));
+    const missingClosureDates = monthSalesDates.filter(date => {
+      const latestForDate = store.getLatestCashClosure(date);
+      if (!latestForDate) return true;
+      const latestSaleTime = Math.max(...state.transactions
+        .filter(tx => store.getTransactionDateKey(tx) === date && tx.type !== 'refund')
+        .map(tx => store.getTransactionDate(tx).getTime()));
+      return latestSaleTime > new Date(latestForDate.closedAt || `${date}T23:59:59`).getTime();
+    });
     const monthClosureRows = monthClosures.map(closure => `
       <div class="gemini-summary-row">
         <span>${formatIsoDateEs(closure.businessDate)} · ${escapeHtml(closure.staffName || closure.staff?.name || 'Sin usuario')}</span>
         <strong>${Number(closure.cashDifference || 0).toFixed(2)}€ / ${Number(closure.cardDifference || 0).toFixed(2)}€</strong>
       </div>
     `).join('');
-    const isClosed = Boolean(existingClosure);
-    const openingCash = existingClosure?.openingCash ?? 100;
-    const countedCash = existingClosure?.countedCash ?? '';
-    const bbvaTotal = existingClosure?.bbvaTotal ?? summary.expectedCard;
+    const openingCash = 100;
+    const countedCash = '';
+    const bbvaTotal = summary.expectedCard;
     const expectedDrawer = openingCash + summary.expectedCash;
-    const cashDifference = existingClosure ? existingClosure.cashDifference : 0;
+    const cashDifference = 0;
     const cardDifference = bbvaTotal - summary.expectedCard;
-    const disabledAttr = isClosed ? 'disabled' : '';
+    const disabledAttr = '';
 
     return `
       <div class="view-container">
@@ -1103,6 +1115,11 @@ function renderAjustesView(state) {
             <button type="button" class="btn btn-secondary" id="cash-closure-export-btn" style="height:44px;" ${monthClosures.length ? '' : 'disabled'}>
               Exportar cierres Excel
             </button>
+            ${store.canOpenShift() ? `
+              <button type="button" class="btn btn-secondary" id="cash-open-shift-btn" style="height:44px;">
+                Abrir nuevo turno
+              </button>
+            ` : ''}
             <div class="gemini-muted" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
               <strong>${monthClosures.length}</strong> cierres guardados en este mes.
               ${monthClosureRows || '<div style="margin-top:8px;">Todavia no hay cierres guardados para exportar.</div>'}
@@ -1127,11 +1144,9 @@ function renderAjustesView(state) {
               <label>Dia</label>
               <input type="date" id="cash-closure-date-input" value="${selectedDate}">
             </div>
-            ${isClosed ? `
-              <div class="gemini-muted" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
-                Este dia ya esta cerrado. El cierre queda bloqueado para no modificar la foto final de caja.
-              </div>
-            ` : ''}
+            <div class="gemini-muted" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
+              Cierre del turno ${nextShiftNumber}. ${shiftStartAt ? `Turno iniciado tras el cierre de ${new Date(shiftStartAt).toLocaleString('es-ES')}.` : 'Primer turno registrado.'}
+            </div>
             <div class="accounting-summary-grid">
               <div><span>Ventas netas</span><strong>${summary.netTotal.toFixed(2)}€</strong></div>
               <div><span>Efectivo app</span><strong>${summary.expectedCash.toFixed(2)}€</strong></div>
@@ -1159,23 +1174,19 @@ function renderAjustesView(state) {
               <div class="${Math.abs(cardDifference) > 0.009 ? 'needs-review' : ''}"><span>Diferencia BBVA</span><strong>${cardDifference.toFixed(2)}€</strong></div>
             </div>
             <div id="closure-live-preview" class="gemini-muted" data-expected-cash="${summary.expectedCash}" data-expected-card="${summary.expectedCard}" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
-              ${isClosed
-                ? `Cierre guardado: efectivo ${existingClosure.cashDifference.toFixed(2)}€, BBVA ${existingClosure.cardDifference.toFixed(2)}€.`
-                : 'Introduce el efectivo contado y pulsa Calcular descuadre antes de cerrar.'}
+              Introduce el efectivo contado y pulsa Calcular descuadre antes de cerrar el turno.
             </div>
-            ${!isClosed ? `
-              <button type="button" class="btn btn-secondary" id="closure-calc-btn" style="height:44px;">
-                Calcular descuadre
-              </button>
-            ` : ''}
+            <button type="button" class="btn btn-secondary" id="closure-calc-btn" style="height:44px;">
+              Calcular descuadre
+            </button>
             <div class="editor-form-group">
               <label class="editor-form-label">Notas</label>
-              <textarea class="editor-form-input" id="closure-notes" rows="3" placeholder="Descuadres, incidencias, observaciones..." ${disabledAttr}>${escapeHtml(existingClosure?.notes || '')}</textarea>
+              <textarea class="editor-form-input" id="closure-notes" rows="3" placeholder="Descuadres, incidencias, observaciones..." ${disabledAttr}></textarea>
             </div>
-            <button type="submit" class="btn btn-primary" style="height:48px; background-color:var(--secondary);" ${store.cashClosurePersistenceReady && !isClosed ? '' : 'disabled'}>
-              ${isClosed ? 'Cierre guardado' : 'Guardar cierre'}
+            <button type="submit" class="btn btn-primary" style="height:48px; background-color:var(--secondary);" ${store.cashClosurePersistenceReady && store.canCloseCash() ? '' : 'disabled'}>
+              Guardar cierre de turno
             </button>
-            ${existingClosure ? `<p class="gemini-muted">Ultimo cierre guardado: ${new Date(existingClosure.closedAt).toLocaleString('es-ES')}</p>` : ''}
+            ${lastClosure ? `<p class="gemini-muted">Ultimo cierre guardado: ${new Date(lastClosure.closedAt).toLocaleString('es-ES')}</p>` : ''}
           </form>
         </div>
       </div>
@@ -1394,6 +1405,15 @@ function renderAjustesView(state) {
   }
 
   if (path.length === 1 && path[0] === 'staff' && store.canManageStaff()) {
+    const permissionsRow = `
+      <button class="settings-tree-item" id="settings-to-role-permissions">
+        <span>
+          <strong>Permisos por rol</strong>
+          <small>Otorgar o revocar accesos de encargado y staff</small>
+        </span>
+        ${chevron}
+      </button>
+    `;
     const staffRows = state.staffProfiles.map(profile => `
       <button class="settings-tree-item staff-row" data-edit-staff-id="${profile.id}">
         <span>
@@ -1416,8 +1436,49 @@ function renderAjustesView(state) {
         </div>
         <h2 class="settings-nav-title">Personal</h2>
         <div class="settings-tree-list">
+          ${permissionsRow}
           ${staffRows || '<p style="padding:24px; text-align:center; color:var(--text-muted);">No hay perfiles de personal.</p>'}
         </div>
+      </div>
+    `;
+  }
+
+  if (path.length === 2 && path[0] === 'staff' && path[1] === 'permisos' && store.canManageStaff()) {
+    const permissions = state.rolePermissions || {};
+    const permissionLabels = [
+      ['accessSettings', 'Entrar en Ajustes'],
+      ['manageCatalog', 'Gestionar articulos y cuadricula'],
+      ['manageAccounting', 'Gestionar datos fiscales, compras y facturas'],
+      ['viewReports', 'Ver y exportar informes'],
+      ['closeCash', 'Cerrar caja'],
+      ['openShift', 'Abrir nuevo turno'],
+      ['issueRefunds', 'Registrar devoluciones'],
+      ['resetTerminal', 'Restablecer terminal'],
+      ['manageStaff', 'Gestionar personal'],
+      ['managePermissions', 'Gestionar permisos']
+    ];
+    const renderRolePermissions = (role, label) => `
+      <div class="settings-editor-container" style="margin-bottom:16px;">
+        <h3 style="margin:0 0 12px;">${label}</h3>
+        ${permissionLabels.map(([key, text]) => `
+          <label class="staff-active-toggle">
+            <input type="checkbox" class="role-permission-input" data-role="${role}" data-permission="${key}" ${permissions?.[role]?.[key] ? 'checked' : ''}>
+            <span>${text}</span>
+          </label>
+        `).join('')}
+      </div>
+    `;
+
+    return `
+      <div class="view-container">
+        <div class="settings-nav-header">
+          <button class="settings-back-arrow-btn" id="settings-back-btn">
+            ${backArrow} Personal
+          </button>
+        </div>
+        <h2 class="settings-nav-title">Permisos por rol</h2>
+        ${renderRolePermissions('manager', 'Encargado')}
+        ${renderRolePermissions('staff', 'Staff')}
       </div>
     `;
   }
@@ -4534,6 +4595,7 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
   const tableRows = sortedClosures.map(closure => `
     <tr>
       <td>${formatIsoDateEs(closure.businessDate)}</td>
+      <td>${Number(closure.shiftNumber || 1)}</td>
       <td>${Number(closure.transactionsCount || 0)}</td>
       <td>${moneyCell(closure.totalSales)}</td>
       <td>${moneyCell(closure.totalRefunds)}</td>
@@ -4569,6 +4631,7 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
     <thead>
       <tr>
         <th>Fecha</th>
+        <th>Turno</th>
         <th>Tickets</th>
         <th>Ventas brutas</th>
         <th>Devoluciones</th>
@@ -4588,6 +4651,7 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
       ${tableRows}
       <tr class="total-row">
         <td>Total</td>
+        <td></td>
         <td>${totals.transactionsCount}</td>
         <td>${moneyCell(totals.totalSales)}</td>
         <td>${moneyCell(totals.totalRefunds)}</td>
@@ -5926,6 +5990,20 @@ function setupEventListeners(container) {
     });
   }
 
+  const openShiftBtn = container.querySelector('#cash-open-shift-btn');
+  if (openShiftBtn) {
+    openShiftBtn.addEventListener('click', () => {
+      if (!store.canOpenShift()) {
+        showToast('No tienes permiso para abrir turnos.', 'error');
+        return;
+      }
+      store.state.selectedReportDate = new Date().toISOString().slice(0, 10);
+      store.state.selectedReportMonth = store.state.selectedReportDate.slice(0, 7);
+      store.notify();
+      showToast('Turno activo preparado. Las ventas nuevas se contaran desde el ultimo cierre.', 'success');
+    });
+  }
+
   const closureDateInput = container.querySelector('#cash-closure-date-input');
   if (closureDateInput) {
     closureDateInput.addEventListener('change', (e) => {
@@ -6181,6 +6259,26 @@ function setupEventListeners(container) {
       store.navigateSettings(['staff', 'nuevo']);
     });
   }
+
+  const rolePermissionsBtn = container.querySelector('#settings-to-role-permissions');
+  if (rolePermissionsBtn) {
+    rolePermissionsBtn.addEventListener('click', () => {
+      store.navigateSettings(['staff', 'permisos']);
+    });
+  }
+
+  container.querySelectorAll('.role-permission-input').forEach(input => {
+    input.addEventListener('change', () => {
+      const role = input.dataset.role;
+      const permission = input.dataset.permission;
+      const current = store.state.rolePermissions?.[role] || {};
+      const saved = store.updateRolePermissions(role, {
+        ...current,
+        [permission]: input.checked
+      });
+      showToast(saved ? 'Permisos actualizados.' : 'No tienes permiso para cambiar permisos.', saved ? 'success' : 'error');
+    });
+  });
 
   container.querySelectorAll('[data-edit-staff-id]').forEach(btn => {
     btn.addEventListener('click', () => {

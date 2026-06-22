@@ -31,6 +31,45 @@ import { supabase } from './supabase.js';
 
 const DINING_STATE_STORAGE_KEY = 'tpv-dining-state-v1';
 const STAFF_SESSION_STORAGE_KEY = 'tpv-staff-session-v1';
+const DEFAULT_ROLE_PERMISSIONS = {
+  admin: {
+    accessSettings: true,
+    manageCatalog: true,
+    manageAccounting: true,
+    viewReports: true,
+    closeCash: true,
+    openShift: true,
+    issueRefunds: true,
+    resetTerminal: true,
+    manageStaff: true,
+    managePermissions: true
+  },
+  manager: {
+    accessSettings: true,
+    manageCatalog: false,
+    manageAccounting: false,
+    viewReports: true,
+    closeCash: true,
+    openShift: true,
+    issueRefunds: true,
+    resetTerminal: false,
+    manageStaff: false,
+    managePermissions: false
+  },
+  staff: {
+    accessSettings: false,
+    manageCatalog: false,
+    manageAccounting: false,
+    viewReports: false,
+    closeCash: false,
+    openShift: false,
+    issueRefunds: false,
+    resetTerminal: false,
+    manageStaff: false,
+    managePermissions: false
+  }
+};
+
 const createInitialTables = () => [
   ...Array.from({ length: 12 }, (_, i) => ({
   id: i + 1,
@@ -97,6 +136,7 @@ class Store {
       supplierInvoiceLines: [],
       supplierSenderRules: [],
       cashClosures: [],
+      rolePermissions: JSON.parse(JSON.stringify(DEFAULT_ROLE_PERMISSIONS)),
 
       // ── REPORT NAVIGATION ─────────────────────────────────────
       // ISO date string YYYY-MM-DD (default = today)
@@ -166,6 +206,9 @@ class Store {
       if (savedState.legal) {
         this.state.legal = { ...this.state.legal, ...savedState.legal };
       }
+      if (savedState.rolePermissions) {
+        this.state.rolePermissions = this.mergeRolePermissions(savedState.rolePermissions);
+      }
     } catch (err) {
       console.warn('[Store] No se pudo restaurar el estado de mesas.', err);
     }
@@ -179,7 +222,8 @@ class Store {
           tables: this.state.tables,
           directSaleTicket: this.state.directSaleTicket,
           transactions: this.state.transactions,
-          legal: this.state.legal
+          legal: this.state.legal,
+          rolePermissions: this.state.rolePermissions
         }));
       } catch (err) {
         console.warn('[Store] No se pudo guardar el estado de mesas en LocalStorage.', err);
@@ -187,7 +231,7 @@ class Store {
     }
 
     // 2. Save to Supabase (Realtime Sync)
-    saveTPVState(this.state.tables, this.state.directSaleTicket, this.state.transactions, this.state.legal);
+    saveTPVState(this.state.tables, this.state.directSaleTicket, this.state.transactions, this.state.legal, this.state.rolePermissions);
   }
 
   // Subscribe components
@@ -212,36 +256,74 @@ class Store {
     return labels[role] || 'Sin rol';
   }
 
+  mergeRolePermissions(source = {}) {
+    const merged = JSON.parse(JSON.stringify(DEFAULT_ROLE_PERMISSIONS));
+    ['manager', 'staff'].forEach(role => {
+      if (source[role]) {
+        merged[role] = { ...merged[role], ...source[role] };
+      }
+    });
+    return merged;
+  }
+
+  hasPermission(permission, role = this.state.auth.role) {
+    if (role === 'admin') return true;
+    return this.state.rolePermissions?.[role]?.[permission] === true;
+  }
+
+  updateRolePermissions(role, permissions = {}) {
+    if (!this.hasPermission('managePermissions') || role === 'admin') return false;
+    this.state.rolePermissions = this.mergeRolePermissions({
+      ...this.state.rolePermissions,
+      [role]: {
+        ...(this.state.rolePermissions?.[role] || {}),
+        ...permissions
+      }
+    });
+    this.notify();
+    return true;
+  }
+
   canAccessSettings() {
-    return ['admin', 'manager'].includes(this.state.auth.role);
+    return this.hasPermission('accessSettings') ||
+      this.canManageCatalog() ||
+      this.canManageAccounting() ||
+      this.canViewReports() ||
+      this.canCloseCash() ||
+      this.canOpenShift() ||
+      this.canManageStaff();
   }
 
   canManageCatalog() {
-    return this.state.auth.role === 'admin';
+    return this.hasPermission('manageCatalog');
   }
 
   canManageAccounting() {
-    return this.state.auth.role === 'admin';
+    return this.hasPermission('manageAccounting');
   }
 
   canViewReports() {
-    return ['admin', 'manager'].includes(this.state.auth.role);
+    return this.hasPermission('viewReports');
   }
 
   canCloseCash() {
-    return ['admin', 'manager'].includes(this.state.auth.role);
+    return this.hasPermission('closeCash');
+  }
+
+  canOpenShift() {
+    return this.hasPermission('openShift');
   }
 
   canIssueRefunds() {
-    return ['admin', 'manager'].includes(this.state.auth.role);
+    return this.hasPermission('issueRefunds');
   }
 
   canResetTerminal() {
-    return this.state.auth.role === 'admin';
+    return this.hasPermission('resetTerminal');
   }
 
   canManageStaff() {
-    return this.state.auth.role === 'admin';
+    return this.hasPermission('manageStaff');
   }
 
   setStaffSession(profile) {
@@ -434,7 +516,10 @@ class Store {
               this.state.legal = { ...this.state.legal, ...tpvState.direct_sale.legal_data };
             }
             // Store directSaleTicket without legal_data inside it
-            const { legal_data: _ld, ...directSaleClean } = tpvState.direct_sale;
+            if (tpvState.direct_sale.role_permissions) {
+              this.state.rolePermissions = this.mergeRolePermissions(tpvState.direct_sale.role_permissions);
+            }
+            const { legal_data: _ld, role_permissions: _rp, ...directSaleClean } = tpvState.direct_sale;
             this.state.directSaleTicket = directSaleClean;
           }
           if (Array.isArray(tpvState.transactions)) {
@@ -443,6 +528,9 @@ class Store {
           // Top-level legal_data column (if the column exists in Supabase)
           if (tpvState.legal_data && Object.keys(tpvState.legal_data).length > 0) {
             this.state.legal = { ...this.state.legal, ...tpvState.legal_data };
+          }
+          if (tpvState.role_permissions) {
+            this.state.rolePermissions = this.mergeRolePermissions(tpvState.role_permissions);
           }
         }
       } catch (err) {
@@ -504,9 +592,13 @@ class Store {
               changed = true;
             }
             if (newState.direct_sale && JSON.stringify(this.state.directSaleTicket) !== JSON.stringify(newState.direct_sale)) {
-              this.state.directSaleTicket = newState.direct_sale;
+              const { legal_data: _ld, role_permissions: rolePermissions, ...directSaleClean } = newState.direct_sale;
+              this.state.directSaleTicket = directSaleClean;
               if (newState.direct_sale.legal_data && JSON.stringify(this.state.legal) !== JSON.stringify(newState.direct_sale.legal_data)) {
                 this.state.legal = newState.direct_sale.legal_data;
+              }
+              if (rolePermissions) {
+                this.state.rolePermissions = this.mergeRolePermissions(rolePermissions);
               }
               changed = true;
             }
@@ -516,6 +608,10 @@ class Store {
             }
             if (newState.legal_data && JSON.stringify(this.state.legal) !== JSON.stringify(newState.legal_data)) {
               this.state.legal = newState.legal_data;
+              changed = true;
+            }
+            if (newState.role_permissions && JSON.stringify(this.state.rolePermissions) !== JSON.stringify(newState.role_permissions)) {
+              this.state.rolePermissions = this.mergeRolePermissions(newState.role_permissions);
               changed = true;
             }
 
@@ -690,14 +786,21 @@ class Store {
     return new Date();
   }
 
-  getLatestCashClosure() {
+  getLatestCashClosure(date = null) {
     return [...this.state.cashClosures]
-      .filter(closure => closure.closedAt || closure.businessDate)
+      .filter(closure => (!date || closure.businessDate === date) && (closure.closedAt || closure.businessDate))
       .sort((a, b) => {
         const aTime = new Date(a.closedAt || `${a.businessDate}T23:59:59`).getTime();
         const bTime = new Date(b.closedAt || `${b.businessDate}T23:59:59`).getTime();
         return bTime - aTime;
       })[0] || null;
+  }
+
+  getNextCashClosureShiftNumber(date) {
+    const shifts = this.state.cashClosures
+      .filter(closure => closure.businessDate === date)
+      .map(closure => Number(closure.shiftNumber || 1));
+    return shifts.length ? Math.max(...shifts) + 1 : 1;
   }
 
   getActiveShiftSummary() {
@@ -738,8 +841,12 @@ class Store {
     }];
   }
 
-  getCashClosureSummary(date = new Date().toISOString().slice(0, 10)) {
-    const dayTx = this.state.transactions.filter(tx => this.getTransactionDateKey(tx) === date);
+  getCashClosureSummary(date = new Date().toISOString().slice(0, 10), options = {}) {
+    const sinceTime = Number(options.sinceTime || 0);
+    const dayTx = this.state.transactions.filter(tx =>
+      this.getTransactionDateKey(tx) === date &&
+      this.getTransactionDate(tx).getTime() > sinceTime
+    );
     const summary = dayTx.reduce((acc, tx) => {
       const total = Number(tx.total || 0);
       if (tx.type === 'refund') {
@@ -781,16 +888,19 @@ class Store {
 
   async saveCashClosure(data) {
     if (!this.canCloseCash() || !this.cashClosurePersistenceReady) return false;
-    const alreadyClosed = this.state.cashClosures.some(closure => closure.businessDate === data.businessDate);
-    if (alreadyClosed) return false;
-
-    const summary = this.getCashClosureSummary(data.businessDate);
+    const lastClosure = this.getLatestCashClosure();
+    const shiftStartAt = lastClosure?.closedAt || null;
+    const sinceTime = shiftStartAt ? new Date(shiftStartAt).getTime() : 0;
+    const shiftNumber = this.getNextCashClosureShiftNumber(data.businessDate);
+    const summary = this.getCashClosureSummary(data.businessDate, { sinceTime });
     const countedCash = Number(data.countedCash || 0);
     const openingCash = Number(data.openingCash || 0);
     const bbvaTotal = Number(data.bbvaTotal || 0);
     const closure = {
-      id: `closure-${data.businessDate}`,
+      id: `closure-${data.businessDate}-shift-${shiftNumber}`,
       ...summary,
+      shiftNumber,
+      shiftStartAt,
       openingCash,
       countedCash,
       cashDifference: Number((countedCash - openingCash - summary.expectedCash).toFixed(2)),

@@ -49,11 +49,13 @@ create table if not exists tpv_state (
   direct_sale  jsonb not null default '{}',
   transactions jsonb not null default '[]',
   legal_data   jsonb not null default '{}',
+  role_permissions jsonb,
   updated_at   timestamptz default now()
 );
 
 -- Asegurar columna legal_data si la tabla ya existía
 alter table tpv_state add column if not exists legal_data jsonb not null default '{}';
+alter table tpv_state add column if not exists role_permissions jsonb;
 
 -- Tickets públicos accesibles por token para QR
 create table if not exists receipt_tickets (
@@ -122,7 +124,9 @@ create index if not exists sale_payments_method_idx on sale_payments (method);
 
 create table if not exists cash_closures (
   id               text primary key,
-  business_date    date not null unique,
+  business_date    date not null,
+  shift_number     integer not null default 1,
+  shift_start_at   timestamptz,
   opening_cash     numeric(10,2) not null default 0.00,
   expected_cash    numeric(10,2) not null default 0.00,
   counted_cash     numeric(10,2) not null default 0.00,
@@ -143,6 +147,8 @@ create table if not exists cash_closures (
 );
 
 create index if not exists cash_closures_business_date_idx on cash_closures (business_date desc);
+create unique index if not exists cash_closures_business_date_shift_idx on cash_closures (business_date, shift_number);
+create index if not exists cash_closures_closed_at_idx on cash_closures (closed_at desc);
 
 -- Perfiles de personal y roles de acceso
 create table if not exists staff_profiles (

@@ -411,6 +411,8 @@ export async function loadCashClosures(limit = 120) {
   return (data || []).map(row => ({
     id: row.id,
     businessDate: row.business_date,
+    shiftNumber: Number(row.shift_number || 1),
+    shiftStartAt: row.shift_start_at || null,
     openingCash: parseFloat(row.opening_cash || 0),
     expectedCash: parseFloat(row.expected_cash || 0),
     countedCash: parseFloat(row.counted_cash || 0),
@@ -431,10 +433,12 @@ export async function loadCashClosures(limit = 120) {
 
 export async function upsertCashClosure(closure) {
   if (!closure?.businessDate) return null;
-  const id = closure.id || `closure-${closure.businessDate}`;
+  const id = closure.id || `closure-${closure.businessDate}-shift-${closure.shiftNumber || 1}`;
   const row = {
     id,
     business_date: closure.businessDate,
+    shift_number: closure.shiftNumber || 1,
+    shift_start_at: closure.shiftStartAt || null,
     opening_cash: closure.openingCash || 0,
     expected_cash: closure.expectedCash || 0,
     counted_cash: closure.countedCash || 0,
@@ -453,7 +457,7 @@ export async function upsertCashClosure(closure) {
     updated_at: new Date().toISOString()
   };
 
-  const { error } = await supabase.from('cash_closures').upsert(row, { onConflict: 'business_date' });
+  const { error } = await supabase.from('cash_closures').upsert(row, { onConflict: 'id' });
   if (error) {
     notifyDbError('upsertCashClosure', error.message);
     return null;
@@ -692,10 +696,11 @@ export async function loadTPVState() {
   return data;
 }
 
-export async function saveTPVState(tables, directSale, transactions, legal) {
+export async function saveTPVState(tables, directSale, transactions, legal, rolePermissions = null) {
   const directSaleWithFallback = {
     ...directSale,
-    legal_data: legal
+    legal_data: legal,
+    role_permissions: rolePermissions || undefined
   };
 
   const { error } = await supabase
@@ -706,6 +711,7 @@ export async function saveTPVState(tables, directSale, transactions, legal) {
       direct_sale: directSaleWithFallback,
       transactions,
       legal_data: legal,
+      role_permissions: rolePermissions,
       updated_at: new Date().toISOString()
     }, { onConflict: 'id' });
 
