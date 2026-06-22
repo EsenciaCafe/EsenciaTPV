@@ -1868,9 +1868,12 @@ function renderAjustesView(state) {
           </div>
 
           <!-- Export Action -->
-          <div style="padding: 0 16px 16px 16px;">
+          <div style="padding: 0 16px 16px 16px; display:grid; gap:10px;">
             <button class="btn btn-primary btn-full" id="btn-export-mensual" style="height: 44px; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; background-color: var(--secondary); color: white;">
               📅 Exportar Mensual (PDF)
+            </button>
+            <button class="btn btn-secondary btn-full" id="btn-export-mensual-excel" style="height: 44px; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              Exportar Mensual Excel
             </button>
           </div>
 
@@ -4533,6 +4536,199 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
   URL.revokeObjectURL(url);
 }
 
+function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
+  const getTxDate = (tx) => {
+    if (tx.createdAt) return new Date(tx.createdAt);
+    if (tx.date) {
+      const [datePart, timePart = '00:00'] = tx.date.split(', ');
+      const [day, month, year] = datePart.split('/').map(Number);
+      const [hour, minute] = timePart.split(':').map(Number);
+      return new Date(year, month - 1, day, hour || 0, minute || 0);
+    }
+    return new Date();
+  };
+  const getLocalDateKey = (date) => {
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const moneyCell = value => Number(value || 0).toFixed(2);
+  const escapeCell = value => escapeHtml(value ?? '');
+  const paymentBreakdown = (tx) => {
+    if (Array.isArray(tx.payments) && tx.payments.length > 0) {
+      return tx.payments.map(payment => ({
+        method: payment.method || tx.paymentMethod || '',
+        amount: Number(payment.amount || 0),
+        provider: payment.provider || ''
+      }));
+    }
+    return [{
+      method: tx.paymentMethod || '',
+      amount: Number(tx.total || 0),
+      provider: String(tx.paymentMethod || '').toLowerCase().includes('tarjeta') ? 'BBVA' : ''
+    }];
+  };
+
+  const sortedTx = [...transactions].sort((a, b) => getTxDate(a) - getTxDate(b));
+  const daily = {};
+  const paymentTotals = {};
+  const itemTotals = {};
+  let grossSales = 0;
+  let refunds = 0;
+  let ticketCount = 0;
+
+  sortedTx.forEach(tx => {
+    const d = getTxDate(tx);
+    const dayKey = getLocalDateKey(d);
+    if (!daily[dayKey]) {
+      daily[dayKey] = { date: dayKey, tickets: 0, gross: 0, refunds: 0, net: 0, cash: 0, card: 0, other: 0 };
+    }
+
+    const total = Number(tx.total || 0);
+    const isRefund = tx.type === 'refund';
+    if (isRefund) {
+      refunds += Math.abs(total);
+      daily[dayKey].refunds += Math.abs(total);
+    } else {
+      grossSales += total;
+      ticketCount += 1;
+      daily[dayKey].tickets += 1;
+      daily[dayKey].gross += total;
+    }
+    daily[dayKey].net += total;
+
+    paymentBreakdown(tx).forEach(payment => {
+      const method = payment.method || 'Sin metodo';
+      const amount = Number(payment.amount || 0);
+      paymentTotals[method] = (paymentTotals[method] || 0) + amount;
+      const methodKey = method.toLowerCase();
+      if (methodKey.includes('efectivo')) daily[dayKey].cash += amount;
+      else if (methodKey.includes('tarjeta')) daily[dayKey].card += amount;
+      else daily[dayKey].other += amount;
+    });
+
+    (tx.items || []).forEach(item => {
+      const key = item.name || 'Articulo';
+      if (!itemTotals[key]) itemTotals[key] = { name: key, qty: 0, total: 0 };
+      itemTotals[key].qty += Number(item.qty || 0);
+      itemTotals[key].total += Number(item.total ?? ((item.price || 0) * (item.qty || 0)));
+    });
+  });
+
+  const dailyRows = Object.values(daily).sort((a, b) => a.date.localeCompare(b.date)).map(day => `
+    <tr>
+      <td>${formatIsoDateEs(day.date)}</td>
+      <td>${day.tickets}</td>
+      <td>${moneyCell(day.gross)}</td>
+      <td>${moneyCell(day.refunds)}</td>
+      <td>${moneyCell(day.cash)}</td>
+      <td>${moneyCell(day.card)}</td>
+      <td>${moneyCell(day.other)}</td>
+      <td>${moneyCell(day.net)}</td>
+    </tr>
+  `).join('');
+
+  const txRows = sortedTx.map(tx => {
+    const d = getTxDate(tx);
+    const payments = paymentBreakdown(tx);
+    return `
+      <tr>
+        <td>${formatIsoDateEs(getLocalDateKey(d))}</td>
+        <td>${escapeCell(d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }))}</td>
+        <td>${escapeCell(tx.id)}</td>
+        <td>${escapeCell(tx.table)}</td>
+        <td>${escapeCell(tx.type === 'refund' ? 'Devolucion' : 'Venta')}</td>
+        <td>${escapeCell(payments.map(payment => payment.method).join(' + '))}</td>
+        <td>${escapeCell(payments.map(payment => payment.provider).filter(Boolean).join(' + '))}</td>
+        <td>${Number(tx.itemsCount || 0)}</td>
+        <td>${moneyCell(tx.total)}</td>
+        <td>${escapeCell(tx.staff?.name || tx.staffName || '')}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const itemRows = Object.values(itemTotals)
+    .sort((a, b) => b.total - a.total)
+    .map(item => `
+      <tr>
+        <td>${escapeCell(item.name)}</td>
+        <td>${moneyCell(item.qty)}</td>
+        <td>${moneyCell(item.total)}</td>
+      </tr>
+    `).join('');
+
+  const paymentRows = Object.entries(paymentTotals)
+    .sort((a, b) => b[1] - a[1])
+    .map(([method, total]) => `
+      <tr>
+        <td>${escapeCell(method)}</td>
+        <td>${moneyCell(total)}</td>
+      </tr>
+    `).join('');
+
+  const netSales = grossSales - refunds;
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; }
+    h1, h2 { margin-bottom: 8px; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 24px; }
+    th, td { border: 1px solid #999; padding: 6px; }
+    th { background: #e8e8e8; font-weight: bold; }
+    .total-row td { font-weight: bold; background: #f5f5f5; }
+  </style>
+</head>
+<body>
+  <h1>Ventas mensuales - ${escapeCell(legal?.businessName || 'Esencia Cafe')}</h1>
+  <p>Mes: ${escapeCell(selectedMonth)}</p>
+
+  <h2>Resumen</h2>
+  <table>
+    <tr><th>Tickets</th><th>Ventas brutas</th><th>Devoluciones</th><th>Ventas netas</th></tr>
+    <tr><td>${ticketCount}</td><td>${moneyCell(grossSales)}</td><td>${moneyCell(refunds)}</td><td>${moneyCell(netSales)}</td></tr>
+  </table>
+
+  <h2>Resumen por dia</h2>
+  <table>
+    <thead><tr><th>Fecha</th><th>Tickets</th><th>Ventas brutas</th><th>Devoluciones</th><th>Efectivo</th><th>Tarjeta</th><th>Otros</th><th>Neto</th></tr></thead>
+    <tbody>${dailyRows || '<tr><td colspan="8">Sin ventas</td></tr>'}</tbody>
+  </table>
+
+  <h2>Metodos de pago</h2>
+  <table>
+    <thead><tr><th>Metodo</th><th>Total</th></tr></thead>
+    <tbody>${paymentRows || '<tr><td colspan="2">Sin pagos</td></tr>'}</tbody>
+  </table>
+
+  <h2>Articulos vendidos</h2>
+  <table>
+    <thead><tr><th>Articulo</th><th>Cantidad</th><th>Total</th></tr></thead>
+    <tbody>${itemRows || '<tr><td colspan="3">Sin articulos</td></tr>'}</tbody>
+  </table>
+
+  <h2>Detalle de tickets</h2>
+  <table>
+    <thead><tr><th>Fecha</th><th>Hora</th><th>Ticket</th><th>Mesa</th><th>Tipo</th><th>Metodo</th><th>Proveedor pago</th><th>Articulos</th><th>Total</th><th>Usuario</th></tr></thead>
+    <tbody>${txRows || '<tr><td colspan="10">Sin tickets</td></tr>'}</tbody>
+  </table>
+</body>
+</html>`;
+
+  const blob = new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', `ventas-mensuales-${selectedMonth}.xls`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
   try {
     const { jsPDF } = window.jspdf;
@@ -6155,6 +6351,37 @@ function setupEventListeners(container) {
       const filename = `Informe-Mensual-${selectedMonth}.pdf`;
 
       downloadMonthlyReportPDF(selectedMonth, sortedDays, store.state.legal, filename);
+    });
+  }
+
+  const btnExportMensualExcel = container.querySelector('#btn-export-mensual-excel');
+  if (btnExportMensualExcel) {
+    btnExportMensualExcel.addEventListener('click', () => {
+      const getTxDate = (tx) => {
+        if (tx.createdAt) return new Date(tx.createdAt);
+        if (tx.date) {
+          const [datePart, timePart = '00:00'] = tx.date.split(', ');
+          const [day, month, year] = datePart.split('/').map(Number);
+          const [hour, minute] = timePart.split(':').map(Number);
+          return new Date(year, month - 1, day, hour || 0, minute || 0);
+        }
+        return new Date();
+      };
+
+      const selectedMonth = store.state.selectedReportMonth || new Date().toISOString().slice(0, 7);
+      const monthTx = store.state.transactions.filter(tx => {
+        const d = getTxDate(tx);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        return `${yyyy}-${mm}` === selectedMonth;
+      });
+
+      if (!monthTx.length) {
+        showToast('No hay ventas en ese mes para exportar.', 'warning');
+        return;
+      }
+
+      downloadMonthlySalesExcel(selectedMonth, monthTx, store.state.legal);
     });
   }
 
