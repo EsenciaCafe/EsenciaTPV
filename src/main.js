@@ -1331,7 +1331,7 @@ function renderAjustesView(state) {
       <button class="settings-tree-item staff-row" data-edit-staff-id="${profile.id}">
         <span>
           <strong>${profile.display_name}</strong>
-          <small>${store.getRoleLabel(profile.role)} · PIN ${profile.pin_code} · ${profile.active ? 'Activo' : 'Inactivo'}</small>
+          <small>${store.getRoleLabel(profile.role)} · ${profile.pin_code ? 'PIN configurado' : 'Sin PIN'} · ${profile.active ? 'Activo' : 'Inactivo'}</small>
         </span>
         ${chevron}
       </button>
