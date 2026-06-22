@@ -716,6 +716,9 @@ class Store {
 
   async saveCashClosure(data) {
     if (!this.canAccessSettings() || !this.cashClosurePersistenceReady) return false;
+    const alreadyClosed = this.state.cashClosures.some(closure => closure.businessDate === data.businessDate);
+    if (alreadyClosed) return false;
+
     const summary = this.getCashClosureSummary(data.businessDate);
     const countedCash = Number(data.countedCash || 0);
     const openingCash = Number(data.openingCash || 0);

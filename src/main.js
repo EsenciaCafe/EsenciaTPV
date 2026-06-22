@@ -988,12 +988,14 @@ function renderAjustesView(state) {
     const selectedDate = state.selectedReportDate || new Date().toISOString().slice(0, 10);
     const summary = store.getCashClosureSummary(selectedDate);
     const existingClosure = state.cashClosures.find(item => item.businessDate === selectedDate);
-    const openingCash = existingClosure?.openingCash ?? 0;
-    const countedCash = existingClosure?.countedCash ?? 0;
+    const isClosed = Boolean(existingClosure);
+    const openingCash = existingClosure?.openingCash ?? 100;
+    const countedCash = existingClosure?.countedCash ?? '';
     const bbvaTotal = existingClosure?.bbvaTotal ?? summary.expectedCard;
     const expectedDrawer = openingCash + summary.expectedCash;
-    const cashDifference = countedCash ? countedCash - expectedDrawer : (existingClosure?.cashDifference ?? 0);
+    const cashDifference = existingClosure ? existingClosure.cashDifference : 0;
     const cardDifference = bbvaTotal - summary.expectedCard;
+    const disabledAttr = isClosed ? 'disabled' : '';
 
     return `
       <div class="view-container">
@@ -1014,6 +1016,11 @@ function renderAjustesView(state) {
               <label>Dia</label>
               <input type="date" id="cash-closure-date-input" value="${selectedDate}">
             </div>
+            ${isClosed ? `
+              <div class="gemini-muted" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
+                Este dia ya esta cerrado. El cierre queda bloqueado para no modificar la foto final de caja.
+              </div>
+            ` : ''}
             <div class="accounting-summary-grid">
               <div><span>Ventas netas</span><strong>${summary.netTotal.toFixed(2)}€</strong></div>
               <div><span>Efectivo app</span><strong>${summary.expectedCash.toFixed(2)}€</strong></div>
@@ -1024,28 +1031,38 @@ function renderAjustesView(state) {
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
               <div class="editor-form-group">
                 <label class="editor-form-label">Fondo inicial</label>
-                <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-opening-cash" value="${openingCash || ''}">
+                <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-opening-cash" value="${openingCash}" ${disabledAttr}>
               </div>
               <div class="editor-form-group">
                 <label class="editor-form-label">Efectivo contado</label>
-                <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-counted-cash" value="${countedCash || ''}">
+                <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-counted-cash" value="${countedCash}" ${disabledAttr}>
               </div>
             </div>
             <div class="editor-form-group">
               <label class="editor-form-label">Total cierre datáfono BBVA</label>
-              <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-bbva-total" value="${bbvaTotal || ''}">
+              <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-bbva-total" value="${bbvaTotal || ''}" ${disabledAttr}>
             </div>
             <div class="accounting-summary-grid">
               <div><span>Cajón esperado</span><strong>${expectedDrawer.toFixed(2)}€</strong></div>
               <div class="${Math.abs(cashDifference) > 0.009 ? 'needs-review' : ''}"><span>Diferencia efectivo</span><strong>${cashDifference.toFixed(2)}€</strong></div>
               <div class="${Math.abs(cardDifference) > 0.009 ? 'needs-review' : ''}"><span>Diferencia BBVA</span><strong>${cardDifference.toFixed(2)}€</strong></div>
             </div>
+            <div id="closure-live-preview" class="gemini-muted" data-expected-cash="${summary.expectedCash}" data-expected-card="${summary.expectedCard}" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
+              ${isClosed
+                ? `Cierre guardado: efectivo ${existingClosure.cashDifference.toFixed(2)}€, BBVA ${existingClosure.cardDifference.toFixed(2)}€.`
+                : 'Introduce el efectivo contado y pulsa Calcular descuadre antes de cerrar.'}
+            </div>
+            ${!isClosed ? `
+              <button type="button" class="btn btn-secondary" id="closure-calc-btn" style="height:44px;">
+                Calcular descuadre
+              </button>
+            ` : ''}
             <div class="editor-form-group">
               <label class="editor-form-label">Notas</label>
-              <textarea class="editor-form-input" id="closure-notes" rows="3" placeholder="Descuadres, incidencias, observaciones...">${escapeHtml(existingClosure?.notes || '')}</textarea>
+              <textarea class="editor-form-input" id="closure-notes" rows="3" placeholder="Descuadres, incidencias, observaciones..." ${disabledAttr}>${escapeHtml(existingClosure?.notes || '')}</textarea>
             </div>
-            <button type="submit" class="btn btn-primary" style="height:48px; background-color:var(--secondary);" ${store.cashClosurePersistenceReady ? '' : 'disabled'}>
-              Guardar cierre
+            <button type="submit" class="btn btn-primary" style="height:48px; background-color:var(--secondary);" ${store.cashClosurePersistenceReady && !isClosed ? '' : 'disabled'}>
+              ${isClosed ? 'Cierre guardado' : 'Guardar cierre'}
             </button>
             ${existingClosure ? `<p class="gemini-muted">Ultimo cierre guardado: ${new Date(existingClosure.closedAt).toLocaleString('es-ES')}</p>` : ''}
           </form>
@@ -5469,6 +5486,38 @@ function setupEventListeners(container) {
 
   const cashClosureForm = container.querySelector('#cash-closure-form');
   if (cashClosureForm) {
+    const calcClosure = () => {
+      const preview = container.querySelector('#closure-live-preview');
+      if (!preview) return;
+      const expectedCash = parseFloat(preview.dataset.expectedCash || '0');
+      const expectedCard = parseFloat(preview.dataset.expectedCard || '0');
+      const openingCash = parseFloat(container.querySelector('#closure-opening-cash')?.value || '0');
+      const countedCash = parseFloat(container.querySelector('#closure-counted-cash')?.value || '0');
+      const bbvaTotal = parseFloat(container.querySelector('#closure-bbva-total')?.value || '0');
+      const expectedDrawer = openingCash + expectedCash;
+      const cashDifference = countedCash - expectedDrawer;
+      const cardDifference = bbvaTotal - expectedCard;
+      const cashColor = Math.abs(cashDifference) > 0.009 ? 'var(--danger)' : 'var(--secondary)';
+      const cardColor = Math.abs(cardDifference) > 0.009 ? 'var(--danger)' : 'var(--secondary)';
+      preview.innerHTML = `
+        <div style="display:grid; gap:6px;">
+          <span>Cajón esperado: <strong>${expectedDrawer.toFixed(2)}€</strong> = fondo ${openingCash.toFixed(2)}€ + efectivo app ${expectedCash.toFixed(2)}€</span>
+          <span>Diferencia efectivo: <strong style="color:${cashColor};">${cashDifference.toFixed(2)}€</strong></span>
+          <span>Diferencia BBVA: <strong style="color:${cardColor};">${cardDifference.toFixed(2)}€</strong></span>
+        </div>
+      `;
+    };
+
+    const calcBtn = container.querySelector('#closure-calc-btn');
+    if (calcBtn) {
+      calcBtn.addEventListener('click', calcClosure);
+    }
+
+    ['#closure-opening-cash', '#closure-counted-cash', '#closure-bbva-total'].forEach(selector => {
+      const input = container.querySelector(selector);
+      if (input) input.addEventListener('input', calcClosure);
+    });
+
     cashClosureForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const businessDate = container.querySelector('#cash-closure-date-input')?.value || new Date().toISOString().slice(0, 10);
@@ -5479,7 +5528,7 @@ function setupEventListeners(container) {
         bbvaTotal: parseFloat(container.querySelector('#closure-bbva-total')?.value || '0'),
         notes: container.querySelector('#closure-notes')?.value || ''
       });
-      showToast(saved ? 'Cierre de caja guardado.' : 'No se pudo guardar el cierre. Revisa la migracion de Supabase.', saved ? 'success' : 'warning');
+      showToast(saved ? 'Cierre de caja guardado.' : 'No se pudo guardar el cierre. Puede estar ya cerrado o faltar la migracion de Supabase.', saved ? 'success' : 'warning');
     });
   }
 
