@@ -126,7 +126,7 @@ begin
   end if;
 
   if v_rfid_uid is not null and exists (
-    select 1 from public.customers where upper(trim(coalesce(rfid_uid, ''))) = v_rfid_uid
+    select 1 from public.customers c where upper(trim(coalesce(c.rfid_uid, ''))) = v_rfid_uid
   ) then
     raise exception 'Ese RFID ya esta asignado a otro cliente';
   end if;
