@@ -42,7 +42,8 @@ const DEFAULT_ROLE_PERMISSIONS = {
     issueRefunds: true,
     resetTerminal: true,
     manageStaff: true,
-    managePermissions: true
+    managePermissions: true,
+    manageLoyalty: true
   },
   manager: {
     accessSettings: true,
@@ -54,7 +55,8 @@ const DEFAULT_ROLE_PERMISSIONS = {
     issueRefunds: true,
     resetTerminal: false,
     manageStaff: false,
-    managePermissions: false
+    managePermissions: false,
+    manageLoyalty: true
   },
   staff: {
     accessSettings: false,
@@ -66,7 +68,8 @@ const DEFAULT_ROLE_PERMISSIONS = {
     issueRefunds: false,
     resetTerminal: false,
     manageStaff: false,
-    managePermissions: false
+    managePermissions: false,
+    manageLoyalty: false
   }
 };
 
@@ -291,7 +294,8 @@ class Store {
       this.canViewReports() ||
       this.canCloseCash() ||
       this.canOpenShift() ||
-      this.canManageStaff();
+      this.canManageStaff() ||
+      this.canManageLoyalty();
   }
 
   canManageCatalog() {
@@ -324,6 +328,10 @@ class Store {
 
   canManageStaff() {
     return this.hasPermission('manageStaff');
+  }
+
+  canManageLoyalty() {
+    return this.hasPermission('manageLoyalty');
   }
 
   setStaffSession(profile) {

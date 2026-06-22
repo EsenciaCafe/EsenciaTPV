@@ -6,8 +6,10 @@ import {
   addManualLoyaltyPointsWithoutPurchase,
   calculateLoyaltyPoints,
   findLoyaltyCustomerByRfid,
+  getLoyaltyCustomerPurchases,
   isLoyaltyConfigured,
-  normalizeRfidUid
+  normalizeRfidUid,
+  searchLoyaltyCustomers
 } from './loyalty.js';
 
 // SVG Icons
@@ -76,6 +78,12 @@ let dbStatus = 'loading'; // 'loading' | 'connected' | 'fallback' | 'error'
 let selectedReportsTab = 'horas'; // 'horas' | 'diaria' | 'semanal' | 'mensual' | 'anual'
 let geminiInvoiceRawText = '';
 let geminiInvoicePreview = null;
+let loyaltyAdminQuery = '';
+let loyaltyAdminCustomers = [];
+let loyaltyAdminSelectedCustomer = null;
+let loyaltyAdminPurchases = [];
+let loyaltyAdminLoading = false;
+let loyaltyAdminError = '';
 const GEMINI_SINGLE_INVOICE_PROMPT = `Analiza únicamente esta factura.
 
 Devuélveme solo una tabla Markdown con estas columnas exactas:
@@ -183,6 +191,50 @@ function showToast(message, type = 'error') {
     toast.classList.remove('db-toast--visible');
     setTimeout(() => toast.remove(), 300);
   }, 4000);
+}
+
+async function loadLoyaltyAdminCustomers({ keepSelection = true } = {}) {
+  if (!isLoyaltyConfigured) {
+    loyaltyAdminError = 'Falta configurar la conexion con fidelidad.';
+    render(store.state);
+    return;
+  }
+
+  loyaltyAdminLoading = true;
+  loyaltyAdminError = '';
+  render(store.state);
+
+  try {
+    loyaltyAdminCustomers = await searchLoyaltyCustomers(loyaltyAdminQuery);
+    if (keepSelection && loyaltyAdminSelectedCustomer) {
+      loyaltyAdminSelectedCustomer = loyaltyAdminCustomers.find(customer => customer.id === loyaltyAdminSelectedCustomer.id) || loyaltyAdminSelectedCustomer;
+    } else {
+      loyaltyAdminSelectedCustomer = null;
+      loyaltyAdminPurchases = [];
+    }
+  } catch (error) {
+    loyaltyAdminError = error.message || 'No se pudieron cargar los clientes.';
+  } finally {
+    loyaltyAdminLoading = false;
+    render(store.state);
+  }
+}
+
+async function selectLoyaltyAdminCustomer(customerId) {
+  const customer = loyaltyAdminCustomers.find(item => String(item.id) === String(customerId));
+  if (!customer) return;
+
+  loyaltyAdminSelectedCustomer = customer;
+  loyaltyAdminPurchases = [];
+  loyaltyAdminError = '';
+  render(store.state);
+
+  try {
+    loyaltyAdminPurchases = await getLoyaltyCustomerPurchases(customer.id);
+  } catch (error) {
+    loyaltyAdminError = error.message || 'No se pudieron cargar las compras del cliente.';
+  }
+  render(store.state);
 }
 
 // 1. Header component renderer
@@ -847,6 +899,7 @@ function renderAjustesView(state) {
     (firstPath === 'articulos' && !store.canManageCatalog()) ||
     (firstPath === 'legal' && !store.canManageAccounting()) ||
     (firstPath === 'compras' && !store.canManageAccounting()) ||
+    (firstPath === 'fidelidad' && !store.canManageLoyalty()) ||
     (firstPath === 'informes' && !store.canViewReports()) ||
     (firstPath === 'cierre' && !store.canCloseCash() && !store.canOpenShift()) ||
     (firstPath === 'staff' && !store.canManageStaff());
@@ -904,6 +957,11 @@ function renderAjustesView(state) {
             <span>Compras y Facturas</span>
             ${chevron}
           </button>` : '',
+      store.canManageLoyalty() ? `
+          <button class="settings-tree-item" id="settings-to-fidelidad">
+            <span>Fidelidad</span>
+            ${chevron}
+          </button>` : '',
       store.canManageStaff() ? `
           <button class="settings-tree-item" id="settings-to-staff">
             <span>Personal y PIN</span>
@@ -935,6 +993,10 @@ function renderAjustesView(state) {
           </button>
           <button class="settings-tree-item" id="settings-to-compras">
             <span>Compras y Facturas</span>
+            ${chevron}
+          </button>
+          <button class="settings-tree-item" id="settings-to-fidelidad">
+            <span>Fidelidad</span>
             ${chevron}
           </button>
           ${store.canManageStaff() ? `
@@ -1052,6 +1114,86 @@ function renderAjustesView(state) {
         </div>
         <div class="purchase-list">
           ${rows || '<p style="padding:24px; text-align:center; color:var(--text-muted);">No hay facturas registradas en este mes.</p>'}
+        </div>
+      </div>
+    `;
+  }
+
+  if (path.length === 1 && path[0] === 'fidelidad') {
+    const selected = loyaltyAdminSelectedCustomer;
+    const customerRows = loyaltyAdminCustomers.map(customer => `
+      <button class="loyalty-admin-row ${selected?.id === customer.id ? 'is-selected' : ''}" data-loyalty-customer-id="${customer.id}">
+        <span>
+          <strong>${escapeHtml(customer.name)}</strong>
+          <small>${escapeHtml(customer.email || customer.phone || customer.rfidUid || 'Sin contacto')} · ${escapeHtml(customer.tier)} · ${customer.points.toLocaleString('es-ES')} pts</small>
+        </span>
+        <em>${Number(customer.totalSpent || 0).toFixed(2)}€</em>
+      </button>
+    `).join('');
+    const purchaseRows = loyaltyAdminPurchases.map(purchase => `
+      <div class="loyalty-admin-purchase-row">
+        <span>${purchase.createdAt ? new Date(purchase.createdAt).toLocaleDateString('es-ES') : 'Sin fecha'}</span>
+        <strong>${purchase.amount.toFixed(2)}€ · +${purchase.points} pts</strong>
+      </div>
+    `).join('');
+
+    return `
+      <div class="view-container">
+        <div class="settings-nav-header">
+          <button class="settings-back-arrow-btn" id="settings-back-btn">
+            ${backArrow} Ajustes
+          </button>
+          <button class="btn btn-secondary" id="loyalty-admin-refresh-btn" style="height:36px; padding:0 12px; font-size:0.85rem;">
+            Actualizar
+          </button>
+        </div>
+        <h2 class="settings-nav-title">Fidelidad</h2>
+        <div class="settings-editor-container loyalty-admin-panel">
+          ${isLoyaltyConfigured ? `
+            <div class="loyalty-admin-search">
+              <input class="search-input" id="loyalty-admin-search-input" value="${escapeHtml(loyaltyAdminQuery)}" placeholder="Buscar cliente, email, telefono o RFID">
+              <button class="btn btn-primary" id="loyalty-admin-search-btn" ${loyaltyAdminLoading ? 'disabled' : ''}>
+                ${loyaltyAdminLoading ? '...' : 'Buscar'}
+              </button>
+            </div>
+            ${loyaltyAdminError ? `<p class="payment-loyalty-status" style="color:var(--danger);">${escapeHtml(loyaltyAdminError)}</p>` : ''}
+            <div class="loyalty-admin-layout">
+              <div class="loyalty-admin-list">
+                <div class="loyalty-admin-section-title">Clientes</div>
+                ${customerRows || `<p class="gemini-muted">${loyaltyAdminLoading ? 'Cargando clientes...' : 'Busca o pulsa Actualizar para cargar clientes.'}</p>`}
+              </div>
+              <div class="loyalty-admin-detail">
+                ${selected ? `
+                  <div class="loyalty-admin-card">
+                    <div class="loyalty-admin-detail-head">
+                      <span>
+                        <strong>${escapeHtml(selected.name)}</strong>
+                        <small>${escapeHtml(selected.email || 'Sin email')} · ${escapeHtml(selected.phone || 'Sin telefono')}</small>
+                      </span>
+                      <em>${escapeHtml(selected.tier)}</em>
+                    </div>
+                    <div class="loyalty-admin-metrics">
+                      <div><span>Puntos</span><strong>${selected.points.toLocaleString('es-ES')}</strong></div>
+                      <div><span>Visitas</span><strong>${selected.visits}</strong></div>
+                      <div><span>Gastado</span><strong>${selected.totalSpent.toFixed(2)}€</strong></div>
+                      <div><span>RFID</span><strong>${escapeHtml(selected.rfidUid || '-')}</strong></div>
+                    </div>
+                  </div>
+                  <div class="loyalty-admin-card">
+                    <div class="loyalty-admin-section-title">Últimas compras</div>
+                    ${purchaseRows || '<p class="gemini-muted">Sin compras recientes.</p>'}
+                  </div>
+                ` : `
+                  <div class="loyalty-admin-empty">
+                    <strong>Selecciona un cliente</strong>
+                    <span>Aquí veremos su ficha, puntos, RFID y compras recientes.</span>
+                  </div>
+                `}
+              </div>
+            </div>
+          ` : `
+            <p class="gemini-muted">Falta configurar la conexión con la base de fidelidad. Revisa VITE_LOYALTY_SUPABASE_URL y VITE_LOYALTY_SUPABASE_ANON_KEY.</p>
+          `}
         </div>
       </div>
     `;
@@ -1455,7 +1597,8 @@ function renderAjustesView(state) {
       ['issueRefunds', 'Registrar devoluciones'],
       ['resetTerminal', 'Restablecer terminal'],
       ['manageStaff', 'Gestionar personal'],
-      ['managePermissions', 'Gestionar permisos']
+      ['managePermissions', 'Gestionar permisos'],
+      ['manageLoyalty', 'Gestionar fidelidad']
     ];
     const renderRolePermissions = (role, label) => `
       <div class="settings-editor-container" style="margin-bottom:16px;">
@@ -5968,6 +6111,49 @@ function setupEventListeners(container) {
       store.navigateSettings(['compras']);
     });
   }
+
+  const toFidelidadBtn = container.querySelector('#settings-to-fidelidad');
+  if (toFidelidadBtn) {
+    toFidelidadBtn.addEventListener('click', () => {
+      store.navigateSettings(['fidelidad']);
+      if (isLoyaltyConfigured && loyaltyAdminCustomers.length === 0) {
+        loadLoyaltyAdminCustomers({ keepSelection: false });
+      }
+    });
+  }
+
+  const loyaltyAdminSearchInput = container.querySelector('#loyalty-admin-search-input');
+  if (loyaltyAdminSearchInput) {
+    loyaltyAdminSearchInput.addEventListener('input', (e) => {
+      loyaltyAdminQuery = e.target.value;
+    });
+    loyaltyAdminSearchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        loadLoyaltyAdminCustomers({ keepSelection: false });
+      }
+    });
+  }
+
+  const loyaltyAdminSearchBtn = container.querySelector('#loyalty-admin-search-btn');
+  if (loyaltyAdminSearchBtn) {
+    loyaltyAdminSearchBtn.addEventListener('click', () => {
+      loadLoyaltyAdminCustomers({ keepSelection: false });
+    });
+  }
+
+  const loyaltyAdminRefreshBtn = container.querySelector('#loyalty-admin-refresh-btn');
+  if (loyaltyAdminRefreshBtn) {
+    loyaltyAdminRefreshBtn.addEventListener('click', () => {
+      loadLoyaltyAdminCustomers({ keepSelection: true });
+    });
+  }
+
+  container.querySelectorAll('[data-loyalty-customer-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectLoyaltyAdminCustomer(btn.dataset.loyaltyCustomerId);
+    });
+  });
 
   const closureExportMonthInput = container.querySelector('#cash-closure-export-month-input');
   if (closureExportMonthInput) {

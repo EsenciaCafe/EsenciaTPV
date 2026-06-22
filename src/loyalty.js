@@ -33,7 +33,7 @@ export function calculateLoyaltyPoints(amount, tier = 'Bronze') {
   return Math.round(Number(amount || 0) * 10 * multiplier);
 }
 
-function mapCustomer(row) {
+export function mapLoyaltyCustomer(row) {
   if (!row) return null;
   return {
     id: row.id,
@@ -65,7 +65,47 @@ export async function findLoyaltyCustomerByRfid(rfidUid) {
   });
 
   if (error) throw error;
-  return mapCustomer(Array.isArray(data) ? data[0] : data);
+  return mapLoyaltyCustomer(Array.isArray(data) ? data[0] : data);
+}
+
+export async function searchLoyaltyCustomers(query = '') {
+  const client = requireLoyaltyClient();
+  const cleanQuery = String(query || '').trim();
+  let request = client
+    .from('customers')
+    .select('id, name, email, phone, rfid_uid, points, visits, total_spent, tier')
+    .order('name', { ascending: true })
+    .limit(40);
+
+  if (cleanQuery) {
+    const escaped = cleanQuery.replace(/[%_]/g, '\\$&');
+    const pattern = `%${escaped}%`;
+    request = request.or(`name.ilike.${pattern},email.ilike.${pattern},phone.ilike.${pattern},rfid_uid.ilike.${pattern}`);
+  }
+
+  const { data, error } = await request;
+  if (error) throw error;
+  return (data || []).map(mapLoyaltyCustomer).filter(Boolean);
+}
+
+export async function getLoyaltyCustomerPurchases(customerId, limit = 8) {
+  const client = requireLoyaltyClient();
+  if (!customerId) return [];
+
+  const { data, error } = await client
+    .from('purchases')
+    .select('id, amount, points, created_at')
+    .eq('customer_id', customerId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  return (data || []).map(row => ({
+    id: row.id,
+    amount: Number(row.amount || 0),
+    points: Number(row.points || 0),
+    createdAt: row.created_at || null
+  }));
 }
 
 export async function addLoyaltyPurchase({ customer, amount, transactionId, paymentMethod }) {
