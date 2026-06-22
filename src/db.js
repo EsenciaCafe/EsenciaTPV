@@ -351,8 +351,11 @@ export async function upsertSaleRecord(transaction) {
     return null;
   }
 
-  await supabase.from('sale_lines').delete().eq('sale_id', transaction.id);
-  await supabase.from('sale_payments').delete().eq('sale_id', transaction.id);
+  const { error: deleteLinesError } = await supabase.from('sale_lines').delete().eq('sale_id', transaction.id);
+  if (deleteLinesError) notifyDbError('upsertSaleRecord:deleteLines', deleteLinesError.message);
+
+  const { error: deletePaymentsError } = await supabase.from('sale_payments').delete().eq('sale_id', transaction.id);
+  if (deletePaymentsError) notifyDbError('upsertSaleRecord:deletePayments', deletePaymentsError.message);
 
   const lines = (transaction.items || []).map((item, index) => ({
     id: `${transaction.id}-line-${String(index + 1).padStart(3, '0')}`,
@@ -368,7 +371,7 @@ export async function upsertSaleRecord(transaction) {
   }));
 
   if (lines.length > 0) {
-    const { error: linesError } = await supabase.from('sale_lines').insert(lines);
+    const { error: linesError } = await supabase.from('sale_lines').upsert(lines, { onConflict: 'id' });
     if (linesError) notifyDbError('upsertSaleRecord:lines', linesError.message);
   }
 
@@ -386,7 +389,7 @@ export async function upsertSaleRecord(transaction) {
   }));
 
   if (paymentRows.length > 0) {
-    const { error: paymentsError } = await supabase.from('sale_payments').insert(paymentRows);
+    const { error: paymentsError } = await supabase.from('sale_payments').upsert(paymentRows, { onConflict: 'id' });
     if (paymentsError) notifyDbError('upsertSaleRecord:payments', paymentsError.message);
   }
 
