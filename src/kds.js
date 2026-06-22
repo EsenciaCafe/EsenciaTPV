@@ -13,7 +13,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch((error) => {
+  navigator.serviceWorker.register(new URL('sw.js', document.baseURI), { scope: './' }).catch((error) => {
     console.warn('No se pudo registrar el service worker del KDS:', error);
   });
 }

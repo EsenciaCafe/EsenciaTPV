@@ -1,32 +1,27 @@
-const CACHE_NAME = 'tpv-cache-v19';
+const CACHE_NAME = 'tpv-cache-v20';
+const BASE_URL = new URL('./', self.location.href);
 const ASSETS = [
-  '/',
-  '/index.html',
-  '/kds.html',
-  '/ticket.html',
-  '/src/main.js',
-  '/src/kds.js',
-  '/src/kds.css',
-  '/src/ticket.js',
-  '/src/ticket.css',
-  '/src/style.css',
-  '/src/store.js',
-  '/manifest.webmanifest',
-  '/kds.webmanifest',
-  '/icon.svg',
-  '/icons/tpv-192.png',
-  '/icons/tpv-512.png',
-  '/icons/kds-192.png',
-  '/icons/kds-512.png',
-  '/latte.png',
-  '/minipancakes.png'
+  './',
+  './index.html',
+  './kds.html',
+  './ticket.html',
+  './manifest.webmanifest',
+  './kds.webmanifest',
+  './icon.svg',
+  './icons/tpv-192.png',
+  './icons/tpv-512.png',
+  './icons/kds-192.png',
+  './icons/kds-512.png',
+  './latte.png',
+  './minipancakes.png'
 ];
+const CACHE_URLS = ASSETS.map((asset) => new URL(asset, BASE_URL).toString());
 
 // Install Event
 self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS);
+      return cache.addAll(CACHE_URLS);
     }).then(() => self.skipWaiting())
   );
 });
