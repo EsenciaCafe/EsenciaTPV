@@ -998,6 +998,12 @@ function renderAjustesView(state) {
     const monthClosures = state.cashClosures
       .filter(item => String(item.businessDate || '').startsWith(selectedMonth))
       .sort((a, b) => String(a.businessDate).localeCompare(String(b.businessDate)));
+    const monthSalesDates = [...new Set(state.transactions
+      .filter(tx => store.getTransactionDateKey(tx).startsWith(selectedMonth) && tx.type !== 'refund')
+      .map(tx => store.getTransactionDateKey(tx)))]
+      .sort();
+    const closedDates = new Set(monthClosures.map(closure => closure.businessDate));
+    const missingClosureDates = monthSalesDates.filter(date => !closedDates.has(date));
     const monthClosureRows = monthClosures.map(closure => `
       <div class="gemini-summary-row">
         <span>${formatIsoDateEs(closure.businessDate)} · ${escapeHtml(closure.staffName || closure.staff?.name || 'Sin usuario')}</span>
@@ -1034,6 +1040,15 @@ function renderAjustesView(state) {
               <strong>${monthClosures.length}</strong> cierres guardados en este mes.
               ${monthClosureRows || '<div style="margin-top:8px;">Todavia no hay cierres guardados para exportar.</div>'}
             </div>
+            ${missingClosureDates.length ? `
+              <div class="gemini-muted needs-review" style="padding:12px; border:1px solid #f59e0b; border-radius:var(--border-radius-md); background:var(--bg-item);">
+                Faltan cierres en dias con ventas: ${missingClosureDates.map(formatIsoDateEs).join(', ')}.
+              </div>
+            ` : monthSalesDates.length ? `
+              <div class="gemini-muted" style="padding:12px; border:1px solid var(--secondary); border-radius:var(--border-radius-md); background:var(--bg-item);">
+                Todos los dias con ventas de este mes tienen cierre guardado.
+              </div>
+            ` : ''}
           </div>
           ${store.cashClosurePersistenceReady ? '' : `
             <div class="gemini-muted" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
