@@ -582,7 +582,6 @@ class Store {
           filter: 'id=eq.global'
         },
         (payload) => {
-          console.log('[Store] Estado del TPV actualizado en tiempo real:', payload);
           const newState = payload.new;
           if (newState) {
             let changed = false;
@@ -591,16 +590,23 @@ class Store {
               this.state.tables = newState.tables;
               changed = true;
             }
-            if (newState.direct_sale && JSON.stringify(this.state.directSaleTicket) !== JSON.stringify(newState.direct_sale)) {
+            if (newState.direct_sale) {
               const { legal_data: _ld, role_permissions: rolePermissions, ...directSaleClean } = newState.direct_sale;
-              this.state.directSaleTicket = directSaleClean;
+              if (JSON.stringify(this.state.directSaleTicket) !== JSON.stringify(directSaleClean)) {
+                this.state.directSaleTicket = directSaleClean;
+                changed = true;
+              }
               if (newState.direct_sale.legal_data && JSON.stringify(this.state.legal) !== JSON.stringify(newState.direct_sale.legal_data)) {
                 this.state.legal = newState.direct_sale.legal_data;
+                changed = true;
               }
               if (rolePermissions) {
-                this.state.rolePermissions = this.mergeRolePermissions(rolePermissions);
+                const mergedPermissions = this.mergeRolePermissions(rolePermissions);
+                if (JSON.stringify(this.state.rolePermissions) !== JSON.stringify(mergedPermissions)) {
+                  this.state.rolePermissions = mergedPermissions;
+                  changed = true;
+                }
               }
-              changed = true;
             }
             if (Array.isArray(newState.transactions) && JSON.stringify(this.state.transactions) !== JSON.stringify(newState.transactions)) {
               this.state.transactions = newState.transactions;
