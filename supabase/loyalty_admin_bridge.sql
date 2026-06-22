@@ -46,10 +46,10 @@ begin
   return query
   select
     c.id,
-    c.name,
-    c.email,
-    c.phone,
-    c.rfid_uid,
+    c.name::text,
+    c.email::text,
+    c.phone::text,
+    c.rfid_uid::text,
     coalesce(c.points, 0),
     coalesce(c.visits, 0),
     round(coalesce(c.total_spent, 0)::numeric, 2),
@@ -143,9 +143,14 @@ begin
     rfid_uid,
     accepted_privacy,
     accepted_privacy_at,
+    privacy_accepted_at,
     privacy_version,
+    accepted_terms,
+    terms_version,
+    terms_accepted_at,
     marketing_consent,
-    marketing_consent_at
+    marketing_consent_at,
+    marketing_consent_updated_at
   )
   values (
     v_name,
@@ -157,20 +162,25 @@ begin
     0,
     public.calcular_tier(0),
     v_rfid_uid,
+    true,
+    now(),
+    now(),
+    '1.0',
+    true,
+    '1.0',
+    now(),
     false,
     null,
-    '1.0',
-    false,
-    null
+    now()
   )
   returning * into v_customer;
 
   return query select
     v_customer.id,
-    v_customer.name,
-    v_customer.email,
-    v_customer.phone,
-    v_customer.rfid_uid,
+    v_customer.name::text,
+    v_customer.email::text,
+    v_customer.phone::text,
+    v_customer.rfid_uid::text,
     coalesce(v_customer.points, 0),
     coalesce(v_customer.visits, 0),
     round(coalesce(v_customer.total_spent, 0)::numeric, 2),

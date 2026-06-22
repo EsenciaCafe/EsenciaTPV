@@ -303,7 +303,8 @@ function showCreateLoyaltyCustomerModal() {
       if (customer?.id) await selectLoyaltyAdminCustomer(customer.id);
       showToast('Cliente creado en fidelidad.', 'success');
     } catch (error) {
-      showToast(error.message || 'No se pudo crear el cliente.', 'error');
+      console.error('[Fidelidad] Error creando cliente', error);
+      showToast(error.message || error.details || 'No se pudo crear el cliente.', 'error');
       saveBtn.disabled = false;
       saveBtn.textContent = 'Crear';
     }
