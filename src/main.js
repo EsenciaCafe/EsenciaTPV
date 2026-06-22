@@ -7598,14 +7598,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     render(store.state);
   });
 
-  // PWA Service worker cleaner (temporary unregister to clear aggressive PWA caching in dev)
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then((registrations) => {
-      for (let registration of registrations) {
-        registration.unregister().then(() => {
-          console.log('SW desregistrado para recargar de red.');
-        });
-      }
+    navigator.serviceWorker.register('/sw.js').catch((error) => {
+      console.warn('No se pudo registrar el service worker:', error);
     });
   }
 });

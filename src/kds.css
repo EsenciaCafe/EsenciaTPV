@@ -58,16 +58,19 @@ body.light-theme {
 
 html, body {
   height: 100%;
+  min-height: 100%;
   font-family: var(--font);
   background: var(--bg-base);
   color: var(--text-main);
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 #kds-root {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -78,6 +81,7 @@ html, body {
   align-items: center;
   justify-content: center;
   height: 100vh;
+  height: 100dvh;
   gap: 16px;
   color: var(--text-muted);
   font-size: 0.95rem;
