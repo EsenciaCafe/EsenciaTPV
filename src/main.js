@@ -149,6 +149,12 @@ function escapeHtml(value = '') {
     .replace(/'/g, '&#39;');
 }
 
+function formatIsoDateEs(value = '') {
+  if (!value || !String(value).includes('-')) return value || '';
+  const [year, month, day] = String(value).slice(0, 10).split('-');
+  return `${day}/${month}/${year}`;
+}
+
 // ─────────────────────────────────────────
 // Toast notification system
 // ─────────────────────────────────────────
@@ -986,8 +992,18 @@ function renderAjustesView(state) {
 
   if (path.length === 1 && path[0] === 'cierre') {
     const selectedDate = state.selectedReportDate || new Date().toISOString().slice(0, 10);
+    const selectedMonth = state.selectedReportMonth || selectedDate.slice(0, 7);
     const summary = store.getCashClosureSummary(selectedDate);
     const existingClosure = state.cashClosures.find(item => item.businessDate === selectedDate);
+    const monthClosures = state.cashClosures
+      .filter(item => String(item.businessDate || '').startsWith(selectedMonth))
+      .sort((a, b) => String(a.businessDate).localeCompare(String(b.businessDate)));
+    const monthClosureRows = monthClosures.map(closure => `
+      <div class="gemini-summary-row">
+        <span>${formatIsoDateEs(closure.businessDate)} · ${escapeHtml(closure.staffName || closure.staff?.name || 'Sin usuario')}</span>
+        <strong>${Number(closure.cashDifference || 0).toFixed(2)}€ / ${Number(closure.cardDifference || 0).toFixed(2)}€</strong>
+      </div>
+    `).join('');
     const isClosed = Boolean(existingClosure);
     const openingCash = existingClosure?.openingCash ?? 100;
     const countedCash = existingClosure?.countedCash ?? '';
@@ -1006,6 +1022,19 @@ function renderAjustesView(state) {
         </div>
         <h2 class="settings-nav-title">Cierre de Caja</h2>
         <div class="settings-editor-container">
+          <div style="display:grid; gap:12px; margin-bottom:16px;">
+            <div class="accounting-month-bar">
+              <label>Mes para asesoria</label>
+              <input type="month" id="cash-closure-export-month-input" value="${selectedMonth}">
+            </div>
+            <button type="button" class="btn btn-secondary" id="cash-closure-export-btn" style="height:44px;" ${monthClosures.length ? '' : 'disabled'}>
+              Exportar cierres Excel
+            </button>
+            <div class="gemini-muted" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
+              <strong>${monthClosures.length}</strong> cierres guardados en este mes.
+              ${monthClosureRows || '<div style="margin-top:8px;">Todavia no hay cierres guardados para exportar.</div>'}
+            </div>
+          </div>
           ${store.cashClosurePersistenceReady ? '' : `
             <div class="gemini-muted" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
               Ejecuta <strong>sql/cash_closures_migration.sql</strong> en Supabase para poder guardar cierres.
@@ -4391,6 +4420,119 @@ function triggerCSVDownload(filename, headers, rows) {
   document.body.removeChild(link);
 }
 
+function downloadCashClosuresExcel(selectedMonth, closures, legal) {
+  const sortedClosures = [...closures].sort((a, b) => String(a.businessDate).localeCompare(String(b.businessDate)));
+  const totals = sortedClosures.reduce((acc, closure) => {
+    acc.totalSales += Number(closure.totalSales || 0);
+    acc.totalRefunds += Number(closure.totalRefunds || 0);
+    acc.expectedCash += Number(closure.expectedCash || 0);
+    acc.countedCash += Number(closure.countedCash || 0);
+    acc.cashDifference += Number(closure.cashDifference || 0);
+    acc.expectedCard += Number(closure.expectedCard || 0);
+    acc.bbvaTotal += Number(closure.bbvaTotal || 0);
+    acc.cardDifference += Number(closure.cardDifference || 0);
+    acc.transactionsCount += Number(closure.transactionsCount || 0);
+    return acc;
+  }, {
+    totalSales: 0,
+    totalRefunds: 0,
+    expectedCash: 0,
+    countedCash: 0,
+    cashDifference: 0,
+    expectedCard: 0,
+    bbvaTotal: 0,
+    cardDifference: 0,
+    transactionsCount: 0
+  });
+
+  const moneyCell = value => Number(value || 0).toFixed(2);
+  const tableRows = sortedClosures.map(closure => `
+    <tr>
+      <td>${formatIsoDateEs(closure.businessDate)}</td>
+      <td>${Number(closure.transactionsCount || 0)}</td>
+      <td>${moneyCell(closure.totalSales)}</td>
+      <td>${moneyCell(closure.totalRefunds)}</td>
+      <td>${moneyCell(closure.openingCash)}</td>
+      <td>${moneyCell(closure.expectedCash)}</td>
+      <td>${moneyCell(closure.countedCash)}</td>
+      <td>${moneyCell(closure.cashDifference)}</td>
+      <td>${moneyCell(closure.expectedCard)}</td>
+      <td>${moneyCell(closure.bbvaTotal)}</td>
+      <td>${moneyCell(closure.cardDifference)}</td>
+      <td>${escapeHtml(closure.staffName || closure.staff?.name || '')}</td>
+      <td>${closure.closedAt ? escapeHtml(new Date(closure.closedAt).toLocaleString('es-ES')) : ''}</td>
+      <td>${escapeHtml(closure.notes || '')}</td>
+    </tr>
+  `).join('');
+
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #999; padding: 6px; }
+    th { background: #e8e8e8; font-weight: bold; }
+    .total-row td { font-weight: bold; background: #f5f5f5; }
+  </style>
+</head>
+<body>
+  <h1>Cierres de caja - ${escapeHtml(legal?.businessName || 'Esencia Cafe')}</h1>
+  <p>Mes: ${escapeHtml(selectedMonth)}</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Fecha</th>
+        <th>Tickets</th>
+        <th>Ventas brutas</th>
+        <th>Devoluciones</th>
+        <th>Fondo inicial</th>
+        <th>Efectivo app</th>
+        <th>Efectivo contado</th>
+        <th>Diferencia efectivo</th>
+        <th>Tarjeta app</th>
+        <th>Total BBVA</th>
+        <th>Diferencia BBVA</th>
+        <th>Usuario</th>
+        <th>Guardado</th>
+        <th>Notas</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${tableRows}
+      <tr class="total-row">
+        <td>Total</td>
+        <td>${totals.transactionsCount}</td>
+        <td>${moneyCell(totals.totalSales)}</td>
+        <td>${moneyCell(totals.totalRefunds)}</td>
+        <td></td>
+        <td>${moneyCell(totals.expectedCash)}</td>
+        <td>${moneyCell(totals.countedCash)}</td>
+        <td>${moneyCell(totals.cashDifference)}</td>
+        <td>${moneyCell(totals.expectedCard)}</td>
+        <td>${moneyCell(totals.bbvaTotal)}</td>
+        <td>${moneyCell(totals.cardDifference)}</td>
+        <td></td>
+        <td></td>
+        <td></td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>`;
+
+  const blob = new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', `cierres-caja-${selectedMonth}.xls`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
   try {
     const { jsPDF } = window.jspdf;
@@ -5476,10 +5618,32 @@ function setupEventListeners(container) {
     });
   }
 
+  const closureExportMonthInput = container.querySelector('#cash-closure-export-month-input');
+  if (closureExportMonthInput) {
+    closureExportMonthInput.addEventListener('change', (e) => {
+      store.state.selectedReportMonth = e.target.value || new Date().toISOString().slice(0, 7);
+      store.notify();
+    });
+  }
+
+  const closureExportBtn = container.querySelector('#cash-closure-export-btn');
+  if (closureExportBtn) {
+    closureExportBtn.addEventListener('click', () => {
+      const selectedMonth = store.state.selectedReportMonth || new Date().toISOString().slice(0, 7);
+      const closures = store.state.cashClosures.filter(item => String(item.businessDate || '').startsWith(selectedMonth));
+      if (!closures.length) {
+        showToast('No hay cierres guardados en ese mes para exportar.', 'warning');
+        return;
+      }
+      downloadCashClosuresExcel(selectedMonth, closures, store.state.legal);
+    });
+  }
+
   const closureDateInput = container.querySelector('#cash-closure-date-input');
   if (closureDateInput) {
     closureDateInput.addEventListener('change', (e) => {
       store.state.selectedReportDate = e.target.value || new Date().toISOString().slice(0, 10);
+      store.state.selectedReportMonth = store.state.selectedReportDate.slice(0, 7);
       store.notify();
     });
   }
