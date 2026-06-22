@@ -676,14 +676,53 @@ class Store {
       return `${yyyy}-${mm}-${dd}`;
     };
 
-    if (tx.createdAt) return toLocalDateKey(tx.createdAt);
+    return toLocalDateKey(this.getTransactionDate(tx));
+  }
+
+  getTransactionDate(tx) {
+    if (tx.createdAt) return new Date(tx.createdAt);
     if (tx.date) {
       const [datePart, timePart = '00:00'] = tx.date.split(', ');
       const [day, month, year] = datePart.split('/').map(Number);
       const [hour, minute] = timePart.split(':').map(Number);
-      return toLocalDateKey(new Date(year, month - 1, day, hour || 0, minute || 0));
+      return new Date(year, month - 1, day, hour || 0, minute || 0);
     }
-    return toLocalDateKey(new Date());
+    return new Date();
+  }
+
+  getLatestCashClosure() {
+    return [...this.state.cashClosures]
+      .filter(closure => closure.closedAt || closure.businessDate)
+      .sort((a, b) => {
+        const aTime = new Date(a.closedAt || `${a.businessDate}T23:59:59`).getTime();
+        const bTime = new Date(b.closedAt || `${b.businessDate}T23:59:59`).getTime();
+        return bTime - aTime;
+      })[0] || null;
+  }
+
+  getActiveShiftSummary() {
+    const lastClosure = this.getLatestCashClosure();
+    const lastClosureTime = lastClosure ? new Date(lastClosure.closedAt || `${lastClosure.businessDate}T23:59:59`).getTime() : 0;
+    const transactions = this.state.transactions.filter(tx => this.getTransactionDate(tx).getTime() > lastClosureTime);
+
+    return transactions.reduce((acc, tx) => {
+      const total = Number(tx.total || 0);
+      if (tx.type === 'refund') {
+        acc.refunds += Math.abs(total);
+      } else {
+        acc.sales += total;
+        acc.tickets += 1;
+      }
+      acc.net += total;
+      return acc;
+    }, {
+      lastClosure,
+      transactions,
+      tickets: 0,
+      sales: 0,
+      refunds: 0,
+      net: 0
+    });
   }
 
   getPaymentBreakdownForTransaction(tx) {

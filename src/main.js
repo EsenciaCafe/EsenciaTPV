@@ -701,7 +701,7 @@ function showTransactionDetailModal(transactionId) {
             <strong>${tx.paymentMethod}</strong>
           </div>
           <div>
-            <span>Artículos</span>
+            <span>Art&iacute;culos</span>
             <strong>${tx.itemsCount} art.</strong>
           </div>
         </div>
@@ -874,11 +874,14 @@ function renderAjustesView(state) {
       return `<option value="${t.id}" ${isSelected ? 'selected' : ''}>${t.name} (${t.status === 'occupied' ? 'Ocupada' : t.status === 'pending-bill' ? 'Cuenta' : 'Libre'})</option>`;
     }).join('');
 
-    const totalRevenue = state.transactions.reduce((sum, tx) => sum + tx.total, 0);
+    const shiftSummary = store.getActiveShiftSummary();
+    const shiftSinceText = shiftSummary.lastClosure?.closedAt
+      ? `Desde ${new Date(shiftSummary.lastClosure.closedAt).toLocaleString('es-ES')}`
+      : 'Desde el inicio';
     const settingsMenuItems = [
       store.canManageCatalog() ? `
           <button class="settings-tree-item" id="settings-to-articulos">
-            <span>ArtÃ­culos</span>
+            <span>Art&iacute;culos</span>
             ${chevron}
           </button>` : '',
       store.canManageAccounting() ? `
@@ -915,7 +918,7 @@ function renderAjustesView(state) {
           ${settingsMenuItems}
           <div style="display:none;">
           <button class="settings-tree-item" id="settings-to-articulos">
-            <span>Artículos</span>
+            <span>Art&iacute;culos</span>
             ${chevron}
           </button>
           <button class="settings-tree-item" id="settings-to-legal">
@@ -971,9 +974,9 @@ function renderAjustesView(state) {
             <div class="settings-row" style="padding: 12px 0; border-bottom: 1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
               <div>
                 <div class="settings-row-title" style="font-weight:600;">Resumen de Turno</div>
-                <div class="settings-row-desc" style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Ventas totales acumuladas</div>
+                <div class="settings-row-desc" style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">${shiftSinceText} &middot; ${shiftSummary.tickets} tickets</div>
               </div>
-              <span style="font-weight:700; font-size:1.1rem; color:var(--secondary);">${totalRevenue.toFixed(2)}€</span>
+              <span style="font-weight:700; font-size:1.1rem; color:var(--secondary);">${shiftSummary.net.toFixed(2)}&euro;</span>
             </div>
 
             <div class="settings-row" style="padding: 12px 0; border-bottom: 1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center; opacity:0.5;">
