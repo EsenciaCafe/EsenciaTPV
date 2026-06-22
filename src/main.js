@@ -857,6 +857,10 @@ function renderAjustesView(state) {
             <span>Informes y Ventas</span>
             ${chevron}
           </button>
+          <button class="settings-tree-item" id="settings-to-cierre">
+            <span>Cierre de Caja</span>
+            ${chevron}
+          </button>
           <button class="settings-tree-item" id="settings-to-compras">
             <span>Compras y Facturas</span>
             ${chevron}
@@ -975,6 +979,76 @@ function renderAjustesView(state) {
         </div>
         <div class="purchase-list">
           ${rows || '<p style="padding:24px; text-align:center; color:var(--text-muted);">No hay facturas registradas en este mes.</p>'}
+        </div>
+      </div>
+    `;
+  }
+
+  if (path.length === 1 && path[0] === 'cierre') {
+    const selectedDate = state.selectedReportDate || new Date().toISOString().slice(0, 10);
+    const summary = store.getCashClosureSummary(selectedDate);
+    const existingClosure = state.cashClosures.find(item => item.businessDate === selectedDate);
+    const openingCash = existingClosure?.openingCash ?? 0;
+    const countedCash = existingClosure?.countedCash ?? 0;
+    const bbvaTotal = existingClosure?.bbvaTotal ?? summary.expectedCard;
+    const expectedDrawer = openingCash + summary.expectedCash;
+    const cashDifference = countedCash ? countedCash - expectedDrawer : (existingClosure?.cashDifference ?? 0);
+    const cardDifference = bbvaTotal - summary.expectedCard;
+
+    return `
+      <div class="view-container">
+        <div class="settings-nav-header">
+          <button class="settings-back-arrow-btn" id="settings-back-btn">
+            ${backArrow} Ajustes
+          </button>
+        </div>
+        <h2 class="settings-nav-title">Cierre de Caja</h2>
+        <div class="settings-editor-container">
+          ${store.cashClosurePersistenceReady ? '' : `
+            <div class="gemini-muted" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
+              Ejecuta <strong>sql/cash_closures_migration.sql</strong> en Supabase para poder guardar cierres.
+            </div>
+          `}
+          <form id="cash-closure-form" style="display:grid; gap:16px;">
+            <div class="accounting-month-bar">
+              <label>Dia</label>
+              <input type="date" id="cash-closure-date-input" value="${selectedDate}">
+            </div>
+            <div class="accounting-summary-grid">
+              <div><span>Ventas netas</span><strong>${summary.netTotal.toFixed(2)}€</strong></div>
+              <div><span>Efectivo app</span><strong>${summary.expectedCash.toFixed(2)}€</strong></div>
+              <div><span>Tarjeta app</span><strong>${summary.expectedCard.toFixed(2)}€</strong></div>
+              <div><span>Devoluciones</span><strong>${summary.totalRefunds.toFixed(2)}€</strong></div>
+              <div><span>Tickets</span><strong>${summary.transactionsCount}</strong></div>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+              <div class="editor-form-group">
+                <label class="editor-form-label">Fondo inicial</label>
+                <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-opening-cash" value="${openingCash || ''}">
+              </div>
+              <div class="editor-form-group">
+                <label class="editor-form-label">Efectivo contado</label>
+                <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-counted-cash" value="${countedCash || ''}">
+              </div>
+            </div>
+            <div class="editor-form-group">
+              <label class="editor-form-label">Total cierre datáfono BBVA</label>
+              <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-bbva-total" value="${bbvaTotal || ''}">
+            </div>
+            <div class="accounting-summary-grid">
+              <div><span>Cajón esperado</span><strong>${expectedDrawer.toFixed(2)}€</strong></div>
+              <div class="${Math.abs(cashDifference) > 0.009 ? 'needs-review' : ''}"><span>Diferencia efectivo</span><strong>${cashDifference.toFixed(2)}€</strong></div>
+              <div class="${Math.abs(cardDifference) > 0.009 ? 'needs-review' : ''}"><span>Diferencia BBVA</span><strong>${cardDifference.toFixed(2)}€</strong></div>
+            </div>
+            <div class="editor-form-group">
+              <label class="editor-form-label">Notas</label>
+              <textarea class="editor-form-input" id="closure-notes" rows="3" placeholder="Descuadres, incidencias, observaciones...">${escapeHtml(existingClosure?.notes || '')}</textarea>
+            </div>
+            <button type="submit" class="btn btn-primary" style="height:48px; background-color:var(--secondary);" ${store.cashClosurePersistenceReady ? '' : 'disabled'}>
+              Guardar cierre
+            </button>
+            ${existingClosure ? `<p class="gemini-muted">Ultimo cierre guardado: ${new Date(existingClosure.closedAt).toLocaleString('es-ES')}</p>` : ''}
+          </form>
         </div>
       </div>
     `;
@@ -5371,10 +5445,41 @@ function setupEventListeners(container) {
     });
   }
 
+  const toCierreBtn = container.querySelector('#settings-to-cierre');
+  if (toCierreBtn) {
+    toCierreBtn.addEventListener('click', () => {
+      store.navigateSettings(['cierre']);
+    });
+  }
+
   const toComprasBtn = container.querySelector('#settings-to-compras');
   if (toComprasBtn) {
     toComprasBtn.addEventListener('click', () => {
       store.navigateSettings(['compras']);
+    });
+  }
+
+  const closureDateInput = container.querySelector('#cash-closure-date-input');
+  if (closureDateInput) {
+    closureDateInput.addEventListener('change', (e) => {
+      store.state.selectedReportDate = e.target.value || new Date().toISOString().slice(0, 10);
+      store.notify();
+    });
+  }
+
+  const cashClosureForm = container.querySelector('#cash-closure-form');
+  if (cashClosureForm) {
+    cashClosureForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const businessDate = container.querySelector('#cash-closure-date-input')?.value || new Date().toISOString().slice(0, 10);
+      const saved = await store.saveCashClosure({
+        businessDate,
+        openingCash: parseFloat(container.querySelector('#closure-opening-cash')?.value || '0'),
+        countedCash: parseFloat(container.querySelector('#closure-counted-cash')?.value || '0'),
+        bbvaTotal: parseFloat(container.querySelector('#closure-bbva-total')?.value || '0'),
+        notes: container.querySelector('#closure-notes')?.value || ''
+      });
+      showToast(saved ? 'Cierre de caja guardado.' : 'No se pudo guardar el cierre. Revisa la migracion de Supabase.', saved ? 'success' : 'warning');
     });
   }
 

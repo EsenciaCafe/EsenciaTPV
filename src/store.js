@@ -12,6 +12,8 @@ import {
   upsertReceiptTicket,
   loadSales,
   upsertSaleRecord,
+  loadCashClosures,
+  upsertCashClosure,
   loadStaffProfiles,
   findStaffByPin,
   upsertStaffProfile,
@@ -94,6 +96,7 @@ class Store {
       supplierInvoices: [],
       supplierInvoiceLines: [],
       supplierSenderRules: [],
+      cashClosures: [],
 
       // ── REPORT NAVIGATION ─────────────────────────────────────
       // ISO date string YYYY-MM-DD (default = today)
@@ -110,6 +113,7 @@ class Store {
     
     this.restoreDiningState();
     this.salesPersistenceReady = false;
+    this.cashClosurePersistenceReady = false;
     this.listeners = [];
   }
 
@@ -260,6 +264,12 @@ class Store {
 
   async loadSupplierSenderRules() {
     this.state.supplierSenderRules = await loadSupplierSenderRules();
+  }
+
+  async loadCashClosures() {
+    const closures = await loadCashClosures();
+    this.cashClosurePersistenceReady = Array.isArray(closures);
+    if (Array.isArray(closures)) this.state.cashClosures = closures;
   }
 
   async loadAuthSession() {
@@ -424,6 +434,13 @@ class Store {
       } catch (err) {
         this.salesPersistenceReady = false;
         console.warn('[Store] No se pudieron cargar las ventas normalizadas.', err);
+      }
+
+      try {
+        await this.loadCashClosures();
+      } catch (err) {
+        this.cashClosurePersistenceReady = false;
+        console.warn('[Store] No se pudieron cargar los cierres de caja.', err);
       }
 
       // Suscribirse a cambios en tiempo real
@@ -622,6 +639,108 @@ class Store {
       purchases: purchaseTotals,
       estimatedIgicDue: salesTotals.tax - purchaseTotals.deductibleTax
     };
+  }
+
+  getTransactionDateKey(tx) {
+    const toLocalDateKey = (date) => {
+      const d = new Date(date);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    };
+
+    if (tx.createdAt) return toLocalDateKey(tx.createdAt);
+    if (tx.date) {
+      const [datePart, timePart = '00:00'] = tx.date.split(', ');
+      const [day, month, year] = datePart.split('/').map(Number);
+      const [hour, minute] = timePart.split(':').map(Number);
+      return toLocalDateKey(new Date(year, month - 1, day, hour || 0, minute || 0));
+    }
+    return toLocalDateKey(new Date());
+  }
+
+  getPaymentBreakdownForTransaction(tx) {
+    if (Array.isArray(tx.payments) && tx.payments.length > 0) {
+      return tx.payments.map(payment => ({
+        method: payment.method || tx.paymentMethod || '',
+        amount: Number(payment.amount || 0)
+      }));
+    }
+    return [{
+      method: tx.paymentMethod || '',
+      amount: Number(tx.total || 0)
+    }];
+  }
+
+  getCashClosureSummary(date = new Date().toISOString().slice(0, 10)) {
+    const dayTx = this.state.transactions.filter(tx => this.getTransactionDateKey(tx) === date);
+    const summary = dayTx.reduce((acc, tx) => {
+      const total = Number(tx.total || 0);
+      if (tx.type === 'refund') {
+        acc.totalRefunds += Math.abs(total);
+      } else {
+        acc.totalSales += total;
+      }
+      acc.netTotal += total;
+      acc.transactionsCount += tx.type === 'refund' ? 0 : 1;
+
+      this.getPaymentBreakdownForTransaction(tx).forEach(payment => {
+        const method = (payment.method || '').toLowerCase();
+        const amount = Number(payment.amount || 0);
+        if (method.includes('efectivo')) {
+          acc.expectedCash += amount;
+        } else if (method.includes('tarjeta')) {
+          acc.expectedCard += amount;
+        } else {
+          acc.otherPayments += amount;
+        }
+      });
+      return acc;
+    }, {
+      businessDate: date,
+      transactionsCount: 0,
+      totalSales: 0,
+      totalRefunds: 0,
+      netTotal: 0,
+      expectedCash: 0,
+      expectedCard: 0,
+      otherPayments: 0
+    });
+
+    Object.keys(summary).forEach(key => {
+      if (typeof summary[key] === 'number') summary[key] = Number(summary[key].toFixed(2));
+    });
+    return summary;
+  }
+
+  async saveCashClosure(data) {
+    if (!this.canAccessSettings() || !this.cashClosurePersistenceReady) return false;
+    const summary = this.getCashClosureSummary(data.businessDate);
+    const countedCash = Number(data.countedCash || 0);
+    const openingCash = Number(data.openingCash || 0);
+    const bbvaTotal = Number(data.bbvaTotal || 0);
+    const closure = {
+      id: `closure-${data.businessDate}`,
+      ...summary,
+      openingCash,
+      countedCash,
+      cashDifference: Number((countedCash - openingCash - summary.expectedCash).toFixed(2)),
+      bbvaTotal,
+      cardDifference: Number((bbvaTotal - summary.expectedCard).toFixed(2)),
+      notes: data.notes || '',
+      staff: this.state.auth.profile ? {
+        id: this.state.auth.profile.id,
+        name: this.state.auth.profile.display_name,
+        role: this.state.auth.profile.role
+      } : null,
+      closedAt: new Date().toISOString()
+    };
+
+    await upsertCashClosure(closure);
+    await this.loadCashClosures();
+    this.notify();
+    return true;
   }
 
   setActivePosTab(tab) {

@@ -393,6 +393,71 @@ export async function upsertSaleRecord(transaction) {
   return transaction.id;
 }
 
+export async function loadCashClosures(limit = 120) {
+  const { data, error } = await supabase
+    .from('cash_closures')
+    .select('*')
+    .order('business_date', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.warn('[DB] Error loading cash closures:', error.message);
+    return null;
+  }
+
+  return (data || []).map(row => ({
+    id: row.id,
+    businessDate: row.business_date,
+    openingCash: parseFloat(row.opening_cash || 0),
+    expectedCash: parseFloat(row.expected_cash || 0),
+    countedCash: parseFloat(row.counted_cash || 0),
+    cashDifference: parseFloat(row.cash_difference || 0),
+    expectedCard: parseFloat(row.expected_card || 0),
+    bbvaTotal: parseFloat(row.bbva_total || 0),
+    cardDifference: parseFloat(row.card_difference || 0),
+    totalSales: parseFloat(row.total_sales || 0),
+    totalRefunds: parseFloat(row.total_refunds || 0),
+    transactionsCount: Number(row.transactions_count || 0),
+    staffId: row.staff_id || '',
+    staffName: row.staff_name || '',
+    notes: row.notes || '',
+    closedAt: row.closed_at,
+    payload: row.payload || {}
+  }));
+}
+
+export async function upsertCashClosure(closure) {
+  if (!closure?.businessDate) return null;
+  const id = closure.id || `closure-${closure.businessDate}`;
+  const row = {
+    id,
+    business_date: closure.businessDate,
+    opening_cash: closure.openingCash || 0,
+    expected_cash: closure.expectedCash || 0,
+    counted_cash: closure.countedCash || 0,
+    cash_difference: closure.cashDifference || 0,
+    expected_card: closure.expectedCard || 0,
+    bbva_total: closure.bbvaTotal || 0,
+    card_difference: closure.cardDifference || 0,
+    total_sales: closure.totalSales || 0,
+    total_refunds: closure.totalRefunds || 0,
+    transactions_count: closure.transactionsCount || 0,
+    staff_id: closure.staff?.id || closure.staffId || null,
+    staff_name: closure.staff?.name || closure.staffName || null,
+    notes: closure.notes || null,
+    payload: closure,
+    closed_at: closure.closedAt || new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = await supabase.from('cash_closures').upsert(row, { onConflict: 'business_date' });
+  if (error) {
+    notifyDbError('upsertCashClosure', error.message);
+    return null;
+  }
+  return id;
+}
+
 export async function loadStaffProfiles() {
   const { data, error } = await supabase
     .from('staff_profiles')

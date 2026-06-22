@@ -58,6 +58,10 @@ grant all on sales to authenticated;
 grant all on sale_lines to authenticated;
 grant all on sale_payments to authenticated;
 
+alter table if exists cash_closures disable row level security;
+grant all on cash_closures to anon;
+grant all on cash_closures to authenticated;
+
 -- Perfiles de personal por PIN
 alter table if exists staff_profiles disable row level security;
 grant all on staff_profiles to anon;
