@@ -10,8 +10,14 @@ import {
   getLoyaltyDashboard,
   getLoyaltyCustomerPurchases,
   isLoyaltyConfigured,
+  listLoyaltyPromos,
+  listPendingLoyaltyVouchers,
   normalizeRfidUid,
-  searchLoyaltyCustomers
+  saveLoyaltyPromo,
+  searchLoyaltyCustomers,
+  setLoyaltyPromoActive,
+  updateLoyaltyCustomer,
+  updateLoyaltyVoucherStatus
 } from './loyalty.js';
 
 // SVG Icons
@@ -81,10 +87,13 @@ let selectedReportsTab = 'horas'; // 'horas' | 'diaria' | 'semanal' | 'mensual' 
 let geminiInvoiceRawText = '';
 let geminiInvoicePreview = null;
 let loyaltyAdminQuery = '';
+let loyaltyAdminTab = 'clientes';
 let loyaltyAdminCustomers = [];
 let loyaltyAdminSelectedCustomer = null;
 let loyaltyAdminPurchases = [];
 let loyaltyAdminDashboard = null;
+let loyaltyAdminPromos = [];
+let loyaltyAdminVouchers = [];
 let loyaltyAdminLoading = false;
 let loyaltyAdminError = '';
 const GEMINI_SINGLE_INVOICE_PROMPT = `Analiza únicamente esta factura.
@@ -228,6 +237,46 @@ async function loadLoyaltyAdminCustomers({ keepSelection = true } = {}) {
   }
 }
 
+async function loadLoyaltyAdminPromos() {
+  if (!isLoyaltyConfigured) return;
+  loyaltyAdminLoading = true;
+  loyaltyAdminError = '';
+  render(store.state);
+  try {
+    loyaltyAdminPromos = await listLoyaltyPromos();
+  } catch (error) {
+    loyaltyAdminError = error.message || 'No se pudieron cargar las promos.';
+  } finally {
+    loyaltyAdminLoading = false;
+    render(store.state);
+  }
+}
+
+async function loadLoyaltyAdminVouchers() {
+  if (!isLoyaltyConfigured) return;
+  loyaltyAdminLoading = true;
+  loyaltyAdminError = '';
+  render(store.state);
+  try {
+    loyaltyAdminVouchers = await listPendingLoyaltyVouchers();
+  } catch (error) {
+    loyaltyAdminError = error.message || 'No se pudieron cargar los canjes.';
+  } finally {
+    loyaltyAdminLoading = false;
+    render(store.state);
+  }
+}
+
+async function refreshLoyaltyAdminCurrentTab({ keepSelection = true } = {}) {
+  if (loyaltyAdminTab === 'promos') {
+    await loadLoyaltyAdminPromos();
+  } else if (loyaltyAdminTab === 'canjes') {
+    await loadLoyaltyAdminVouchers();
+  } else {
+    await loadLoyaltyAdminCustomers({ keepSelection });
+  }
+}
+
 async function selectLoyaltyAdminCustomer(customerId) {
   const customer = loyaltyAdminCustomers.find(item => String(item.id) === String(customerId));
   if (!customer) return;
@@ -310,6 +359,127 @@ function showCreateLoyaltyCustomerModal() {
     }
   });
   setTimeout(() => modal.querySelector('#loyalty-create-name')?.focus(), 50);
+}
+
+function showEditLoyaltyCustomerModal(customer) {
+  if (!customer) return;
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.innerHTML = `
+    <div class="modal-dialog" style="max-width: 440px; width: 94%; padding: 20px;">
+      <div class="modal-header" style="border-bottom:1px solid var(--border-color); padding-bottom:12px; margin-bottom:16px;">
+        <h3>Editar cliente</h3>
+        <button class="modal-close-btn" id="loyalty-edit-close-btn" aria-label="Cerrar">&times;</button>
+      </div>
+      <form id="loyalty-edit-form" style="display:grid; gap:14px;">
+        <div class="editor-form-group"><label class="editor-form-label">Nombre</label><input class="editor-form-input" id="loyalty-edit-name" value="${escapeHtml(customer.name)}" required></div>
+        <div class="editor-form-group"><label class="editor-form-label">Email</label><input class="editor-form-input" id="loyalty-edit-email" type="email" value="${escapeHtml(customer.email)}"></div>
+        <div class="editor-form-group"><label class="editor-form-label">Teléfono</label><input class="editor-form-input" id="loyalty-edit-phone" inputmode="tel" value="${escapeHtml(customer.phone)}"></div>
+        <div class="editor-form-group"><label class="editor-form-label">RFID</label><input class="editor-form-input" id="loyalty-edit-rfid" value="${escapeHtml(customer.rfidUid)}"></div>
+        <div class="editor-form-group"><label class="editor-form-label">Puntos</label><input class="editor-form-input" id="loyalty-edit-points" type="number" min="0" step="1" value="${customer.points}"></div>
+        <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:10px; border-top:1px solid var(--border-color); padding-top:14px;">
+          <button type="button" class="btn btn-secondary" id="loyalty-edit-cancel-btn" style="height:42px;">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="loyalty-edit-save-btn" style="height:42px; background:var(--secondary); border-color:var(--secondary); color:white;">Guardar</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector('#loyalty-edit-close-btn').addEventListener('click', close);
+  modal.querySelector('#loyalty-edit-cancel-btn').addEventListener('click', close);
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  modal.querySelector('#loyalty-edit-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const saveBtn = modal.querySelector('#loyalty-edit-save-btn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Guardando...';
+    try {
+      const updated = await updateLoyaltyCustomer({
+        id: customer.id,
+        name: modal.querySelector('#loyalty-edit-name')?.value,
+        email: modal.querySelector('#loyalty-edit-email')?.value,
+        phone: modal.querySelector('#loyalty-edit-phone')?.value,
+        rfidUid: modal.querySelector('#loyalty-edit-rfid')?.value,
+        points: modal.querySelector('#loyalty-edit-points')?.value
+      });
+      close();
+      await loadLoyaltyAdminCustomers({ keepSelection: false });
+      await selectLoyaltyAdminCustomer(updated.id);
+      showToast('Cliente actualizado.', 'success');
+    } catch (error) {
+      console.error('[Fidelidad] Error editando cliente', error);
+      showToast(error.message || 'No se pudo guardar el cliente.', 'error');
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Guardar';
+    }
+  });
+}
+
+function showLoyaltyPromoModal(promo = null) {
+  const isNew = !promo?.id;
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.innerHTML = `
+    <div class="modal-dialog" style="max-width: 460px; width: 94%; padding: 20px;">
+      <div class="modal-header" style="border-bottom:1px solid var(--border-color); padding-bottom:12px; margin-bottom:16px;">
+        <h3>${isNew ? 'Nueva promo' : 'Editar promo'}</h3>
+        <button class="modal-close-btn" id="loyalty-promo-close-btn" aria-label="Cerrar">&times;</button>
+      </div>
+      <form id="loyalty-promo-form" style="display:grid; gap:14px;">
+        <div class="editor-form-group"><label class="editor-form-label">Título</label><input class="editor-form-input" id="loyalty-promo-title" value="${escapeHtml(promo?.title || '')}" required></div>
+        <div class="editor-form-group"><label class="editor-form-label">Descripción</label><textarea class="editor-form-input" id="loyalty-promo-description" rows="3">${escapeHtml(promo?.description || '')}</textarea></div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <div class="editor-form-group"><label class="editor-form-label">Etiqueta</label><input class="editor-form-input" id="loyalty-promo-tag" value="${escapeHtml(promo?.tag || '')}"></div>
+          <div class="editor-form-group"><label class="editor-form-label">Tipo</label><select class="editor-form-input" id="loyalty-promo-type">
+            ${['discount','deal','birthday','redeem'].map(type => `<option value="${type}" ${promo?.type === type ? 'selected' : ''}>${type}</option>`).join('')}
+          </select></div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <div class="editor-form-group"><label class="editor-form-label">Puntos</label><input class="editor-form-input" id="loyalty-promo-points" type="number" min="0" step="1" value="${promo?.pointsRequired || 0}"></div>
+          <div class="editor-form-group"><label class="editor-form-label">Caducidad</label><input class="editor-form-input" id="loyalty-promo-expiry" type="date" value="${escapeHtml((promo?.expiry || '').slice(0, 10))}"></div>
+        </div>
+        <label class="staff-active-toggle"><input type="checkbox" id="loyalty-promo-active" ${promo?.active !== false ? 'checked' : ''}><span>Promo activa</span></label>
+        <label class="staff-active-toggle"><input type="checkbox" id="loyalty-promo-hidden" ${promo?.hidden ? 'checked' : ''}><span>Ocultar en la app de clientes</span></label>
+        <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:10px; border-top:1px solid var(--border-color); padding-top:14px;">
+          <button type="button" class="btn btn-secondary" id="loyalty-promo-cancel-btn" style="height:42px;">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="loyalty-promo-save-btn" style="height:42px; background:var(--secondary); border-color:var(--secondary); color:white;">Guardar</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector('#loyalty-promo-close-btn').addEventListener('click', close);
+  modal.querySelector('#loyalty-promo-cancel-btn').addEventListener('click', close);
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  modal.querySelector('#loyalty-promo-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const saveBtn = modal.querySelector('#loyalty-promo-save-btn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Guardando...';
+    try {
+      await saveLoyaltyPromo({
+        id: promo?.id || null,
+        title: modal.querySelector('#loyalty-promo-title')?.value,
+        description: modal.querySelector('#loyalty-promo-description')?.value,
+        tag: modal.querySelector('#loyalty-promo-tag')?.value,
+        type: modal.querySelector('#loyalty-promo-type')?.value,
+        pointsRequired: modal.querySelector('#loyalty-promo-points')?.value,
+        expiry: modal.querySelector('#loyalty-promo-expiry')?.value,
+        active: modal.querySelector('#loyalty-promo-active')?.checked,
+        hidden: modal.querySelector('#loyalty-promo-hidden')?.checked
+      });
+      close();
+      await loadLoyaltyAdminPromos();
+      showToast('Promo guardada.', 'success');
+    } catch (error) {
+      console.error('[Fidelidad] Error guardando promo', error);
+      showToast(error.message || 'No se pudo guardar la promo.', 'error');
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Guardar';
+    }
+  });
 }
 
 // 1. Header component renderer
@@ -1204,6 +1374,16 @@ function renderAjustesView(state) {
       totalSpent: 0,
       pendingVouchers: 0
     };
+    const tabs = [
+      ['clientes', 'Clientes'],
+      ['promos', 'Promos'],
+      ['canjes', 'Canjes']
+    ];
+    const tabButtons = tabs.map(([id, label]) => `
+      <button class="loyalty-admin-tab-btn ${loyaltyAdminTab === id ? 'is-active' : ''}" data-loyalty-admin-tab="${id}">
+        ${label}
+      </button>
+    `).join('');
     const customerRows = loyaltyAdminCustomers.map(customer => `
       <button class="loyalty-admin-row ${selected?.id === customer.id ? 'is-selected' : ''}" data-loyalty-customer-id="${customer.id}">
         <span>
@@ -1219,6 +1399,110 @@ function renderAjustesView(state) {
         <strong>${purchase.amount.toFixed(2)}€ · +${purchase.points} pts</strong>
       </div>
     `).join('');
+    const promoRows = loyaltyAdminPromos.map(promo => `
+      <div class="loyalty-admin-promo-row">
+        <div>
+          <strong>${escapeHtml(promo.title || 'Promo')}</strong>
+          <small>${escapeHtml(promo.description || 'Sin descripcion')}</small>
+          <span>${escapeHtml(promo.tag || promo.type || 'redeem')} · ${Number(promo.pointsRequired || 0).toLocaleString('es-ES')} pts${promo.expiry ? ` · hasta ${formatIsoDateEs(promo.expiry)}` : ''}</span>
+        </div>
+        <div class="loyalty-admin-actions">
+          <button class="btn btn-secondary" data-loyalty-promo-edit-id="${promo.id}">Editar</button>
+          <button class="btn ${promo.active ? 'btn-secondary' : 'btn-primary'}" data-loyalty-promo-toggle-id="${promo.id}" data-next-active="${promo.active ? 'false' : 'true'}">
+            ${promo.active ? 'Pausar' : 'Activar'}
+          </button>
+        </div>
+      </div>
+    `).join('');
+    const voucherRows = loyaltyAdminVouchers.map(voucher => `
+      <div class="loyalty-admin-voucher-row">
+        <div>
+          <strong>${escapeHtml(voucher.customerName)}</strong>
+          <small>${escapeHtml(voucher.promoTitle)} · ${escapeHtml(voucher.code || 'Sin codigo')}</small>
+          <span>${Number(voucher.pointsCost || 0).toLocaleString('es-ES')} pts · ${voucher.redeemedAt ? new Date(voucher.redeemedAt).toLocaleDateString('es-ES') : 'Sin fecha'}</span>
+        </div>
+        <div class="loyalty-admin-actions">
+          <button class="btn btn-primary" data-loyalty-voucher-use-id="${voucher.id}">Usado</button>
+          <button class="btn btn-secondary" data-loyalty-voucher-cancel-id="${voucher.id}">Cancelar</button>
+        </div>
+      </div>
+    `).join('');
+    const clientsPane = `
+      <div class="loyalty-admin-search">
+        <input class="search-input" id="loyalty-admin-search-input" value="${escapeHtml(loyaltyAdminQuery)}" placeholder="Buscar cliente, email, telefono o RFID">
+        <button class="btn btn-primary" id="loyalty-admin-search-btn" ${loyaltyAdminLoading ? 'disabled' : ''}>
+          ${loyaltyAdminLoading ? '...' : 'Buscar'}
+        </button>
+      </div>
+      <div class="loyalty-admin-layout">
+        <div class="loyalty-admin-list">
+          <div class="loyalty-admin-section-title">Clientes</div>
+          ${customerRows || `<p class="gemini-muted">${loyaltyAdminLoading ? 'Cargando clientes...' : 'Pulsa Actualizar. Si sigue vacio, ejecuta supabase/loyalty_admin_bridge.sql en la base de fidelidad.'}</p>`}
+        </div>
+        <div class="loyalty-admin-detail">
+          ${selected ? `
+            <div class="loyalty-admin-card">
+              <div class="loyalty-admin-detail-head">
+                <span>
+                  <strong>${escapeHtml(selected.name)}</strong>
+                  <small>${escapeHtml(selected.email || 'Sin email')} · ${escapeHtml(selected.phone || 'Sin telefono')}</small>
+                </span>
+                <em>${escapeHtml(selected.tier)}</em>
+              </div>
+              <div class="loyalty-admin-metrics">
+                <div><span>Puntos</span><strong>${selected.points.toLocaleString('es-ES')}</strong></div>
+                <div><span>Visitas</span><strong>${selected.visits}</strong></div>
+                <div><span>Gastado</span><strong>${selected.totalSpent.toFixed(2)}€</strong></div>
+                <div><span>RFID</span><strong>${escapeHtml(selected.rfidUid || '-')}</strong></div>
+              </div>
+              <div class="loyalty-admin-card-footer">
+                <button class="btn btn-secondary" id="loyalty-admin-edit-customer-btn">Editar cliente</button>
+              </div>
+            </div>
+            <div class="loyalty-admin-card">
+              <div class="loyalty-admin-section-title">Ultimas compras</div>
+              ${purchaseRows || '<p class="gemini-muted">Sin compras recientes.</p>'}
+            </div>
+          ` : `
+            <div class="loyalty-admin-empty">
+              <strong>Selecciona un cliente</strong>
+              <span>Aqui veremos su ficha, puntos, RFID y compras recientes.</span>
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+    const promosPane = `
+      <div class="loyalty-admin-section-head">
+        <span>
+          <strong>Promociones</strong>
+          <small>Se guardan en la base de fidelidad y aparecen en la app del cliente segun su estado.</small>
+        </span>
+        <button class="btn btn-primary" id="loyalty-admin-create-promo-btn">Nueva promo</button>
+      </div>
+      <div class="loyalty-admin-list">
+        ${promoRows || `<p class="gemini-muted">${loyaltyAdminLoading ? 'Cargando promos...' : 'No hay promos para mostrar.'}</p>`}
+      </div>
+    `;
+    const vouchersPane = `
+      <div class="loyalty-admin-section-head">
+        <span>
+          <strong>Canjes pendientes</strong>
+          <small>Marca como usado cuando entregues la promo o cancela para devolver puntos.</small>
+        </span>
+      </div>
+      <div class="loyalty-admin-list">
+        ${voucherRows || `<p class="gemini-muted">${loyaltyAdminLoading ? 'Cargando canjes...' : 'No hay canjes pendientes.'}</p>`}
+      </div>
+    `;
+    const activePane = loyaltyAdminTab === 'promos'
+      ? promosPane
+      : loyaltyAdminTab === 'canjes'
+      ? vouchersPane
+      : clientsPane;
+    const createButton = loyaltyAdminTab === 'clientes'
+      ? '<button class="btn btn-primary" id="loyalty-admin-create-btn" style="height:36px; padding:0 12px; font-size:0.85rem; background-color:var(--secondary); color:white;">Nuevo</button>'
+      : '';
 
     return `
       <div class="view-container">
@@ -1229,9 +1513,7 @@ function renderAjustesView(state) {
           <button class="btn btn-secondary" id="loyalty-admin-refresh-btn" style="height:36px; padding:0 12px; font-size:0.85rem;">
             Actualizar
           </button>
-          <button class="btn btn-primary" id="loyalty-admin-create-btn" style="height:36px; padding:0 12px; font-size:0.85rem; background-color:var(--secondary); color:white;">
-            Nuevo
-          </button>
+          ${createButton}
         </div>
         <h2 class="settings-nav-title">Fidelidad</h2>
         <div class="settings-editor-container loyalty-admin-panel">
@@ -1244,47 +1526,9 @@ function renderAjustesView(state) {
               <div><span>Visitas</span><strong>${dashboard.totalVisits.toLocaleString('es-ES')}</strong></div>
               <div><span>Gasto fidelizado</span><strong>${dashboard.totalSpent.toFixed(2)}€</strong></div>
             </div>
-            <div class="loyalty-admin-search">
-              <input class="search-input" id="loyalty-admin-search-input" value="${escapeHtml(loyaltyAdminQuery)}" placeholder="Buscar cliente, email, telefono o RFID">
-              <button class="btn btn-primary" id="loyalty-admin-search-btn" ${loyaltyAdminLoading ? 'disabled' : ''}>
-                ${loyaltyAdminLoading ? '...' : 'Buscar'}
-              </button>
-            </div>
+            <div class="loyalty-admin-tabs">${tabButtons}</div>
             ${loyaltyAdminError ? `<p class="payment-loyalty-status" style="color:var(--danger);">${escapeHtml(loyaltyAdminError)}</p>` : ''}
-            <div class="loyalty-admin-layout">
-              <div class="loyalty-admin-list">
-                <div class="loyalty-admin-section-title">Clientes</div>
-                ${customerRows || `<p class="gemini-muted">${loyaltyAdminLoading ? 'Cargando clientes...' : 'Pulsa Actualizar. Si sigue vacio, ejecuta supabase/loyalty_admin_bridge.sql en la base de fidelidad.'}</p>`}
-              </div>
-              <div class="loyalty-admin-detail">
-                ${selected ? `
-                  <div class="loyalty-admin-card">
-                    <div class="loyalty-admin-detail-head">
-                      <span>
-                        <strong>${escapeHtml(selected.name)}</strong>
-                        <small>${escapeHtml(selected.email || 'Sin email')} · ${escapeHtml(selected.phone || 'Sin telefono')}</small>
-                      </span>
-                      <em>${escapeHtml(selected.tier)}</em>
-                    </div>
-                    <div class="loyalty-admin-metrics">
-                      <div><span>Puntos</span><strong>${selected.points.toLocaleString('es-ES')}</strong></div>
-                      <div><span>Visitas</span><strong>${selected.visits}</strong></div>
-                      <div><span>Gastado</span><strong>${selected.totalSpent.toFixed(2)}€</strong></div>
-                      <div><span>RFID</span><strong>${escapeHtml(selected.rfidUid || '-')}</strong></div>
-                    </div>
-                  </div>
-                  <div class="loyalty-admin-card">
-                    <div class="loyalty-admin-section-title">Últimas compras</div>
-                    ${purchaseRows || '<p class="gemini-muted">Sin compras recientes.</p>'}
-                  </div>
-                ` : `
-                  <div class="loyalty-admin-empty">
-                    <strong>Selecciona un cliente</strong>
-                    <span>Aquí veremos su ficha, puntos, RFID y compras recientes.</span>
-                  </div>
-                `}
-              </div>
-            </div>
+            ${activePane}
           ` : `
             <p class="gemini-muted">Falta configurar la conexión con la base de fidelidad. Revisa VITE_LOYALTY_SUPABASE_URL y VITE_LOYALTY_SUPABASE_ANON_KEY.</p>
           `}
@@ -6210,11 +6454,18 @@ function setupEventListeners(container) {
   if (toFidelidadBtn) {
     toFidelidadBtn.addEventListener('click', () => {
       store.navigateSettings(['fidelidad']);
-      if (isLoyaltyConfigured && loyaltyAdminCustomers.length === 0) {
-        loadLoyaltyAdminCustomers({ keepSelection: false });
+      if (isLoyaltyConfigured) {
+        refreshLoyaltyAdminCurrentTab({ keepSelection: false });
       }
     });
   }
+
+  container.querySelectorAll('[data-loyalty-admin-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      loyaltyAdminTab = btn.dataset.loyaltyAdminTab || 'clientes';
+      refreshLoyaltyAdminCurrentTab({ keepSelection: true });
+    });
+  });
 
   const loyaltyAdminSearchInput = container.querySelector('#loyalty-admin-search-input');
   if (loyaltyAdminSearchInput) {
@@ -6239,7 +6490,7 @@ function setupEventListeners(container) {
   const loyaltyAdminRefreshBtn = container.querySelector('#loyalty-admin-refresh-btn');
   if (loyaltyAdminRefreshBtn) {
     loyaltyAdminRefreshBtn.addEventListener('click', () => {
-      loadLoyaltyAdminCustomers({ keepSelection: true });
+      refreshLoyaltyAdminCurrentTab({ keepSelection: true });
     });
   }
 
@@ -6250,9 +6501,76 @@ function setupEventListeners(container) {
     });
   }
 
+  const loyaltyAdminEditCustomerBtn = container.querySelector('#loyalty-admin-edit-customer-btn');
+  if (loyaltyAdminEditCustomerBtn) {
+    loyaltyAdminEditCustomerBtn.addEventListener('click', () => {
+      showEditLoyaltyCustomerModal(loyaltyAdminSelectedCustomer);
+    });
+  }
+
+  const loyaltyAdminCreatePromoBtn = container.querySelector('#loyalty-admin-create-promo-btn');
+  if (loyaltyAdminCreatePromoBtn) {
+    loyaltyAdminCreatePromoBtn.addEventListener('click', () => {
+      showLoyaltyPromoModal();
+    });
+  }
+
   container.querySelectorAll('[data-loyalty-customer-id]').forEach(btn => {
     btn.addEventListener('click', () => {
       selectLoyaltyAdminCustomer(btn.dataset.loyaltyCustomerId);
+    });
+  });
+
+  container.querySelectorAll('[data-loyalty-promo-edit-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const promo = loyaltyAdminPromos.find(item => String(item.id) === String(btn.dataset.loyaltyPromoEditId));
+      showLoyaltyPromoModal(promo);
+    });
+  });
+
+  container.querySelectorAll('[data-loyalty-promo-toggle-id]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await setLoyaltyPromoActive(btn.dataset.loyaltyPromoToggleId, btn.dataset.nextActive === 'true');
+        await loadLoyaltyAdminPromos();
+        showToast('Promo actualizada.', 'success');
+      } catch (error) {
+        console.error('[Fidelidad] Error actualizando promo', error);
+        showToast(error.message || 'No se pudo actualizar la promo.', 'error');
+        btn.disabled = false;
+      }
+    });
+  });
+
+  container.querySelectorAll('[data-loyalty-voucher-use-id]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await updateLoyaltyVoucherStatus(btn.dataset.loyaltyVoucherUseId, 'used');
+        await loadLoyaltyAdminVouchers();
+        showToast('Canje marcado como usado.', 'success');
+      } catch (error) {
+        console.error('[Fidelidad] Error usando canje', error);
+        showToast(error.message || 'No se pudo actualizar el canje.', 'error');
+        btn.disabled = false;
+      }
+    });
+  });
+
+  container.querySelectorAll('[data-loyalty-voucher-cancel-id]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('¿Cancelar este canje y devolver los puntos al cliente?')) return;
+      btn.disabled = true;
+      try {
+        await updateLoyaltyVoucherStatus(btn.dataset.loyaltyVoucherCancelId, 'cancelled');
+        await loadLoyaltyAdminVouchers();
+        showToast('Canje cancelado y puntos devueltos.', 'success');
+      } catch (error) {
+        console.error('[Fidelidad] Error cancelando canje', error);
+        showToast(error.message || 'No se pudo cancelar el canje.', 'error');
+        btn.disabled = false;
+      }
     });
   });
 

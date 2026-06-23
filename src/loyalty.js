@@ -59,6 +59,38 @@ function mapLoyaltyDashboard(row) {
   };
 }
 
+function mapLoyaltyPromo(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    title: row.title || '',
+    description: row.description || '',
+    tag: row.tag || '',
+    type: row.type || 'redeem',
+    pointsRequired: Number(row.pts_req || 0),
+    expiry: row.expiry || '',
+    active: row.active !== false,
+    hidden: row.hidden === true
+  };
+}
+
+function mapLoyaltyVoucher(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    code: row.code || '',
+    customerId: row.customer_id,
+    customerName: row.customer_name || 'Cliente',
+    promoId: row.promo_id,
+    promoTitle: row.promo_title || 'Promo',
+    status: row.status || 'pending',
+    pointsCost: Number(row.pts_cost || 0),
+    redeemedAt: row.redeemed_at || null,
+    expiresAt: row.expires_at || null,
+    usedAt: row.used_at || null
+  };
+}
+
 function requireLoyaltyClient() {
   if (!loyaltySupabase) {
     throw new Error('Falta configurar la conexion con fidelidad');
@@ -127,6 +159,72 @@ export async function createLoyaltyCustomer({ name, email = '', phone = '', rfid
 
   if (error) throw error;
   return mapLoyaltyCustomer(Array.isArray(data) ? data[0] : data);
+}
+
+export async function updateLoyaltyCustomer({ id, name, email = '', phone = '', rfidUid = '', points = 0 }) {
+  const client = requireLoyaltyClient();
+  const { data, error } = await client.rpc('tpv_update_loyalty_customer', {
+    p_customer_id: id,
+    p_name: String(name || '').trim(),
+    p_email: String(email || '').trim(),
+    p_phone: String(phone || '').trim(),
+    p_rfid_uid: normalizeRfidUid(rfidUid),
+    p_points: Math.max(0, Math.round(Number(points || 0)))
+  });
+
+  if (error) throw error;
+  return mapLoyaltyCustomer(Array.isArray(data) ? data[0] : data);
+}
+
+export async function listLoyaltyPromos() {
+  const client = requireLoyaltyClient();
+  const { data, error } = await client.rpc('tpv_list_loyalty_promos');
+  if (error) throw error;
+  return (data || []).map(mapLoyaltyPromo).filter(Boolean);
+}
+
+export async function saveLoyaltyPromo(promo) {
+  const client = requireLoyaltyClient();
+  const { data, error } = await client.rpc('tpv_save_loyalty_promo', {
+    p_promo_id: promo.id || null,
+    p_title: String(promo.title || '').trim(),
+    p_description: String(promo.description || '').trim(),
+    p_tag: String(promo.tag || '').trim(),
+    p_type: promo.type || 'redeem',
+    p_pts_req: Math.max(0, Math.round(Number(promo.pointsRequired || 0))),
+    p_expiry: promo.expiry || null,
+    p_active: promo.active !== false,
+    p_hidden: promo.hidden === true
+  });
+  if (error) throw error;
+  return mapLoyaltyPromo(Array.isArray(data) ? data[0] : data);
+}
+
+export async function setLoyaltyPromoActive(promoId, active) {
+  const client = requireLoyaltyClient();
+  const { data, error } = await client.rpc('tpv_set_loyalty_promo_active', {
+    p_promo_id: promoId,
+    p_active: active === true
+  });
+  if (error) throw error;
+  return mapLoyaltyPromo(Array.isArray(data) ? data[0] : data);
+}
+
+export async function listPendingLoyaltyVouchers() {
+  const client = requireLoyaltyClient();
+  const { data, error } = await client.rpc('tpv_list_pending_loyalty_vouchers');
+  if (error) throw error;
+  return (data || []).map(mapLoyaltyVoucher).filter(Boolean);
+}
+
+export async function updateLoyaltyVoucherStatus(voucherId, status) {
+  const client = requireLoyaltyClient();
+  const { data, error } = await client.rpc('tpv_update_loyalty_voucher_status', {
+    p_voucher_id: voucherId,
+    p_status: status
+  });
+  if (error) throw error;
+  return mapLoyaltyVoucher(Array.isArray(data) ? data[0] : data);
 }
 
 export async function addLoyaltyPurchase({ customer, amount, transactionId, paymentMethod }) {
