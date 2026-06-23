@@ -59,6 +59,34 @@ function mapLoyaltyDashboard(row) {
   };
 }
 
+function mapJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  if (!value) return [];
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function mapLoyaltyOverview(row) {
+  const base = mapLoyaltyDashboard(row);
+  return {
+    ...base,
+    active30d: Number(row?.active_30d || 0),
+    retention30d: Number(row?.retention_30d || 0),
+    avgTicket: Number(row?.avg_ticket || 0),
+    expiringVouchers: Number(row?.expiring_vouchers || 0),
+    tierDistribution: mapJsonArray(row?.tier_distribution),
+    topPromos: mapJsonArray(row?.top_promos),
+    recentPurchases: mapJsonArray(row?.recent_purchases)
+  };
+}
+
 function mapLoyaltyPromo(row) {
   if (!row) return null;
   return {
@@ -128,6 +156,13 @@ export async function getLoyaltyDashboard() {
   const { data, error } = await client.rpc('tpv_get_loyalty_dashboard');
   if (error) throw error;
   return mapLoyaltyDashboard(Array.isArray(data) ? data[0] : data);
+}
+
+export async function getLoyaltyAdminOverview() {
+  const client = requireLoyaltyClient();
+  const { data, error } = await client.rpc('tpv_get_loyalty_admin_overview');
+  if (error) throw error;
+  return mapLoyaltyOverview(Array.isArray(data) ? data[0] : data);
 }
 
 export async function getLoyaltyCustomerPurchases(customerId, limit = 8) {

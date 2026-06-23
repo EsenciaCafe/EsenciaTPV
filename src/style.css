@@ -2803,7 +2803,7 @@ body.light-theme .btn-quick-pay {
   border-radius: var(--border-radius-md);
   display: grid;
   gap: 4px;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   padding: 4px;
 }
 
@@ -2829,6 +2829,45 @@ body.light-theme .btn-quick-pay {
 .loyalty-admin-layout {
   display: grid;
   gap: 12px;
+}
+
+.loyalty-admin-overview-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.loyalty-admin-kpi-card {
+  background: var(--bg-item);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  min-width: 0;
+  padding: 12px;
+}
+
+.loyalty-admin-kpi-card span {
+  color: var(--text-muted);
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.loyalty-admin-kpi-card strong {
+  color: var(--secondary);
+  display: block;
+  font-size: 1.34rem;
+  line-height: 1;
+  margin-top: 8px;
+}
+
+.loyalty-admin-kpi-card small {
+  color: var(--text-muted);
+  display: block;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  margin-top: 7px;
 }
 
 .loyalty-admin-list,
@@ -3005,6 +3044,80 @@ body.light-theme .btn-quick-pay {
   font-size: 0.86rem;
 }
 
+.loyalty-admin-tier-row {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 70px 1fr 32px;
+  padding: 10px 0;
+}
+
+.loyalty-admin-tier-row + .loyalty-admin-tier-row {
+  border-top: 1px solid var(--border-color);
+}
+
+.loyalty-admin-tier-row span,
+.loyalty-admin-tier-row strong {
+  color: var(--text-main);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.loyalty-admin-tier-row strong {
+  text-align: right;
+}
+
+.loyalty-admin-tier-row div {
+  background: var(--bg-panel);
+  border-radius: 999px;
+  height: 7px;
+  overflow: hidden;
+}
+
+.loyalty-admin-tier-row i {
+  background: var(--secondary);
+  border-radius: 999px;
+  display: block;
+  height: 100%;
+  min-width: 4px;
+}
+
+.loyalty-admin-mini-row {
+  align-items: center;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 10px 0;
+}
+
+.loyalty-admin-mini-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.loyalty-admin-mini-row strong {
+  color: var(--text-main);
+  display: block;
+  font-size: 0.88rem;
+}
+
+.loyalty-admin-mini-row small {
+  color: var(--text-muted);
+  display: block;
+  font-size: 0.74rem;
+  line-height: 1.25;
+  margin-top: 3px;
+}
+
+.loyalty-admin-mini-row em {
+  color: var(--secondary);
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  font-style: normal;
+  font-weight: 900;
+}
+
 .loyalty-admin-promo-row,
 .loyalty-admin-voucher-row {
   align-items: center;
@@ -3071,12 +3184,20 @@ body.light-theme .btn-quick-pay {
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
+  .loyalty-admin-overview-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .loyalty-admin-layout {
     grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.1fr);
   }
 }
 
 @media (max-width: 520px) {
+  .loyalty-admin-tabs {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
   .loyalty-admin-section-head,
   .loyalty-admin-promo-row,
   .loyalty-admin-voucher-row {

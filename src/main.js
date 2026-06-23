@@ -7,6 +7,7 @@ import {
   calculateLoyaltyPoints,
   createLoyaltyCustomer,
   findLoyaltyCustomerByRfid,
+  getLoyaltyAdminOverview,
   getLoyaltyDashboard,
   getLoyaltyCustomerPurchases,
   isLoyaltyConfigured,
@@ -87,11 +88,12 @@ let selectedReportsTab = 'horas'; // 'horas' | 'diaria' | 'semanal' | 'mensual' 
 let geminiInvoiceRawText = '';
 let geminiInvoicePreview = null;
 let loyaltyAdminQuery = '';
-let loyaltyAdminTab = 'clientes';
+let loyaltyAdminTab = 'resumen';
 let loyaltyAdminCustomers = [];
 let loyaltyAdminSelectedCustomer = null;
 let loyaltyAdminPurchases = [];
 let loyaltyAdminDashboard = null;
+let loyaltyAdminOverview = null;
 let loyaltyAdminPromos = [];
 let loyaltyAdminVouchers = [];
 let loyaltyAdminLoading = false;
@@ -237,6 +239,22 @@ async function loadLoyaltyAdminCustomers({ keepSelection = true } = {}) {
   }
 }
 
+async function loadLoyaltyAdminOverview() {
+  if (!isLoyaltyConfigured) return;
+  loyaltyAdminLoading = true;
+  loyaltyAdminError = '';
+  render(store.state);
+  try {
+    loyaltyAdminOverview = await getLoyaltyAdminOverview();
+    loyaltyAdminDashboard = loyaltyAdminOverview;
+  } catch (error) {
+    loyaltyAdminError = error.message || 'No se pudo cargar el resumen de fidelidad.';
+  } finally {
+    loyaltyAdminLoading = false;
+    render(store.state);
+  }
+}
+
 async function loadLoyaltyAdminPromos() {
   if (!isLoyaltyConfigured) return;
   loyaltyAdminLoading = true;
@@ -268,7 +286,9 @@ async function loadLoyaltyAdminVouchers() {
 }
 
 async function refreshLoyaltyAdminCurrentTab({ keepSelection = true } = {}) {
-  if (loyaltyAdminTab === 'promos') {
+  if (loyaltyAdminTab === 'resumen') {
+    await loadLoyaltyAdminOverview();
+  } else if (loyaltyAdminTab === 'promos') {
     await loadLoyaltyAdminPromos();
   } else if (loyaltyAdminTab === 'canjes') {
     await loadLoyaltyAdminVouchers();
@@ -1374,7 +1394,18 @@ function renderAjustesView(state) {
       totalSpent: 0,
       pendingVouchers: 0
     };
+    const overview = loyaltyAdminOverview || {
+      ...dashboard,
+      active30d: 0,
+      retention30d: 0,
+      avgTicket: 0,
+      expiringVouchers: 0,
+      tierDistribution: [],
+      topPromos: [],
+      recentPurchases: []
+    };
     const tabs = [
+      ['resumen', 'Resumen'],
       ['clientes', 'Clientes'],
       ['promos', 'Promos'],
       ['canjes', 'Canjes']
@@ -1427,6 +1458,58 @@ function renderAjustesView(state) {
         </div>
       </div>
     `).join('');
+    const tierRows = (overview.tierDistribution || []).map(tier => {
+      const count = Number(tier.count || 0);
+      const total = Math.max(Number(overview.totalCustomers || 0), 1);
+      const width = Math.max(4, Math.round((count / total) * 100));
+      return `
+        <div class="loyalty-admin-tier-row">
+          <span>${escapeHtml(tier.tier || 'Nivel')}</span>
+          <div><i style="width:${width}%"></i></div>
+          <strong>${count}</strong>
+        </div>
+      `;
+    }).join('');
+    const topPromoRows = (overview.topPromos || []).map(promo => `
+      <div class="loyalty-admin-mini-row">
+        <span>
+          <strong>${escapeHtml(promo.title || 'Promo')}</strong>
+          <small>${Number(promo.used || 0)} usados · ${Number(promo.pending || 0)} pendientes</small>
+        </span>
+        <em>${Number(promo.total || 0)}</em>
+      </div>
+    `).join('');
+    const recentPurchaseRows = (overview.recentPurchases || []).map(purchase => `
+      <div class="loyalty-admin-mini-row">
+        <span>
+          <strong>${escapeHtml(purchase.customerName || 'Cliente')}</strong>
+          <small>${purchase.createdAt ? new Date(purchase.createdAt).toLocaleDateString('es-ES') : 'Sin fecha'} · +${Number(purchase.points || 0)} pts</small>
+        </span>
+        <em>${Number(purchase.amount || 0).toFixed(2)}€</em>
+      </div>
+    `).join('');
+    const overviewPane = `
+      <div class="loyalty-admin-overview-grid">
+        <div class="loyalty-admin-kpi-card"><span>Activos 30 dias</span><strong>${Number(overview.active30d || 0).toLocaleString('es-ES')}</strong><small>${Number(overview.retention30d || 0).toFixed(0)}% de la base</small></div>
+        <div class="loyalty-admin-kpi-card"><span>Ticket medio</span><strong>${Number(overview.avgTicket || 0).toFixed(2)}€</strong><small>compras fidelizadas</small></div>
+        <div class="loyalty-admin-kpi-card"><span>Canjes pendientes</span><strong>${Number(overview.pendingVouchers || 0).toLocaleString('es-ES')}</strong><small>${Number(overview.expiringVouchers || 0)} caducan pronto</small></div>
+        <div class="loyalty-admin-kpi-card"><span>Puntos vivos</span><strong>${Number(overview.totalPoints || 0).toLocaleString('es-ES')}</strong><small>${Number(overview.totalVisits || 0).toLocaleString('es-ES')} visitas</small></div>
+      </div>
+      <div class="loyalty-admin-layout">
+        <div class="loyalty-admin-card">
+          <div class="loyalty-admin-section-title">Distribucion por nivel</div>
+          ${tierRows || '<p class="gemini-muted">Sin datos de niveles.</p>'}
+        </div>
+        <div class="loyalty-admin-card">
+          <div class="loyalty-admin-section-title">Promos mas canjeadas</div>
+          ${topPromoRows || '<p class="gemini-muted">Sin canjes todavia.</p>'}
+        </div>
+      </div>
+      <div class="loyalty-admin-card">
+        <div class="loyalty-admin-section-title">Ultimas compras fidelizadas</div>
+        ${recentPurchaseRows || '<p class="gemini-muted">Sin compras recientes.</p>'}
+      </div>
+    `;
     const clientsPane = `
       <div class="loyalty-admin-search">
         <input class="search-input" id="loyalty-admin-search-input" value="${escapeHtml(loyaltyAdminQuery)}" placeholder="Buscar cliente, email, telefono o RFID">
@@ -1499,6 +1582,8 @@ function renderAjustesView(state) {
       ? promosPane
       : loyaltyAdminTab === 'canjes'
       ? vouchersPane
+      : loyaltyAdminTab === 'resumen'
+      ? overviewPane
       : clientsPane;
     const createButton = loyaltyAdminTab === 'clientes'
       ? '<button class="btn btn-primary" id="loyalty-admin-create-btn" style="height:36px; padding:0 12px; font-size:0.85rem; background-color:var(--secondary); color:white;">Nuevo</button>'
@@ -6462,7 +6547,7 @@ function setupEventListeners(container) {
 
   container.querySelectorAll('[data-loyalty-admin-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
-      loyaltyAdminTab = btn.dataset.loyaltyAdminTab || 'clientes';
+      loyaltyAdminTab = btn.dataset.loyaltyAdminTab || 'resumen';
       refreshLoyaltyAdminCurrentTab({ keepSelection: true });
     });
   });
