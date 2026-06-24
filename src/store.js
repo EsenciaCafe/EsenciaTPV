@@ -12,6 +12,7 @@ import {
   upsertReceiptTicket,
   loadSales,
   upsertSaleRecord,
+  createFiscalDocumentForSale,
   loadCashClosures,
   upsertCashClosure,
   loadStaffProfiles,
@@ -464,10 +465,39 @@ class Store {
   }
 
   persistSaleRecord(transaction) {
-    if (!this.salesPersistenceReady) return;
-    upsertSaleRecord(transaction).catch(err => {
+    if (!this.salesPersistenceReady) return Promise.resolve(null);
+    return upsertSaleRecord(transaction).catch(err => {
       console.warn('[Store] No se pudo guardar la venta normalizada.', err);
+      return null;
     });
+  }
+
+  async ensureFiscalDocument(transactionId) {
+    if (!this.salesPersistenceReady) return null;
+
+    const txIndex = this.state.transactions.findIndex(tx => tx.id === transactionId);
+    if (txIndex === -1) return null;
+
+    const currentTx = this.state.transactions[txIndex];
+    if (currentTx.fiscalData?.fiscalNumber) return currentTx.fiscalData;
+
+    await this.persistSaleRecord(currentTx);
+    const fiscalData = await createFiscalDocumentForSale(currentTx);
+    if (!fiscalData?.fiscalNumber) return null;
+
+    const updatedTx = {
+      ...this.state.transactions[txIndex],
+      fiscalData
+    };
+    this.state.transactions[txIndex] = updatedTx;
+
+    await this.persistSaleRecord(updatedTx);
+    if (updatedTx.receiptToken) {
+      this.publishReceiptTicket(updatedTx);
+    }
+
+    this.notify();
+    return fiscalData;
   }
 
   ensureTransactionReceiptToken(transactionId) {
@@ -1826,6 +1856,7 @@ class Store {
     this.state.transactions.unshift(transaction);
     this.publishReceiptTicket(transaction);
     this.persistSaleRecord(transaction);
+    this.ensureFiscalDocument(transaction.id);
 
     if (this.state.selectedTableId !== null) {
       const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
@@ -1934,6 +1965,7 @@ class Store {
     this.state.transactions.unshift(refundTx);
     this.persistSaleRecord(this.state.transactions[parentIdx] || parent);
     this.persistSaleRecord(refundTx);
+    this.ensureFiscalDocument(refundTx.id);
     this.notify();
     return refundTx;
   }

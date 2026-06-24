@@ -20,6 +20,29 @@ function notifyDbError(operation, errorMessage) {
   }));
 }
 
+function mapFiscalDocument(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    saleId: row.sale_id,
+    type: row.document_type,
+    status: row.status,
+    series: row.series,
+    number: Number(row.number || 0),
+    fiscalNumber: row.fiscal_number,
+    issuedAt: row.issued_at,
+    totalAmount: parseFloat(row.total_amount || 0),
+    taxName: row.tax_name || 'IGIC',
+    taxRate: parseFloat(row.tax_rate || 0),
+    taxableBase: parseFloat(row.taxable_base || 0),
+    taxAmount: parseFloat(row.tax_amount || 0),
+    previousHash: row.previous_hash || '',
+    hash: row.hash || '',
+    aeatStatus: row.aeat_status || 'pending',
+    qrPayload: row.qr_payload || ''
+  };
+}
+
 // ─────────────────────────────────────────
 // LOAD — Carga inicial de todo el catálogo
 // ─────────────────────────────────────────
@@ -234,7 +257,7 @@ export async function loadReceiptTicket(token) {
   return data?.payload || null;
 }
 
-function mapSaleRow(row, lines = [], payments = []) {
+function mapSaleRow(row, lines = [], payments = [], fiscalDocument = null) {
   const payload = row.payload || {};
   return {
     ...payload,
@@ -255,6 +278,7 @@ function mapSaleRow(row, lines = [], payments = []) {
     receiptToken: row.receipt_token || payload.receiptToken,
     createdAt: row.created_at || payload.createdAt,
     legalData: row.legal_data || payload.legalData || {},
+    fiscalData: fiscalDocument || payload.fiscalData || null,
     loyaltyCustomer: row.loyalty_data?.customer || payload.loyaltyCustomer,
     refundAmount: parseFloat(row.refund_amount || payload.refundAmount || 0),
     reason: row.refund_reason || payload.reason || '',
@@ -297,14 +321,19 @@ export async function loadSales(limit = 1000) {
 
   const [
     { data: lines, error: linesError },
-    { data: payments, error: paymentsError }
+    { data: payments, error: paymentsError },
+    { data: fiscalDocuments, error: fiscalError }
   ] = await Promise.all([
     supabase.from('sale_lines').select('*').in('sale_id', saleIds),
-    supabase.from('sale_payments').select('*').in('sale_id', saleIds)
+    supabase.from('sale_payments').select('*').in('sale_id', saleIds),
+    supabase.from('fiscal_documents').select('*').in('sale_id', saleIds)
   ]);
 
   if (linesError) console.warn('[DB] Error loading sale lines:', linesError.message);
   if (paymentsError) console.warn('[DB] Error loading sale payments:', paymentsError.message);
+  if (fiscalError && !['42P01', 'PGRST205'].includes(fiscalError.code)) {
+    console.warn('[DB] Error loading fiscal documents:', fiscalError.message);
+  }
 
   const linesBySale = new Map();
   (lines || []).forEach(line => {
@@ -318,7 +347,17 @@ export async function loadSales(limit = 1000) {
     paymentsBySale.get(payment.sale_id).push(payment);
   });
 
-  return (sales || []).map(row => mapSaleRow(row, linesBySale.get(row.id) || [], paymentsBySale.get(row.id) || []));
+  const fiscalBySale = new Map();
+  (fiscalDocuments || []).forEach(document => {
+    fiscalBySale.set(document.sale_id, mapFiscalDocument(document));
+  });
+
+  return (sales || []).map(row => mapSaleRow(
+    row,
+    linesBySale.get(row.id) || [],
+    paymentsBySale.get(row.id) || [],
+    fiscalBySale.get(row.id) || null
+  ));
 }
 
 export async function upsertSaleRecord(transaction) {
@@ -394,6 +433,27 @@ export async function upsertSaleRecord(transaction) {
   }
 
   return transaction.id;
+}
+
+export async function createFiscalDocumentForSale(transaction) {
+  if (!transaction?.id) return null;
+
+  const documentType = transaction.type === 'refund' ? 'refund' : 'simplified_invoice';
+  const { data, error } = await supabase.rpc('create_fiscal_document', {
+    p_sale_id: transaction.id,
+    p_document_type: documentType
+  });
+
+  if (error) {
+    if (['42883', '42P01', 'PGRST202', 'PGRST205'].includes(error.code)) {
+      console.warn('[DB] Capa fiscal pendiente de activar. Ejecuta sql/fiscal_documents_migration.sql en Supabase.');
+      return null;
+    }
+    notifyDbError('createFiscalDocumentForSale', error.message);
+    return null;
+  }
+
+  return mapFiscalDocument(data);
 }
 
 export async function loadCashClosures(limit = 120) {

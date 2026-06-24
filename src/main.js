@@ -861,6 +861,7 @@ async function showReceiptQrModal(transactionId) {
     showToast('No se pudo generar el enlace del ticket.', 'error');
     return;
   }
+  const txDisplayNumber = tx.fiscalData?.fiscalNumber || tx.id;
 
   const ticketUrl = new URL(`ticket.html?t=${encodeURIComponent(tx.receiptToken)}`, window.location.href).href;
   let qrDataUrl = '';
@@ -892,9 +893,9 @@ async function showReceiptQrModal(transactionId) {
         </button>
       </div>
       <div class="receipt-qr-body">
-        <img class="receipt-qr-image" src="${qrDataUrl}" alt="QR del ticket ${tx.id}">
+        <img class="receipt-qr-image" src="${qrDataUrl}" alt="QR del ticket ${txDisplayNumber}">
         <div class="receipt-qr-meta">
-          <strong>${tx.id}</strong>
+          <strong>${txDisplayNumber}</strong>
           <span>${tx.date} • ${Number(tx.total || 0).toFixed(2)}€</span>
         </div>
         <p>El cliente puede escanear este QR para ver el ticket en su móvil y descargarlo si lo necesita.</p>
@@ -923,6 +924,8 @@ function showTransactionDetailModal(transactionId) {
   if (!tx) return;
 
   const total = Number(tx.total || 0);
+  const fiscal = tx.fiscalData || null;
+  const txDisplayNumber = fiscal?.fiscalNumber || tx.id;
   const legal = tx.legalData || {
     businessName: "Esencia Café",
     companyName: "Esencia Café S.L.",
@@ -1007,8 +1010,14 @@ function showTransactionDetailModal(transactionId) {
         <div class="tx-detail-summary">
           <div>
             <span>Factura Nº</span>
-            <strong>${tx.id}</strong>
+            <strong>${txDisplayNumber}</strong>
           </div>
+          ${fiscal?.hash ? `
+            <div>
+              <span>Ref. fiscal</span>
+              <strong>${fiscal.hash.slice(0, 12)}</strong>
+            </div>
+          ` : ''}
           <div>
             <span>Fecha</span>
             <strong>${tx.date}</strong>

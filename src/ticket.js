@@ -9,6 +9,8 @@ function formatMoney(value) {
 function renderTicket(tx) {
   const items = Array.isArray(tx.items) ? tx.items : [];
   const total = Number(tx.total || 0);
+  const fiscal = tx.fiscalData || null;
+  const displayNumber = fiscal?.fiscalNumber || tx.id;
   const legal = tx.legalData || {
     businessName: "Esencia Café",
     companyName: "Esencia Café S.L.",
@@ -37,8 +39,14 @@ function renderTicket(tx) {
       <dl class="receipt-meta">
         <div>
           <dt>Factura Nº</dt>
-          <dd>${tx.id}</dd>
+          <dd>${displayNumber}</dd>
         </div>
+        ${fiscal?.hash ? `
+          <div>
+            <dt>Ref. fiscal</dt>
+            <dd>${fiscal.hash.slice(0, 12)}</dd>
+          </div>
+        ` : ''}
         <div>
           <dt>Fecha</dt>
           <dd>${tx.date || ''}</dd>
@@ -105,6 +113,8 @@ function renderTicket(tx) {
 
 function buildReceiptImageCanvas(tx) {
   const items = Array.isArray(tx.items) ? tx.items : [];
+  const fiscal = tx.fiscalData || null;
+  const displayNumber = fiscal?.fiscalNumber || tx.id;
   const detailRows = [];
 
   items.forEach(item => {
@@ -172,7 +182,8 @@ function buildReceiptImageCanvas(tx) {
 
   let y = 220;
   [
-    ['Factura Nº', tx.id],
+    ['Factura Nº', displayNumber],
+    ...(fiscal?.hash ? [['Ref. fiscal', fiscal.hash.slice(0, 12)]] : []),
     ['Fecha', tx.date || ''],
     ['Mesa / Pedido', tx.table || 'Venta Directa'],
     ['Método de Pago', tx.paymentMethod || '']
