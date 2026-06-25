@@ -158,6 +158,10 @@ class Store {
     this.restoreDiningState();
     this.salesPersistenceReady = false;
     this.cashClosurePersistenceReady = false;
+    this.lastLocalPersistSnapshot = '';
+    this.lastRemotePersistSnapshot = '';
+    this.pendingRemotePersist = null;
+    this.remotePersistTimer = null;
     this.listeners = [];
   }
 
@@ -218,24 +222,53 @@ class Store {
     }
   }
 
-  persistDiningState() {
+  getPersistPayload() {
+    return {
+      tables: this.state.tables,
+      directSaleTicket: this.state.directSaleTicket,
+      transactions: this.state.transactions,
+      legal: this.state.legal,
+      rolePermissions: this.state.rolePermissions
+    };
+  }
+
+  flushRemotePersist() {
+    if (!this.pendingRemotePersist) return;
+
+    const { payload, snapshot } = this.pendingRemotePersist;
+    this.pendingRemotePersist = null;
+    this.lastRemotePersistSnapshot = snapshot;
+
+    saveTPVState(payload.tables, payload.directSaleTicket, payload.transactions, payload.legal, payload.rolePermissions)
+      .catch(err => {
+        console.warn('[Store] No se pudo guardar el estado en Supabase.', err);
+        this.lastRemotePersistSnapshot = '';
+      });
+  }
+
+  persistDiningState({ remote = true } = {}) {
+    const payload = this.getPersistPayload();
+    const snapshot = JSON.stringify(payload);
+
     // 1. Save to LocalStorage fallback
-    if (typeof window !== 'undefined' && window.localStorage) {
+    if (snapshot !== this.lastLocalPersistSnapshot && typeof window !== 'undefined' && window.localStorage) {
       try {
-        window.localStorage.setItem(DINING_STATE_STORAGE_KEY, JSON.stringify({
-          tables: this.state.tables,
-          directSaleTicket: this.state.directSaleTicket,
-          transactions: this.state.transactions,
-          legal: this.state.legal,
-          rolePermissions: this.state.rolePermissions
-        }));
+        window.localStorage.setItem(DINING_STATE_STORAGE_KEY, snapshot);
+        this.lastLocalPersistSnapshot = snapshot;
       } catch (err) {
         console.warn('[Store] No se pudo guardar el estado de mesas en LocalStorage.', err);
       }
     }
 
     // 2. Save to Supabase (Realtime Sync)
-    saveTPVState(this.state.tables, this.state.directSaleTicket, this.state.transactions, this.state.legal, this.state.rolePermissions);
+    if (!remote || snapshot === this.lastRemotePersistSnapshot) return;
+
+    this.pendingRemotePersist = { payload, snapshot };
+    if (this.remotePersistTimer) clearTimeout(this.remotePersistTimer);
+    this.remotePersistTimer = setTimeout(() => {
+      this.remotePersistTimer = null;
+      this.flushRemotePersist();
+    }, 180);
   }
 
   // Subscribe components
@@ -246,9 +279,13 @@ class Store {
     };
   }
 
-  notify() {
-    this.persistDiningState();
+  emitChange() {
     this.listeners.forEach(listener => listener(this.state));
+  }
+
+  notify(options = {}) {
+    this.persistDiningState(options);
+    this.emitChange();
   }
 
   getRoleLabel(role = this.state.auth.role) {
@@ -409,7 +446,7 @@ class Store {
         role: null,
         isLoading: false
       };
-      this.listeners.forEach(listener => listener(this.state));
+      this.emitChange();
     }
   }
 
@@ -431,7 +468,7 @@ class Store {
     this.setStaffSession(null);
     this.state.activeTab = 'inicio';
     this.state.selectedTableId = null;
-    this.listeners.forEach(listener => listener(this.state));
+    this.emitChange();
   }
 
   async saveStaffProfile(profileData) {
@@ -596,7 +633,10 @@ class Store {
       // Suscribirse a cambios en tiempo real
       this.subscribeToRealtime();
       
-      this.notify();
+      const loadedSnapshot = JSON.stringify(this.getPersistPayload());
+      this.lastLocalPersistSnapshot = loadedSnapshot;
+      this.lastRemotePersistSnapshot = loadedSnapshot;
+      this.emitChange();
       return true;
     } catch (err) {
       console.warn('[Store] No se pudo conectar a Supabase, usando datos locales como fallback.', err.message);
@@ -660,7 +700,10 @@ class Store {
             }
 
             if (changed) {
-              this.listeners.forEach(listener => listener(this.state));
+              const remoteSnapshot = JSON.stringify(this.getPersistPayload());
+              this.lastLocalPersistSnapshot = remoteSnapshot;
+              this.lastRemotePersistSnapshot = remoteSnapshot;
+              this.emitChange();
             }
           }
         }

@@ -8237,6 +8237,19 @@ function showPriceEditModal(ticketItemId, currentPrice) {
 document.addEventListener('DOMContentLoaded', async () => {
   // Show loading overlay while fetching from Supabase
   const loadingEl = document.getElementById('app-loading-overlay');
+  let pendingRenderState = null;
+  let pendingRenderFrame = null;
+
+  const scheduleRender = (state = store.state) => {
+    pendingRenderState = state;
+    if (pendingRenderFrame) return;
+
+    pendingRenderFrame = requestAnimationFrame(() => {
+      pendingRenderFrame = null;
+      render(pendingRenderState || store.state);
+      pendingRenderState = null;
+    });
+  };
 
   // Listen for DB write errors and show toast
   window.addEventListener('db-error', (e) => {
@@ -8250,18 +8263,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       userMsg = 'Tablas no encontradas \u2014 ejecuta schema.sql y seed.sql';
     }
     showToast(userMsg, 'error');
-    render(store.state); // refresh header dot color
+    scheduleRender(store.state); // refresh header dot color
   });
 
   // Bind store event reactive updates
   store.subscribe((state) => {
-    render(state);
+    scheduleRender(state);
   });
 
   // Watch system theme changes for System theme mode
   window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
     if (store.state.theme === 'system') {
-      render(store.state);
+      scheduleRender(store.state);
     }
   });
 
@@ -8294,7 +8307,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Resize monitor to refresh template bindings (switching tablet split dynamically)
   window.addEventListener('resize', () => {
-    render(store.state);
+    scheduleRender(store.state);
   });
 
   if ('serviceWorker' in navigator) {
