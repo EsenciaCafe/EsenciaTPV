@@ -271,6 +271,14 @@ function getPendingItems(table, deliveredItems = []) {
   return (table?.items || []).filter(item => getDeliveredQty(item, deliveredItems) < item.qty);
 }
 
+function getReleasedDeferredItems(kds = {}) {
+  return Array.isArray(kds.releasedDeferredItems) ? kds.releasedDeferredItems : [];
+}
+
+function isItemDeferredForKds(item, kds = {}) {
+  return item.deferUntilLater === true && !getReleasedDeferredItems(kds).includes(item.ticketItemId);
+}
+
 /**
  * Card color class:
  *  'empty'   → green  (table has no items)
@@ -297,12 +305,30 @@ function isCollapsed(tableId) {
 function markTableReady(tableId) {
   const table = state.tables.find(t => t.id === tableId);
   if (!table) return;
-  const currentDelivered = getTableKds(tableId).deliveredItems || [];
+  const currentKds = getTableKds(tableId);
+  const currentDelivered = currentKds.deliveredItems || [];
   const pendingItems = getPendingItems(table, currentDelivered);
-  const hasRegularPending = pendingItems.some(item => item.deferUntilLater !== true);
-  const itemsToMark = hasRegularPending
-    ? pendingItems.filter(item => item.deferUntilLater !== true)
-    : pendingItems;
+  const activePendingItems = pendingItems.filter(item => !isItemDeferredForKds(item, currentKds));
+  const deferredPendingItems = pendingItems.filter(item => isItemDeferredForKds(item, currentKds));
+
+  if (activePendingItems.length === 0 && deferredPendingItems.length > 0) {
+    state.tableKdsState[tableId] = {
+      ...currentKds,
+      status: 'waiting',
+      readyAt: null,
+      releasedDeferredItems: [
+        ...new Set([
+          ...getReleasedDeferredItems(currentKds),
+          ...deferredPendingItems.map(item => item.ticketItemId)
+        ])
+      ]
+    };
+    saveTableKdsState();
+    render();
+    return;
+  }
+
+  const itemsToMark = activePendingItems;
   const markedItems = new Map(currentDelivered.map(item => [item.ticketItemId, item]));
   itemsToMark.forEach(item => {
     markedItems.set(item.ticketItemId, { ticketItemId: item.ticketItemId, id: item.id, qty: item.qty });
@@ -313,7 +339,10 @@ function markTableReady(tableId) {
   state.tableKdsState[tableId] = {
     status: remainingPending.length > 0 ? 'waiting' : 'ready',
     readyAt: remainingPending.length > 0 ? null : Date.now(),
-    deliveredItems
+    deliveredItems,
+    releasedDeferredItems: getReleasedDeferredItems(currentKds).filter(ticketItemId =>
+      (table.items || []).some(item => item.ticketItemId === ticketItemId)
+    )
   };
   saveTableKdsState();
   render();
@@ -345,12 +374,12 @@ function checkForNewItemsOnReadyTable(tableId, newItems) {
 // RENDER — Items
 // ══════════════════════════════════════════════════════════════════════════════
 
-function renderItem(item, deliveredItems) {
+function renderItem(item, deliveredItems, kds = {}) {
   const del          = deliveredItems.find(d => d.ticketItemId === item.ticketItemId);
   const deliveredQty = del?.qty || 0;
   const currentQty   = item.qty;
   const showPrice    = state.config.showPrices;
-  const isDeferred   = item.deferUntilLater === true;
+  const isDeferred   = isItemDeferredForKds(item, kds);
   const deferredBadge = isDeferred ? '<span class="kds-later-badge">Después</span>' : '';
 
   const opts = (item.selectedOptions || []).length > 0
@@ -409,6 +438,9 @@ function renderCard(table, orderNum) {
   const total        = getTableTotal(table);
   const deliveredItems = kds.deliveredItems || [];
   const hasItems     = (table.items || []).length > 0;
+  const pendingItems = getPendingItems(table, deliveredItems);
+  const activePendingItems = pendingItems.filter(item => !isItemDeferredForKds(item, kds));
+  const deferredPendingItems = pendingItems.filter(item => isItemDeferredForKds(item, kds));
   const collapsed    = isCollapsed(table.id);
   const maxItems     = collapsed ? state.config.collapsedItemCount : Infinity;
   const fontClass    = `font-${state.config.fontSize}`;
@@ -428,12 +460,14 @@ function renderCard(table, orderNum) {
   if (hasItems) {
     actionBtn = kds.status === 'ready'
       ? `<button class="kds-ready-btn reopen" data-table-id="${table.id}">↩ Reabrir</button>`
-      : `<button class="kds-ready-btn" data-table-id="${table.id}">✓ Listo</button>`;
+      : `<button class="kds-ready-btn ${activePendingItems.length === 0 && deferredPendingItems.length > 0 ? 'release-later' : ''}" data-table-id="${table.id}">
+          ${activePendingItems.length === 0 && deferredPendingItems.length > 0 ? 'Sacar después' : '✓ Listo'}
+        </button>`;
   }
 
   // Items
   const itemsHtml = hasItems
-    ? shownItems.map(item => renderItem(item, deliveredItems)).join('')
+    ? shownItems.map(item => renderItem(item, deliveredItems, kds)).join('')
     : `<div class="kds-card-empty-label">Sin pedidos</div>`;
 
   const hiddenHint = hiddenCount > 0

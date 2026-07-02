@@ -433,6 +433,16 @@ html, body {
   box-shadow: 0 4px 14px rgba(16,185,129,.3);
 }
 .kds-ready-btn:active { transform: translateY(0); }
+.kds-ready-btn.release-later {
+  border-color: var(--warning);
+  background: var(--warning-light);
+  color: var(--warning);
+}
+.kds-ready-btn.release-later:hover {
+  background: var(--warning);
+  color: #111827;
+  box-shadow: 0 4px 14px rgba(245,158,11,.28);
+}
 .kds-ready-btn.reopen {
   border-color: var(--text-dim);
   background: transparent;
