@@ -39,7 +39,6 @@ const DEFAULT_ROLE_PERMISSIONS = {
     manageAccounting: true,
     viewReports: true,
     closeCash: true,
-    openShift: true,
     issueRefunds: true,
     resetTerminal: true,
     manageStaff: true,
@@ -52,7 +51,6 @@ const DEFAULT_ROLE_PERMISSIONS = {
     manageAccounting: false,
     viewReports: true,
     closeCash: true,
-    openShift: true,
     issueRefunds: true,
     resetTerminal: false,
     manageStaff: false,
@@ -65,7 +63,6 @@ const DEFAULT_ROLE_PERMISSIONS = {
     manageAccounting: false,
     viewReports: false,
     closeCash: false,
-    openShift: false,
     issueRefunds: false,
     resetTerminal: false,
     manageStaff: false,
@@ -331,7 +328,6 @@ class Store {
       this.canManageAccounting() ||
       this.canViewReports() ||
       this.canCloseCash() ||
-      this.canOpenShift() ||
       this.canManageStaff() ||
       this.canManageLoyalty();
   }
@@ -350,10 +346,6 @@ class Store {
 
   canCloseCash() {
     return this.hasPermission('closeCash');
-  }
-
-  canOpenShift() {
-    return this.hasPermission('openShift');
   }
 
   canIssueRefunds() {

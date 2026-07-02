@@ -1316,7 +1316,7 @@ function renderAjustesView(state) {
     (firstPath === 'compras' && !store.canManageAccounting()) ||
     (firstPath === 'fidelidad' && !store.canManageLoyalty()) ||
     (firstPath === 'informes' && !store.canViewReports()) ||
-    (firstPath === 'cierre' && !store.canCloseCash() && !store.canOpenShift()) ||
+    (firstPath === 'cierre' && !store.canCloseCash()) ||
     (firstPath === 'staff' && !store.canManageStaff());
 
   if (restrictedSettingsPath) {
@@ -1362,7 +1362,7 @@ function renderAjustesView(state) {
             <span>Informes y Ventas</span>
             ${chevron}
           </button>` : '',
-      (store.canCloseCash() || store.canOpenShift()) ? `
+      store.canCloseCash() ? `
           <button class="settings-tree-item" id="settings-to-cierre">
             <span>Cierre de Caja</span>
             ${chevron}
@@ -1830,11 +1830,6 @@ function renderAjustesView(state) {
             <button type="button" class="btn btn-secondary" id="cash-closure-export-btn" style="height:44px;" ${monthClosures.length ? '' : 'disabled'}>
               Exportar cierres Excel
             </button>
-            ${store.canOpenShift() ? `
-              <button type="button" class="btn btn-secondary" id="cash-open-shift-btn" style="height:44px;">
-                Abrir nuevo turno
-              </button>
-            ` : ''}
             <div class="gemini-muted" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
               <strong>${monthClosures.length}</strong> cierres guardados en este mes.
               ${monthClosureRows || '<div style="margin-top:8px;">Todavia no hay cierres guardados para exportar.</div>'}
@@ -1860,7 +1855,7 @@ function renderAjustesView(state) {
               <input type="date" id="cash-closure-date-input" value="${selectedDate}">
             </div>
             <div class="gemini-muted" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
-              Cierre del turno ${nextShiftNumber}. ${shiftStartAt ? `Turno iniciado tras el cierre de ${new Date(shiftStartAt).toLocaleString('es-ES')}.` : 'Primer turno registrado.'}
+              Cierre del turno ${nextShiftNumber}. ${shiftStartAt ? `Turno iniciado automaticamente tras el cierre de ${new Date(shiftStartAt).toLocaleString('es-ES')}.` : 'Primer turno registrado.'}
             </div>
             <div class="accounting-summary-grid">
               <div><span>Ventas netas</span><strong>${summary.netTotal.toFixed(2)}€</strong></div>
@@ -2166,7 +2161,6 @@ function renderAjustesView(state) {
       ['manageAccounting', 'Gestionar datos fiscales, compras y facturas'],
       ['viewReports', 'Ver y exportar informes'],
       ['closeCash', 'Cerrar caja'],
-      ['openShift', 'Abrir nuevo turno'],
       ['issueRefunds', 'Registrar devoluciones'],
       ['resetTerminal', 'Restablecer terminal'],
       ['manageStaff', 'Gestionar personal'],
@@ -7061,20 +7055,6 @@ function setupEventListeners(container) {
     });
   }
 
-  const openShiftBtn = container.querySelector('#cash-open-shift-btn');
-  if (openShiftBtn) {
-    openShiftBtn.addEventListener('click', () => {
-      if (!store.canOpenShift()) {
-        showToast('No tienes permiso para abrir turnos.', 'error');
-        return;
-      }
-      store.state.selectedReportDate = new Date().toISOString().slice(0, 10);
-      store.state.selectedReportMonth = store.state.selectedReportDate.slice(0, 7);
-      store.notify();
-      showToast('Turno activo preparado. Las ventas nuevas se contaran desde el ultimo cierre.', 'success');
-    });
-  }
-
   const closureDateInput = container.querySelector('#cash-closure-date-input');
   if (closureDateInput) {
     closureDateInput.addEventListener('change', (e) => {
@@ -7128,7 +7108,7 @@ function setupEventListeners(container) {
         bbvaTotal: parseFloat(container.querySelector('#closure-bbva-total')?.value || '0'),
         notes: container.querySelector('#closure-notes')?.value || ''
       });
-      showToast(saved ? 'Cierre de caja guardado.' : 'No se pudo guardar el cierre. Puede estar ya cerrado o faltar la migracion de Supabase.', saved ? 'success' : 'warning');
+      showToast(saved ? 'Cierre guardado. El nuevo turno empieza automaticamente.' : 'No se pudo guardar el cierre. Puede estar ya cerrado o faltar la migracion de Supabase.', saved ? 'success' : 'warning');
     });
   }
 
