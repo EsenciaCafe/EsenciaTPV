@@ -6,6 +6,45 @@ function formatMoney(value) {
   return `${Number(value || 0).toFixed(2)}€`;
 }
 
+function getPaymentBreakdown(tx = {}) {
+  if (Array.isArray(tx.payments) && tx.payments.length > 0) {
+    return tx.payments
+      .map(payment => ({
+        method: payment.method || tx.paymentMethod || 'Pago',
+        amount: Number(payment.amount || 0),
+        provider: payment.provider || ''
+      }))
+      .filter(payment => payment.amount > 0 || payment.method);
+  }
+
+  return [{
+    method: tx.paymentMethod || 'Pago',
+    amount: Number(tx.total || 0),
+    provider: String(tx.paymentMethod || '').toLowerCase().includes('tarjeta') ? 'BBVA' : ''
+  }];
+}
+
+function summarizePayments(tx = {}) {
+  const payments = getPaymentBreakdown(tx);
+  const count = payments.length;
+  const grouped = payments.reduce((acc, payment) => {
+    const method = payment.method || 'Pago';
+    if (!acc[method]) acc[method] = { count: 0, amount: 0 };
+    acc[method].count += 1;
+    acc[method].amount += Number(payment.amount || 0);
+    return acc;
+  }, {});
+  const parts = Object.entries(grouped).map(([method, info]) =>
+    `${info.count} ${method}${info.amount > 0 ? ` (${formatMoney(info.amount)})` : ''}`
+  );
+
+  return {
+    count,
+    summary: count > 1 ? `${count} pagos: ${parts.join(' · ')}` : (payments[0]?.method || tx.paymentMethod || ''),
+    rows: payments
+  };
+}
+
 function renderTicket(tx) {
   const items = Array.isArray(tx.items) ? tx.items : [];
   const total = Number(tx.total || 0);
@@ -23,6 +62,7 @@ function renderTicket(tx) {
   const taxName = legal.taxName || "IGIC";
   const baseImponible = total / (1 + (taxRate / 100));
   const cuotaImpuesto = total - baseImponible;
+  const paymentSummary = summarizePayments(tx);
 
   root.innerHTML = `
     <section class="receipt-card" id="receipt-card">
@@ -57,7 +97,7 @@ function renderTicket(tx) {
         </div>
         <div>
           <dt>Método de Pago</dt>
-          <dd>${tx.paymentMethod || ''}</dd>
+          <dd>${paymentSummary.summary}</dd>
         </div>
       </dl>
 
@@ -86,6 +126,16 @@ function renderTicket(tx) {
       </div>
 
       <div class="receipt-tax-breakdown" style="margin-top: 18px; padding-bottom: 14px; border-bottom: 1px dashed var(--border); display: grid; gap: 8px; font-size: 0.9rem; color: var(--muted); font-weight: 600;">
+        ${paymentSummary.count > 1 ? `
+          <div style="display:grid; gap:6px; padding-bottom: 10px; margin-bottom: 4px; border-bottom: 1px dashed var(--border);">
+            ${paymentSummary.rows.map((payment, index) => `
+              <div style="display:flex; justify-content:space-between;">
+                <span>Pago ${index + 1} · ${payment.method}${payment.provider ? ` · ${payment.provider}` : ''}</span>
+                <span>${formatMoney(payment.amount)}</span>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
         <div style="display:flex; justify-content:space-between;">
           <span>Base Imponible (${taxRate}%)</span>
           <span>${formatMoney(baseImponible)}</span>
@@ -115,6 +165,7 @@ function buildReceiptImageCanvas(tx) {
   const items = Array.isArray(tx.items) ? tx.items : [];
   const fiscal = tx.fiscalData || null;
   const displayNumber = fiscal?.fiscalNumber || tx.id;
+  const paymentSummary = summarizePayments(tx);
   const detailRows = [];
 
   items.forEach(item => {
@@ -135,7 +186,8 @@ function buildReceiptImageCanvas(tx) {
   const width = 720;
   const padding = 48;
   const rowHeight = 42;
-  const height = Math.max(920, 560 + detailRows.length * rowHeight);
+  const paymentExtraHeight = paymentSummary.count > 1 ? 42 + (paymentSummary.rows.length * 32) : 0;
+  const height = Math.max(920, 560 + detailRows.length * rowHeight + paymentExtraHeight);
   const scale = Math.max(2, Math.floor(window.devicePixelRatio || 1));
   const canvas = document.createElement('canvas');
   canvas.width = width * scale;
@@ -218,6 +270,18 @@ function buildReceiptImageCanvas(tx) {
   y += 18;
   drawRule(y);
   y += 28;
+
+  if (paymentSummary.count > 1) {
+    drawText('Desglose de cobro', padding, y, 20, '700', 'left', '#555555');
+    y += 34;
+    paymentSummary.rows.forEach((payment, index) => {
+      drawText(`Pago ${index + 1} · ${payment.method}${payment.provider ? ` · ${payment.provider}` : ''}`, padding, y, 20, '600', 'left', '#666666');
+      drawText(formatMoney(payment.amount), width - padding, y, 20, '600', 'right', '#666666');
+      y += 32;
+    });
+    drawRule(y);
+    y += 28;
+  }
 
   drawText(`Base Imponible (${taxRate}%)`, padding, y, 20, '600', 'left', '#666666');
   drawText(formatMoney(baseImponible), width - padding, y, 20, '600', 'right', '#666666');

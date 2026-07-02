@@ -177,6 +177,79 @@ function formatIsoDateEs(value = '') {
   return `${day}/${month}/${year}`;
 }
 
+function getTransactionDateObject(tx = {}) {
+  if (tx.createdAt) {
+    const parsed = new Date(tx.createdAt);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  const [datePart = '', timePart = '00:00'] = String(tx.date || '').split(', ');
+  const [day, month, year] = datePart.split('/').map(Number);
+  const [hour, minute] = timePart.split(':').map(Number);
+  const parsed = new Date(year, (month || 1) - 1, day || 1, hour || 0, minute || 0);
+  return Number.isNaN(parsed.getTime()) ? new Date(0) : parsed;
+}
+
+function getTransactionDayKey(tx = {}) {
+  const date = getTransactionDateObject(tx);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatTransactionDayLabel(dayKey) {
+  const [year, month, day] = dayKey.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  const todayKey = getTransactionDayKey({ createdAt: new Date().toISOString() });
+  const label = date.toLocaleDateString('es-ES', {
+    weekday: 'long',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+  return dayKey === todayKey ? `Hoy · ${label}` : label;
+}
+
+function getPaymentBreakdown(tx = {}) {
+  if (Array.isArray(tx.payments) && tx.payments.length > 0) {
+    return tx.payments
+      .map(payment => ({
+        method: payment.method || tx.paymentMethod || 'Pago',
+        amount: Number(payment.amount || 0),
+        provider: payment.provider || ''
+      }))
+      .filter(payment => payment.amount > 0 || payment.method);
+  }
+
+  return [{
+    method: tx.paymentMethod || 'Pago',
+    amount: Number(tx.total || 0),
+    provider: String(tx.paymentMethod || '').toLowerCase().includes('tarjeta') ? 'BBVA' : ''
+  }];
+}
+
+function summarizePayments(tx = {}) {
+  const payments = getPaymentBreakdown(tx);
+  const count = payments.length;
+  const byMethod = payments.reduce((acc, payment) => {
+    const method = payment.method || 'Pago';
+    if (!acc[method]) acc[method] = { count: 0, amount: 0 };
+    acc[method].count += 1;
+    acc[method].amount += Number(payment.amount || 0);
+    return acc;
+  }, {});
+  const parts = Object.entries(byMethod).map(([method, info]) =>
+    `${info.count} ${method}${info.amount > 0 ? ` (${info.amount.toFixed(2)}€)` : ''}`
+  );
+
+  return {
+    count,
+    summary: count > 1 ? `${count} pagos: ${parts.join(' · ')}` : (payments[0]?.method || tx.paymentMethod || ''),
+    rows: payments
+  };
+}
+
 // ─────────────────────────────────────────
 // Toast notification system
 // ─────────────────────────────────────────
@@ -823,6 +896,60 @@ function renderTablesView(state) {
 
 // 7. Transacciones View
 function renderTransaccionesView(state) {
+  const grouped = (state.transactions || []).reduce((groups, tx) => {
+    const dayKey = getTransactionDayKey(tx);
+    if (!groups[dayKey]) groups[dayKey] = [];
+    groups[dayKey].push(tx);
+    return groups;
+  }, {});
+
+  const daySections = Object.entries(grouped)
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([dayKey, transactions]) => {
+      const dayTotal = transactions.reduce((sum, tx) => sum + Number(tx.total || 0), 0);
+      const rows = transactions.map(tx => {
+        const isRefund = tx.type === 'refund';
+        const badge = isRefund
+          ? `<span class="badge badge--danger" style="margin-left: 8px;">Devolución</span>`
+          : tx.hasRefund
+          ? `<span class="badge badge--warning" style="margin-left: 8px;">Devuelta parcial</span>`
+          : '';
+        const paymentSummary = summarizePayments(tx);
+
+        return `
+          <button class="tx-card" data-transaction-id="${tx.id}">
+            <div class="tx-meta">
+              <span class="tx-table-name">${tx.table} ${badge}</span>
+              <span class="tx-date-method">${tx.date} · ${paymentSummary.summary}</span>
+            </div>
+            <div class="tx-financial">
+              <span class="tx-amount ${isRefund ? 'text-danger' : ''}" style="${isRefund ? 'color: var(--danger); font-weight: 700;' : ''}">${Number(tx.total || 0).toFixed(2)}€</span>
+              <div class="tx-qty">${tx.itemsCount} art.</div>
+            </div>
+          </button>
+        `;
+      }).join('');
+
+      return `
+        <section class="tx-day-group">
+          <div class="tx-day-header">
+            <span>${formatTransactionDayLabel(dayKey)}</span>
+            <strong>${transactions.length} ticket${transactions.length !== 1 ? 's' : ''} · ${dayTotal.toFixed(2)}€</strong>
+          </div>
+          ${rows}
+        </section>
+      `;
+    }).join('');
+
+  return `
+    <div class="tx-list-container">
+      <h2 class="tx-header">Historial de Ventas</h2>
+      <div class="tx-history-list">
+        ${daySections.length > 0 ? daySections : '<p style="text-align:center; padding: 40px; color: var(--text-muted);">Aún no hay transacciones cobradas</p>'}
+      </div>
+    </div>
+  `;
+
   const rows = state.transactions.map(tx => {
     const isRefund = tx.type === 'refund';
     const badge = isRefund
@@ -938,6 +1065,13 @@ function showTransactionDetailModal(transactionId) {
   const taxName = legal.taxName || "IGIC";
   const baseImponible = total / (1 + (taxRate / 100));
   const cuotaImpuesto = total - baseImponible;
+  const paymentSummary = summarizePayments(tx);
+  const paymentRowsHTML = paymentSummary.rows.map((payment, index) => `
+    <div class="tx-detail-payment-row">
+      <span>Pago ${index + 1} · ${payment.method}${payment.provider ? ` · ${payment.provider}` : ''}</span>
+      <strong>${Number(payment.amount || 0).toFixed(2)}€</strong>
+    </div>
+  `).join('');
 
   const items = Array.isArray(tx.items) ? tx.items : [];
   const itemsHTML = items.length > 0 ? items.map(item => `
@@ -1024,7 +1158,7 @@ function showTransactionDetailModal(transactionId) {
           </div>
           <div>
             <span>Método de pago</span>
-            <strong>${tx.paymentMethod}</strong>
+            <strong>${paymentSummary.summary}</strong>
           </div>
           <div>
             <span>Art&iacute;culos</span>
@@ -1034,6 +1168,13 @@ function showTransactionDetailModal(transactionId) {
         <div class="tx-detail-list">
           ${itemsHTML}
         </div>
+
+        ${paymentSummary.count > 1 ? `
+          <div class="tx-detail-payments">
+            <div class="tx-detail-section-title">Desglose de cobro</div>
+            ${paymentRowsHTML}
+          </div>
+        ` : ''}
         
         <div class="tx-detail-tax-breakdown" style="padding: 12px 0; border-bottom: 1px dashed var(--border-color); display: grid; gap: 6px; font-size: 0.85rem; color: var(--text-muted);">
           <div style="display:flex; justify-content:space-between;">
