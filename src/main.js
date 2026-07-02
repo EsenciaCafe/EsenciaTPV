@@ -3824,6 +3824,8 @@ function itemHasModifiers(itemId) {
 function showModifierSelectionModal(itemId, ticketItemId = null) {
   const item = store.state.menuItems.find(i => i.id === itemId);
   if (!item) return;
+  const isEditingExistingItem = Boolean(ticketItemId);
+  let itemQuantity = 1;
 
   // Find existing selected options if editing
   let initialSelectedOptions = [];
@@ -3895,11 +3897,14 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
       });
     });
     const total = item.price + optionsTotal;
+    const finalTotal = total * itemQuantity;
     const saveBtn = modal.querySelector('#modifier-save-btn');
+    const itemQtyVal = modal.querySelector('#modifier-item-qty-val');
+    if (itemQtyVal) itemQtyVal.innerText = itemQuantity;
     if (saveBtn) {
-      saveBtn.innerText = ticketItemId 
+      saveBtn.innerText = isEditingExistingItem
         ? 'Guardar Cambios' 
-        : `Añadir • ${total.toFixed(2)}€`;
+        : `Añadir ${itemQuantity} · ${finalTotal.toFixed(2)}€`;
     }
   };
 
@@ -3914,6 +3919,19 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
         </div>
       </div>
       <div class="modal-body" style="max-height: 400px; overflow-y: auto;">
+        ${!isEditingExistingItem ? `
+          <div class="modifier-item-quantity">
+            <div>
+              <span class="modifier-item-quantity-label">Cantidad</span>
+              <strong>${item.name}</strong>
+            </div>
+            <div class="modifier-item-quantity-controls">
+              <button class="modifier-qty-btn" id="modifier-item-qty-minus" type="button" aria-label="Restar unidad">-</button>
+              <span class="modifier-item-qty-val" id="modifier-item-qty-val">1</span>
+              <button class="modifier-qty-btn" id="modifier-item-qty-plus" type="button" aria-label="Sumar unidad">+</button>
+            </div>
+          </div>
+        ` : ''}
         ${modifiersHTML}
       </div>
       <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px; border-top: 1px solid var(--border-color); padding-top: 16px;">
@@ -3925,6 +3943,22 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
 
   document.body.appendChild(modal);
   updateModalTotal();
+
+  if (!isEditingExistingItem) {
+    const itemQtyMinus = modal.querySelector('#modifier-item-qty-minus');
+    const itemQtyPlus = modal.querySelector('#modifier-item-qty-plus');
+
+    itemQtyMinus?.addEventListener('click', () => {
+      if (itemQuantity <= 1) return;
+      itemQuantity--;
+      updateModalTotal();
+    });
+
+    itemQtyPlus?.addEventListener('click', () => {
+      itemQuantity++;
+      updateModalTotal();
+    });
+  }
 
   // Attach button events
   modal.querySelectorAll('.modifier-option-row').forEach(row => {
@@ -3976,7 +4010,7 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
     if (ticketItemId) {
       store.updateTicketItemModifiers(ticketItemId, selectedOptions);
     } else {
-      store.addItemToActiveTicket(itemId, selectedOptions);
+      store.addItemToActiveTicket(itemId, selectedOptions, itemQuantity);
     }
 
     modal.remove();

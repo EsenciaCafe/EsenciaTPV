@@ -1457,10 +1457,11 @@ class Store {
     return true;
   }
 
-  addItemToActiveTicket(itemId, selectedOptions = []) {
+  addItemToActiveTicket(itemId, selectedOptions = [], quantity = 1) {
     const menuItem = this.state.menuItems.find(item => item.id === itemId);
     if (!menuItem) return;
 
+    const itemQuantity = Math.max(1, Math.floor(Number(quantity) || 1));
     const sortedOptions = [...selectedOptions].sort((a, b) => a.id.localeCompare(b.id));
     const ticketItemId = `${itemId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
@@ -1476,9 +1477,9 @@ class Store {
       );
       
       if (existingIdx > -1) {
-        newItems[existingIdx] = { ...newItems[existingIdx], qty: newItems[existingIdx].qty + 1 };
+        newItems[existingIdx] = { ...newItems[existingIdx], qty: newItems[existingIdx].qty + itemQuantity };
       } else {
-        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: 1, selectedOptions: sortedOptions });
+        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions });
       }
 
       this.state.tables[tableIndex] = {
@@ -1494,9 +1495,9 @@ class Store {
       );
 
       if (existingIdx > -1) {
-        newItems[existingIdx] = { ...newItems[existingIdx], qty: newItems[existingIdx].qty + 1 };
+        newItems[existingIdx] = { ...newItems[existingIdx], qty: newItems[existingIdx].qty + itemQuantity };
       } else {
-        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: 1, selectedOptions: sortedOptions });
+        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions });
       }
       this.state.directSaleTicket.items = newItems;
     }

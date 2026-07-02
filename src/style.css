@@ -2326,6 +2326,48 @@ body.light-theme .btn-quick-pay {
   padding: 16px;
 }
 
+.modifier-item-quantity {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  padding: 14px 16px;
+}
+
+.modifier-item-quantity-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.modifier-item-quantity strong {
+  color: var(--text-main);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.modifier-item-quantity-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.modifier-item-qty-val {
+  min-width: 24px;
+  color: var(--text-main);
+  font-size: 1.1rem;
+  font-weight: 900;
+  text-align: center;
+}
+
 .modifier-group-title {
   font-size: 0.85rem;
   font-weight: 700;
