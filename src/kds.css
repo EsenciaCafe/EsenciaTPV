@@ -321,6 +321,35 @@ html, body {
   100% { background: rgba(37,99,235,.07); }
 }
 
+.kds-item.later {
+  background: rgba(245, 158, 11, 0.13);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius-sm);
+  padding-left: 6px;
+  padding-right: 6px;
+  margin: 0 -6px;
+}
+
+.kds-item.later .kds-item-name {
+  color: var(--warning);
+  font-weight: 800;
+}
+
+.kds-later-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.16);
+  color: var(--warning);
+  padding: 2px 7px;
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
 .kds-item-qty {
   font-weight: 800;
   color: var(--secondary);

@@ -262,6 +262,15 @@ function getTableKds(tableId) {
   return state.tableKdsState[tableId] || { status: 'waiting', readyAt: null, deliveredItems: [] };
 }
 
+function getDeliveredQty(item, deliveredItems = []) {
+  const delivered = deliveredItems.find(d => d.ticketItemId === item.ticketItemId);
+  return delivered?.qty || 0;
+}
+
+function getPendingItems(table, deliveredItems = []) {
+  return (table?.items || []).filter(item => getDeliveredQty(item, deliveredItems) < item.qty);
+}
+
 /**
  * Card color class:
  *  'empty'   → green  (table has no items)
@@ -274,7 +283,7 @@ function getCardClass(tableId) {
   const hasItems = (table?.items || []).length > 0;
   if (!hasItems) return 'empty';
   const kds = getTableKds(tableId);
-  if (kds.status === 'ready') return 'ready';
+  if (kds.status === 'ready' && getPendingItems(table, kds.deliveredItems || []).length === 0) return 'ready';
   const elapsed = getElapsedMinutes(tableId);
   return elapsed >= state.config.yellowToRedMinutes ? 'urgent' : 'waiting';
 }
@@ -288,10 +297,23 @@ function isCollapsed(tableId) {
 function markTableReady(tableId) {
   const table = state.tables.find(t => t.id === tableId);
   if (!table) return;
+  const currentDelivered = getTableKds(tableId).deliveredItems || [];
+  const pendingItems = getPendingItems(table, currentDelivered);
+  const hasRegularPending = pendingItems.some(item => item.deferUntilLater !== true);
+  const itemsToMark = hasRegularPending
+    ? pendingItems.filter(item => item.deferUntilLater !== true)
+    : pendingItems;
+  const markedItems = new Map(currentDelivered.map(item => [item.ticketItemId, item]));
+  itemsToMark.forEach(item => {
+    markedItems.set(item.ticketItemId, { ticketItemId: item.ticketItemId, id: item.id, qty: item.qty });
+  });
+  const deliveredItems = Array.from(markedItems.values());
+  const remainingPending = getPendingItems(table, deliveredItems);
+
   state.tableKdsState[tableId] = {
-    status: 'ready',
-    readyAt: Date.now(),
-    deliveredItems: (table.items || []).map(i => ({ ticketItemId: i.ticketItemId, id: i.id, qty: i.qty }))
+    status: remainingPending.length > 0 ? 'waiting' : 'ready',
+    readyAt: remainingPending.length > 0 ? null : Date.now(),
+    deliveredItems
   };
   saveTableKdsState();
   render();
@@ -328,6 +350,8 @@ function renderItem(item, deliveredItems) {
   const deliveredQty = del?.qty || 0;
   const currentQty   = item.qty;
   const showPrice    = state.config.showPrices;
+  const isDeferred   = item.deferUntilLater === true;
+  const deferredBadge = isDeferred ? '<span class="kds-later-badge">Después</span>' : '';
 
   const opts = (item.selectedOptions || []).length > 0
     ? `<div class="kds-item-opts">${item.selectedOptions.map(o => `<span class="kds-item-opt">+ ${o.name}${o.qty > 1 ? ` ×${o.qty}` : ''}</span>`).join('')}</div>`
@@ -341,9 +365,9 @@ function renderItem(item, deliveredItems) {
   // All delivered → strikethrough
   if (deliveredQty >= currentQty) {
     return `
-      <div class="kds-item delivered">
+      <div class="kds-item delivered ${isDeferred ? 'later' : ''}">
         <span class="kds-item-qty">${currentQty}×</span>
-        <div class="kds-item-body"><div class="kds-item-name">${item.name}</div>${opts}</div>
+        <div class="kds-item-body"><div class="kds-item-name">${item.name}${deferredBadge}</div>${opts}</div>
         ${priceSpan(currentQty)}
       </div>`;
   }
@@ -354,21 +378,21 @@ function renderItem(item, deliveredItems) {
     return `
       <div class="kds-item delivered">
         <span class="kds-item-qty">${deliveredQty}×</span>
-        <div class="kds-item-body"><div class="kds-item-name">${item.name}</div>${opts}</div>
+        <div class="kds-item-body"><div class="kds-item-name">${item.name}${deferredBadge}</div>${opts}</div>
         ${priceSpan(deliveredQty)}
       </div>
-      <div class="kds-item new-item">
+      <div class="kds-item new-item ${isDeferred ? 'later' : ''}">
         <span class="kds-item-qty">${pendingQty}×</span>
-        <div class="kds-item-body"><div class="kds-item-name">${item.name}</div>${opts}</div>
+        <div class="kds-item-body"><div class="kds-item-name">${item.name}${deferredBadge}</div>${opts}</div>
         ${priceSpan(pendingQty)}
       </div>`;
   }
 
   // Normal
   return `
-    <div class="kds-item">
+    <div class="kds-item ${isDeferred ? 'later' : ''}">
       <span class="kds-item-qty">${currentQty}×</span>
-      <div class="kds-item-body"><div class="kds-item-name">${item.name}</div>${opts}</div>
+      <div class="kds-item-body"><div class="kds-item-name">${item.name}${deferredBadge}</div>${opts}</div>
       ${priceSpan(currentQty)}
     </div>`;
 }

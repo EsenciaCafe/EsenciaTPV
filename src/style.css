@@ -2193,6 +2193,26 @@ body.light-theme .btn-quick-pay {
   font-style: italic;
 }
 
+.ticket-defer-btn {
+  align-self: flex-start;
+  margin-top: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-item);
+  color: var(--text-muted);
+  padding: 5px 10px;
+  font-family: var(--font-family);
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.ticket-defer-btn.active {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.16);
+  color: #f59e0b;
+}
+
 /* Quantity Actions & Pill */
 .ticket-item-qty-actions {
   display: flex;

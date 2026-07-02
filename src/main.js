@@ -3335,6 +3335,9 @@ function renderInlineTicketPanel() {
             `).join('')}
           </div>
         ` : ''}
+        <button class="ticket-defer-btn ${item.deferUntilLater ? 'active' : ''}" data-defer-ticket-item-id="${item.ticketItemId}" type="button">
+          ${item.deferUntilLater ? 'Para después' : 'Servir ahora'}
+        </button>
       </div>
       <div class="ticket-item-qty-actions">
         <button class="qty-btn qty-minus-btn" data-ticket-item-id="${item.ticketItemId}">-</button>
@@ -3426,6 +3429,9 @@ function renderDrawerOverlay() {
             `).join('')}
           </div>
         ` : ''}
+        <button class="ticket-defer-btn ${item.deferUntilLater ? 'active' : ''}" data-defer-ticket-item-id="${item.ticketItemId}" type="button">
+          ${item.deferUntilLater ? 'Para después' : 'Servir ahora'}
+        </button>
       </div>
       <div class="ticket-item-qty-actions">
         <button class="qty-btn qty-minus-btn" data-ticket-item-id="${item.ticketItemId}">-</button>
@@ -6294,10 +6300,19 @@ function setupEventListeners(container) {
     });
   });
 
+  container.querySelectorAll('.ticket-defer-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ticketItemId = btn.dataset.deferTicketItemId;
+      if (ticketItemId) store.toggleTicketItemDeferred(ticketItemId);
+    });
+  });
+
   // Ticket item click (edit modifiers)
   container.querySelectorAll('.ticket-item').forEach(row => {
     row.addEventListener('click', (e) => {
       if (e.target.closest('.ticket-item-qty-actions')) return;
+      if (e.target.closest('.ticket-defer-btn')) return;
       const itemId = row.dataset.itemId;
       const ticketItemId = row.dataset.ticketItemId;
       if (itemHasModifiers(itemId) && ticketItemId) {

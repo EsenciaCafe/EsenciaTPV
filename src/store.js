@@ -1473,13 +1473,14 @@ class Store {
       
       const existingIdx = newItems.findIndex(i => 
         i.id === itemId && 
+        (i.deferUntilLater === true) === false &&
         JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions)
       );
       
       if (existingIdx > -1) {
         newItems[existingIdx] = { ...newItems[existingIdx], qty: newItems[existingIdx].qty + itemQuantity };
       } else {
-        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions });
+        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions, deferUntilLater: false });
       }
 
       this.state.tables[tableIndex] = {
@@ -1491,18 +1492,55 @@ class Store {
       const newItems = [...this.state.directSaleTicket.items];
       const existingIdx = newItems.findIndex(i => 
         i.id === itemId && 
+        (i.deferUntilLater === true) === false &&
         JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions)
       );
 
       if (existingIdx > -1) {
         newItems[existingIdx] = { ...newItems[existingIdx], qty: newItems[existingIdx].qty + itemQuantity };
       } else {
-        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions });
+        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions, deferUntilLater: false });
       }
       this.state.directSaleTicket.items = newItems;
     }
 
     this.notify();
+  }
+
+  toggleTicketItemDeferred(ticketItemId) {
+    if (!ticketItemId) return false;
+
+    const toggleInItems = (items = []) => {
+      const idx = items.findIndex(i => i.ticketItemId === ticketItemId);
+      if (idx === -1) return { items, changed: false };
+      const nextItems = [...items];
+      nextItems[idx] = {
+        ...nextItems[idx],
+        deferUntilLater: nextItems[idx].deferUntilLater !== true
+      };
+      return { items: nextItems, changed: true };
+    };
+
+    if (this.state.selectedTableId !== null) {
+      const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
+      if (tableIndex === -1) return false;
+      const result = toggleInItems(this.state.tables[tableIndex].items);
+      if (!result.changed) return false;
+      this.state.tables[tableIndex] = {
+        ...this.state.tables[tableIndex],
+        items: result.items
+      };
+    } else {
+      const result = toggleInItems(this.state.directSaleTicket.items);
+      if (!result.changed) return false;
+      this.state.directSaleTicket = {
+        ...this.state.directSaleTicket,
+        items: result.items
+      };
+    }
+
+    this.notify();
+    return true;
   }
 
   updateItemBasePrice(ticketItemId, newPrice) {
@@ -1864,6 +1902,7 @@ class Store {
       name: item.name,
       price: item.price,
       qty: item.qty,
+      deferUntilLater: item.deferUntilLater === true,
       selectedOptions: (item.selectedOptions || []).map(opt => ({ ...opt })),
       total: parseFloat(this.getItemTotal(item).toFixed(2))
     }));
