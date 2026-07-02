@@ -3499,6 +3499,188 @@ function renderDrawerOverlay() {
   `;
 }
 
+function setupTicketOnlyEventListeners(container) {
+  container.querySelectorAll('.qty-minus-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ticketItemId = btn.dataset.ticketItemId;
+      if (ticketItemId) store.updateItemQty(ticketItemId, -1);
+    });
+  });
+
+  container.querySelectorAll('.qty-plus-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ticketItemId = btn.dataset.ticketItemId;
+      if (ticketItemId) store.updateItemQty(ticketItemId, 1);
+    });
+  });
+
+  container.querySelectorAll('.ticket-defer-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ticketItemId = btn.dataset.deferTicketItemId;
+      if (ticketItemId) store.toggleTicketItemDeferred(ticketItemId);
+    });
+  });
+
+  container.querySelectorAll('.ticket-item').forEach(row => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.ticket-item-qty-actions')) return;
+      if (e.target.closest('.ticket-defer-btn')) return;
+      const itemId = row.dataset.itemId;
+      const ticketItemId = row.dataset.ticketItemId;
+      if (itemHasModifiers(itemId) && ticketItemId) {
+        showModifierSelectionModal(itemId, ticketItemId);
+      }
+    });
+  });
+
+  container.querySelectorAll('.ticket-item-base-price, .ticket-item-total-price').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const row = el.closest('.ticket-item');
+      if (!row) return;
+      const ticketItemId = row.dataset.ticketItemId;
+      const item = store.getActiveItems().find(i => i.ticketItemId === ticketItemId);
+      if (item) showPriceEditModal(ticketItemId, item.price);
+    });
+  });
+
+  const drawerPull = container.querySelector('#drawer-pull-bar');
+  if (drawerPull) {
+    drawerPull.addEventListener('click', () => {
+      isDrawerOpen = false;
+      store.notify();
+    });
+  }
+
+  const drawerClear = container.querySelector('#drawer-clear-btn');
+  if (drawerClear) {
+    drawerClear.addEventListener('click', () => {
+      showConfirm(
+        'Vaciar Pedido',
+        '¿Seguro que deseas vaciar el pedido actual?',
+        () => {
+          store.clearActiveTicket();
+          isDrawerOpen = false;
+        },
+        null,
+        true
+      );
+    });
+  }
+
+  const drawerPrint = container.querySelector('#drawer-print-btn');
+  if (drawerPrint) {
+    drawerPrint.addEventListener('click', () => {
+      showToast('Imprimiendo pre-factura del ticket...', 'success');
+      store.printBill();
+      isDrawerOpen = false;
+    });
+  }
+
+  const drawerPayBtn = container.querySelector('#drawer-pay-btn');
+  if (drawerPayBtn) {
+    drawerPayBtn.addEventListener('click', () => {
+      showPaymentModal(store.getActiveTicketTotal());
+    });
+  }
+
+  const drawerSaveOrder = container.querySelector('#drawer-save-order-btn');
+  if (drawerSaveOrder) {
+    drawerSaveOrder.addEventListener('click', () => {
+      if (store.state.selectedTableId !== null) {
+        store.saveActiveOrder();
+        isDrawerOpen = false;
+      } else {
+        isDrawerOpen = false;
+        showTableSelectionModal();
+      }
+    });
+  }
+
+  const splitClear = container.querySelector('#split-clear-btn');
+  if (splitClear) {
+    splitClear.addEventListener('click', () => {
+      showConfirm('Vaciar Pedido', '¿Seguro que deseas vaciar el pedido actual?', () => {
+        store.clearActiveTicket();
+      }, null, true);
+    });
+  }
+
+  const splitPayBtn = container.querySelector('#split-pay-btn');
+  if (splitPayBtn) {
+    splitPayBtn.addEventListener('click', () => {
+      showPaymentModal(store.getActiveTicketTotal());
+    });
+  }
+
+  const splitSaveOrderBtn = container.querySelector('#split-save-order-btn');
+  if (splitSaveOrderBtn) {
+    splitSaveOrderBtn.addEventListener('click', () => {
+      store.saveActiveOrder();
+      showToast('Comanda guardada.', 'success');
+    });
+  }
+}
+
+function refreshDrawerOverlay() {
+  const existing = document.getElementById('drawer-backdrop');
+  const html = renderDrawerOverlay();
+
+  if (!html) {
+    if (existing) existing.remove();
+    return true;
+  }
+
+  const template = document.createElement('template');
+  template.innerHTML = html.trim();
+  const freshOverlay = template.content.querySelector('#drawer-backdrop');
+  if (!freshOverlay) return false;
+
+  if (!existing) {
+    document.body.appendChild(freshOverlay);
+    freshOverlay.addEventListener('click', (e) => {
+      if (e.target.id === 'drawer-backdrop') {
+        isDrawerOpen = false;
+        store.notify();
+      }
+    });
+    setupTicketOnlyEventListeners(freshOverlay);
+    return true;
+  }
+
+  const currentContent = existing.querySelector('.drawer-content');
+  const freshContent = freshOverlay.querySelector('.drawer-content');
+  if (!currentContent || !freshContent) {
+    existing.replaceWith(freshOverlay);
+    setupTicketOnlyEventListeners(freshOverlay);
+    return true;
+  }
+
+  currentContent.innerHTML = freshContent.innerHTML;
+  setupTicketOnlyEventListeners(currentContent);
+  return true;
+}
+
+function renderTicketOnly() {
+  const isDesktop = window.innerWidth >= 768;
+  if (isDesktop && store.state.activeTab === 'inicio') {
+    const splitTicket = document.querySelector('.pos-split-ticket');
+    if (!splitTicket) return false;
+    splitTicket.innerHTML = renderInlineTicketPanel();
+    setupTicketOnlyEventListeners(splitTicket);
+    return true;
+  }
+
+  if (isDrawerOpen) {
+    return refreshDrawerOverlay();
+  }
+
+  return false;
+}
+
 // Master Shell Render Engine
 function render(state = store.state) {
   const appRoot = document.getElementById('app-root');
@@ -3583,11 +3765,11 @@ function render(state = store.state) {
         </main>
       </div>
       ${renderNavbar(state)}
-      ${renderDrawerOverlay()}
     </div>
   `;
 
   setupEventListeners(appRoot);
+  refreshDrawerOverlay();
 }
 
 function setupAuthEventListeners(container) {
@@ -8316,7 +8498,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Bind store event reactive updates
-  store.subscribe((state) => {
+  store.subscribe((state, meta = {}) => {
+    if (meta.renderScope === 'ticket' && renderTicketOnly()) {
+      return;
+    }
     scheduleRender(state);
   });
 

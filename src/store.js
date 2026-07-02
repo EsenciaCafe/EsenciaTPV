@@ -279,13 +279,13 @@ class Store {
     };
   }
 
-  emitChange() {
-    this.listeners.forEach(listener => listener(this.state));
+  emitChange(meta = {}) {
+    this.listeners.forEach(listener => listener(this.state, meta));
   }
 
   notify(options = {}) {
     this.persistDiningState(options);
-    this.emitChange();
+    this.emitChange(options);
   }
 
   getRoleLabel(role = this.state.auth.role) {
@@ -1539,7 +1539,7 @@ class Store {
       };
     }
 
-    this.notify();
+    this.notify({ renderScope: 'ticket' });
     return true;
   }
 
@@ -1562,7 +1562,7 @@ class Store {
         this.state.directSaleTicket.items = newItems;
       }
     }
-    this.notify();
+    this.notify({ renderScope: 'ticket' });
   }
 
   updateItemQty(ticketItemId, change) {
@@ -1609,7 +1609,7 @@ class Store {
           : { loyaltyAwarded: undefined })
       };
     }
-    this.notify();
+    this.notify({ renderScope: 'ticket' });
   }
 
   updateTicketItemModifiers(ticketItemId, selectedOptions) {
@@ -1659,7 +1659,7 @@ class Store {
         this.state.directSaleTicket.items = newItems;
       }
     }
-    this.notify();
+    this.notify({ renderScope: 'ticket' });
   }
 
   addModifier({ name }) {
