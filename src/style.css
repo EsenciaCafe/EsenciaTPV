@@ -1426,12 +1426,26 @@ body.light-theme .btn-quick-pay {
 
 .tx-detail-dialog {
   max-width: 560px;
+  width: min(94vw, 560px);
+  max-height: calc(100dvh - max(24px, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px) + 16px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tx-detail-dialog .modal-header {
+  flex-shrink: 0;
 }
 
 .tx-detail-body {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  overscroll-behavior: contain;
 }
 
 .tx-detail-summary {
@@ -1466,8 +1480,7 @@ body.light-theme .btn-quick-pay {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 320px;
-  overflow-y: auto;
+  overflow: visible;
 }
 
 .tx-detail-payments {
