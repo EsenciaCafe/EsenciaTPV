@@ -1,5 +1,6 @@
 import { store } from './store.js';
 import QRCode from 'qrcode';
+import jsQR from 'jsqr';
 import { parseGeminiInvoiceText } from './geminiInvoiceParser.js';
 import {
   addLoyaltyPurchase,
@@ -4637,6 +4638,9 @@ function showPaymentModal(totalAmount) {
   let giftCardStatus = '';
   let giftCardBusy = false;
   let giftCardRemainderMethod = 'Tarjeta';
+  let giftCardScannerActive = false;
+  let giftCardScannerStream = null;
+  let giftCardScannerFrame = null;
 
   const getEstimatedLoyaltyPoints = () => {
     if (!loyaltyCustomer) return 0;
@@ -4751,6 +4755,88 @@ function showPaymentModal(totalAmount) {
     }
   };
 
+  const stopGiftCardScanner = () => {
+    if (giftCardScannerFrame) {
+      cancelAnimationFrame(giftCardScannerFrame);
+      giftCardScannerFrame = null;
+    }
+    if (giftCardScannerStream) {
+      giftCardScannerStream.getTracks().forEach(track => track.stop());
+      giftCardScannerStream = null;
+    }
+    giftCardScannerActive = false;
+  };
+
+  const startGiftCardScanner = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      giftCardStatus = 'Este navegador no permite usar la camara desde aqui.';
+      renderPaymentContent();
+      return;
+    }
+
+    stopGiftCardScanner();
+    giftCardScannerActive = true;
+    giftCardStatus = 'Abriendo camara...';
+    renderPaymentContent();
+
+    try {
+      giftCardScannerStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+      renderPaymentContent();
+
+      const video = modal.querySelector('#gift-card-scanner-video');
+      const canvas = modal.querySelector('#gift-card-scanner-canvas');
+      if (!video || !canvas) throw new Error('No se pudo preparar el lector QR.');
+
+      video.srcObject = giftCardScannerStream;
+      await video.play();
+      giftCardStatus = 'Apunta al QR de la tarjeta regalo.';
+
+      const scanFrame = () => {
+        if (!giftCardScannerActive || !video.videoWidth || !video.videoHeight) {
+          giftCardScannerFrame = requestAnimationFrame(scanFrame);
+          return;
+        }
+
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+        const result = jsQR(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: 'dontInvert'
+        });
+
+        if (result?.data) {
+          giftCardCodeInput = normalizeSquareGiftCardCode(result.data);
+          giftCardStatus = 'QR detectado. Consultando saldo...';
+          giftCardLookup = null;
+          stopGiftCardScanner();
+          renderPaymentContent();
+          void lookupGiftCard();
+          return;
+        }
+
+        giftCardScannerFrame = requestAnimationFrame(scanFrame);
+      };
+
+      giftCardScannerFrame = requestAnimationFrame(scanFrame);
+    } catch (error) {
+      console.warn(error);
+      stopGiftCardScanner();
+      giftCardStatus = error.name === 'NotAllowedError'
+        ? 'Permiso de camara denegado. Revisa permisos del navegador.'
+        : error.message || 'No se pudo abrir la camara.';
+      renderPaymentContent();
+    }
+  };
+
   const payWithGiftCard = async () => {
     const cleanCode = normalizeSquareGiftCardCode(giftCardCodeInput);
     if (!cleanCode) {
@@ -4855,6 +4941,7 @@ function showPaymentModal(totalAmount) {
     }
 
     isDrawerOpen = false;
+    stopGiftCardScanner();
     modal.remove();
   };
 
@@ -5018,6 +5105,9 @@ function showPaymentModal(totalAmount) {
             <label class="editor-form-label">Codigo de tarjeta regalo Square</label>
             <div style="display:flex; gap:8px; align-items:center;">
               <input type="text" class="search-input" id="gift-card-code-input" value="${giftCardCodeInput}" placeholder="Escanear QR o introducir codigo" ${giftCardBusy ? 'disabled' : ''} style="flex:1;">
+              <button type="button" class="btn btn-secondary" id="gift-card-scan-btn" ${giftCardBusy ? 'disabled' : ''}>
+                ${giftCardScannerActive ? 'Cerrar' : 'Camara'}
+              </button>
               <button type="button" class="btn btn-secondary" id="gift-card-lookup-btn" ${giftCardBusy ? 'disabled' : ''}>
                 ${giftCardBusy ? '...' : 'Saldo'}
               </button>
@@ -5025,6 +5115,14 @@ function showPaymentModal(totalAmount) {
           </div>
 
           ${giftCardStatus ? `<p class="payment-loyalty-status" style="margin-top:8px;">${giftCardStatus}</p>` : ''}
+
+          ${giftCardScannerActive ? `
+            <div style="position:relative; overflow:hidden; background:#000; border:1px solid var(--border-color); border-radius:var(--border-radius-md); margin-top:12px; aspect-ratio: 4 / 3;">
+              <video id="gift-card-scanner-video" playsinline muted style="width:100%; height:100%; object-fit:cover;"></video>
+              <canvas id="gift-card-scanner-canvas" style="display:none;"></canvas>
+              <div style="position:absolute; inset:18%; border:2px solid var(--secondary); border-radius:12px; box-shadow:0 0 0 999px rgba(0,0,0,0.35); pointer-events:none;"></div>
+            </div>
+          ` : ''}
 
           ${giftCardLookup ? `
             <div style="background:var(--bg-panel); border:1px solid var(--border-color); border-radius:var(--border-radius-md); padding:12px; margin-top:12px;">
@@ -5284,6 +5382,9 @@ function showPaymentModal(totalAmount) {
     // Cambio de Método de Pago Principal
     modal.querySelectorAll('.payment-method-card').forEach(card => {
       card.addEventListener('click', () => {
+        if (card.dataset.method !== 'Tarjeta Regalo') {
+          stopGiftCardScanner();
+        }
         selectedMethod = card.dataset.method;
         if (selectedMethod === 'Efectivo') {
           cashReceived = totalAmount;
@@ -5294,6 +5395,7 @@ function showPaymentModal(totalAmount) {
 
     // Botón de Cancelar
     modal.querySelector('#payment-cancel-btn').addEventListener('click', () => {
+      stopGiftCardScanner();
       modal.remove();
     });
 
@@ -5341,6 +5443,19 @@ function showPaymentModal(totalAmount) {
     const giftCardLookupBtn = modal.querySelector('#gift-card-lookup-btn');
     if (giftCardLookupBtn) {
       giftCardLookupBtn.addEventListener('click', lookupGiftCard);
+    }
+
+    const giftCardScanBtn = modal.querySelector('#gift-card-scan-btn');
+    if (giftCardScanBtn) {
+      giftCardScanBtn.addEventListener('click', () => {
+        if (giftCardScannerActive) {
+          stopGiftCardScanner();
+          giftCardStatus = '';
+          renderPaymentContent();
+        } else {
+          void startGiftCardScanner();
+        }
+      });
     }
 
     modal.querySelectorAll('.gift-remainder-btn').forEach(btn => {

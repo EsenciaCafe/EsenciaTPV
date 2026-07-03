@@ -6,7 +6,11 @@ const currencyFormatter = new Intl.NumberFormat('es-ES', {
 });
 
 export function normalizeSquareGiftCardCode(value = '') {
-  return String(value)
+  const text = String(value).trim();
+  const sqgcMatch = text.match(/sqgc:\/\/([A-Za-z0-9-]+)/i);
+  const rawCode = sqgcMatch ? sqgcMatch[1] : text;
+
+  return rawCode
     .trim()
     .replace(/^sqgc:\/\//i, '')
     .replace(/[\s-]/g, '');
