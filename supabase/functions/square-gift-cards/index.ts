@@ -32,8 +32,18 @@ function jsonResponse(body: unknown, status = 200) {
 
 function normalizeGan(value = '') {
   const text = String(value).trim();
+  const giftCardIdMatch = text.match(/gftc:[A-Za-z0-9_-]+/i);
+  if (giftCardIdMatch) return giftCardIdMatch[0];
+
   const sqgcMatch = text.match(/sqgc:\/\/([A-Za-z0-9-]+)/i);
-  const rawCode = sqgcMatch ? sqgcMatch[1] : text;
+  if (sqgcMatch) return sqgcMatch[1].trim().replace(/[\s-]/g, '');
+
+  const numericMatches = text.match(/(?:\d[\s-]?){8,255}/g) || [];
+  const longestNumeric = numericMatches
+    .map(match => match.replace(/[\s-]/g, ''))
+    .filter(match => match.length >= 8)
+    .sort((a, b) => b.length - a.length)[0];
+  const rawCode = longestNumeric || text;
   return rawCode.trim().replace(/^sqgc:\/\//i, '').replace(/[\s-]/g, '');
 }
 
@@ -80,6 +90,54 @@ async function retrieveGiftCardByGan(gan: string) {
   return data.gift_card;
 }
 
+async function retrieveGiftCardByNonce(nonce: string) {
+  const data = await squareFetch('/v2/gift-cards/from-nonce', {
+    method: 'POST',
+    body: JSON.stringify({ nonce })
+  });
+  return data.gift_card;
+}
+
+async function retrieveGiftCardById(id: string) {
+  const data = await squareFetch(`/v2/gift-cards/${encodeURIComponent(id)}`, {
+    method: 'GET'
+  });
+  return data.gift_card;
+}
+
+async function retrieveGiftCardByInput(value: string) {
+  const input = normalizeGan(value);
+  const attempts: Array<() => Promise<any>> = [];
+
+  if (/^gftc:/i.test(input)) {
+    attempts.push(() => retrieveGiftCardById(input));
+  } else if (/^\d+$/.test(input) || /^sqgc:\/\//i.test(value)) {
+    attempts.push(() => retrieveGiftCardByGan(input));
+  } else {
+    attempts.push(() => retrieveGiftCardByNonce(input));
+    if (!input.startsWith('cnon:')) {
+      attempts.push(() => retrieveGiftCardByNonce(`cnon:${input}`));
+    }
+    attempts.push(() => retrieveGiftCardByGan(input));
+  }
+
+  let lastError: unknown = null;
+  for (const attempt of attempts) {
+    try {
+      const card = await attempt();
+      if (card) return card;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (!/^\d+$/.test(input)) {
+    throw new Error('El QR de Square no contiene el numero canjeable. Cambia a la pestana "Codigo de barras" de Square o usa el numero visible de 16 digitos.');
+  }
+  if (lastError instanceof Error) throw lastError;
+  throw new Error('No se pudo encontrar la tarjeta regalo.');
+}
+
 function mapGiftCard(card: any) {
   const balance = card?.balance_money || {};
   return {
@@ -93,7 +151,7 @@ function mapGiftCard(card: any) {
 }
 
 async function handleLookup(gan: string) {
-  const card = await retrieveGiftCardByGan(gan);
+  const card = await retrieveGiftCardByInput(gan);
   return {
     giftCard: mapGiftCard(card)
   };
@@ -103,7 +161,7 @@ async function handleRedeem(gan: string, amount: number, referenceId?: string) {
   const amountCents = euroToCents(amount);
   if (amountCents <= 0) throw new Error('El importe a canjear no es valido.');
 
-  const card = await retrieveGiftCardByGan(gan);
+  const card = await retrieveGiftCardByInput(gan);
   const mapped = mapGiftCard(card);
   const balanceCents = euroToCents(mapped.balance);
 
@@ -122,7 +180,7 @@ async function handleRedeem(gan: string, amount: number, referenceId?: string) {
       gift_card_activity: {
         type: 'REDEEM',
         location_id: SQUARE_LOCATION_ID,
-        gift_card_gan: gan,
+        ...(mapped.id ? { gift_card_id: mapped.id } : { gift_card_gan: mapped.gan || gan }),
         redeem_activity_details: {
           amount_money: {
             amount: amountCents,
@@ -134,7 +192,9 @@ async function handleRedeem(gan: string, amount: number, referenceId?: string) {
     })
   });
 
-  const updatedCard = await retrieveGiftCardByGan(gan).catch(() => null);
+  const updatedCard = mapped.id
+    ? await retrieveGiftCardById(mapped.id).catch(() => null)
+    : await retrieveGiftCardByInput(gan).catch(() => null);
 
   return {
     giftCard: updatedCard ? mapGiftCard(updatedCard) : mapped,

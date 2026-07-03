@@ -4792,10 +4792,18 @@ function showPaymentModal(totalAmount) {
       const hints = new Map();
       hints.set(DecodeHintType.POSSIBLE_FORMATS, [
         BarcodeFormat.QR_CODE,
+        BarcodeFormat.MICRO_QR_CODE,
         BarcodeFormat.CODE_128,
         BarcodeFormat.CODE_39,
+        BarcodeFormat.CODE_93,
+        BarcodeFormat.CODABAR,
         BarcodeFormat.EAN_13,
-        BarcodeFormat.UPC_A
+        BarcodeFormat.EAN_8,
+        BarcodeFormat.UPC_A,
+        BarcodeFormat.UPC_E,
+        BarcodeFormat.ITF,
+        BarcodeFormat.PDF_417,
+        BarcodeFormat.DATA_MATRIX
       ]);
       hints.set(DecodeHintType.TRY_HARDER, true);
 

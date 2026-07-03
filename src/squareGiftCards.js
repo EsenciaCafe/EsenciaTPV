@@ -3,13 +3,26 @@ const currencyFormatter = new Intl.NumberFormat('es-ES', {
   currency: 'EUR'
 });
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const viteEnv = import.meta.env || {};
+const supabaseUrl = viteEnv.VITE_SUPABASE_URL;
+const supabaseAnonKey = viteEnv.VITE_SUPABASE_ANON_KEY;
 
 export function normalizeSquareGiftCardCode(value = '') {
   const text = String(value).trim();
+  const giftCardIdMatch = text.match(/gftc:[A-Za-z0-9_-]+/i);
+  if (giftCardIdMatch) return giftCardIdMatch[0];
+
   const sqgcMatch = text.match(/sqgc:\/\/([A-Za-z0-9-]+)/i);
-  const rawCode = sqgcMatch ? sqgcMatch[1] : text;
+  if (sqgcMatch) {
+    return sqgcMatch[1].trim().replace(/[\s-]/g, '');
+  }
+
+  const numericMatches = text.match(/(?:\d[\s-]?){8,255}/g) || [];
+  const longestNumeric = numericMatches
+    .map(match => match.replace(/[\s-]/g, ''))
+    .filter(match => match.length >= 8)
+    .sort((a, b) => b.length - a.length)[0];
+  const rawCode = longestNumeric || text;
 
   return rawCode
     .trim()
@@ -22,8 +35,8 @@ export function validateSquareGiftCardCode(value = '') {
   if (!code) {
     return 'Introduce o escanea el codigo de la tarjeta regalo.';
   }
-  if (!/^\d{8,255}$/.test(code)) {
-    return 'El QR leido no contiene el numero de tarjeta Square. Busca el codigo numerico de la tarjeta o un QR/barcode con formato sqgc://numero.';
+  if (!/^[A-Za-z0-9:._-]{8,255}$/.test(code)) {
+    return 'El codigo leido no parece una tarjeta regalo Square valida.';
   }
   return '';
 }
