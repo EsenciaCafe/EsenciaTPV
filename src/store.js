@@ -939,7 +939,9 @@ class Store {
       this.getPaymentBreakdownForTransaction(tx).forEach(payment => {
         const method = (payment.method || '').toLowerCase();
         const amount = Number(payment.amount || 0);
-        if (method.includes('efectivo')) {
+        if (method.includes('regalo') || method.includes('gift')) {
+          acc.otherPayments += amount;
+        } else if (method.includes('efectivo')) {
           acc.expectedCash += amount;
         } else if (method.includes('tarjeta')) {
           acc.expectedCard += amount;
@@ -1915,7 +1917,9 @@ class Store {
       payments: options.payments || [{
         method: paymentMethod,
         amount: parseFloat(total.toFixed(2)),
-        provider: paymentMethod.toLowerCase().includes('tarjeta') ? 'BBVA' : ''
+        provider: paymentMethod.toLowerCase().includes('regalo')
+          ? 'Square'
+          : paymentMethod.toLowerCase().includes('tarjeta') ? 'BBVA' : ''
       }],
       createdAt: dateNow.toISOString(),
       receiptToken: this.createReceiptToken(),

@@ -20,6 +20,12 @@ import {
   updateLoyaltyCustomer,
   updateLoyaltyVoucherStatus
 } from './loyalty.js';
+import {
+  formatGiftCardBalance,
+  lookupSquareGiftCard,
+  normalizeSquareGiftCardCode,
+  redeemSquareGiftCard
+} from './squareGiftCards.js';
 
 // SVG Icons
 const ICONS = {
@@ -4619,13 +4625,18 @@ function showPaymentModal(totalAmount) {
   modal.className = 'modal-backdrop';
   modal.id = 'payment-modal';
 
-  let selectedMethod = 'Tarjeta'; // 'Tarjeta' | 'Efectivo' | 'Dividir'
+  let selectedMethod = 'Tarjeta'; // 'Tarjeta' | 'Efectivo' | 'Tarjeta Regalo' | 'Dividir'
   let splitType = 'iguales'; // 'iguales' | 'articulos' | 'libre'
   let cashReceived = totalAmount;
   let loyaltyRfidInput = '';
   let loyaltyCustomer = null;
   let loyaltyStatus = isLoyaltyConfigured ? '' : 'Configura fidelidad para activar RFID.';
   let loyaltyBusy = false;
+  let giftCardCodeInput = '';
+  let giftCardLookup = null;
+  let giftCardStatus = '';
+  let giftCardBusy = false;
+  let giftCardRemainderMethod = 'Tarjeta';
 
   const getEstimatedLoyaltyPoints = () => {
     if (!loyaltyCustomer) return 0;
@@ -4705,6 +4716,110 @@ function showPaymentModal(totalAmount) {
         }
       }
     });
+  };
+
+  const lookupGiftCard = async () => {
+    const cleanCode = normalizeSquareGiftCardCode(giftCardCodeInput);
+    if (!cleanCode) {
+      giftCardStatus = 'Escanea o introduce el codigo de la tarjeta regalo.';
+      renderPaymentContent();
+      return;
+    }
+
+    giftCardBusy = true;
+    giftCardStatus = 'Consultando saldo...';
+    giftCardLookup = null;
+    renderPaymentContent();
+
+    try {
+      const result = await lookupSquareGiftCard(cleanCode);
+      giftCardLookup = result.giftCard || null;
+      if (!giftCardLookup) {
+        giftCardStatus = 'No se encontro la tarjeta regalo.';
+      } else if (giftCardLookup.state !== 'ACTIVE') {
+        giftCardStatus = `Tarjeta ${giftCardLookup.state || 'no activa'}.`;
+      } else {
+        giftCardStatus = '';
+      }
+    } catch (error) {
+      console.warn(error);
+      giftCardLookup = null;
+      giftCardStatus = error.message || 'No se pudo consultar la tarjeta regalo.';
+    } finally {
+      giftCardBusy = false;
+      renderPaymentContent();
+    }
+  };
+
+  const payWithGiftCard = async () => {
+    const cleanCode = normalizeSquareGiftCardCode(giftCardCodeInput);
+    if (!cleanCode) {
+      giftCardStatus = 'Escanea o introduce el codigo de la tarjeta regalo.';
+      renderPaymentContent();
+      return;
+    }
+
+    if (!giftCardLookup || giftCardLookup.gan !== cleanCode) {
+      await lookupGiftCard();
+      if (!giftCardLookup) return;
+    }
+
+    if (giftCardLookup.state !== 'ACTIVE') {
+      giftCardStatus = 'La tarjeta regalo no esta activa.';
+      renderPaymentContent();
+      return;
+    }
+
+    const availableBalance = Number(giftCardLookup.balance || 0);
+    const giftAmount = Number(Math.min(totalAmount, availableBalance).toFixed(2));
+    const remainingAmount = Number(Math.max(0, totalAmount - giftAmount).toFixed(2));
+    if (giftAmount <= 0) {
+      giftCardStatus = 'La tarjeta regalo no tiene saldo disponible.';
+      renderPaymentContent();
+      return;
+    }
+
+    giftCardBusy = true;
+    giftCardStatus = 'Canjeando tarjeta regalo...';
+    renderPaymentContent();
+
+    try {
+      const referenceId = `tpv-${Date.now()}`;
+      const result = await redeemSquareGiftCard({
+        code: cleanCode,
+        amount: giftAmount,
+        referenceId
+      });
+      const payments = [{
+        method: 'Tarjeta Regalo',
+        amount: giftAmount,
+        provider: 'Square',
+        externalRef: result.activityId || result.referenceId || referenceId,
+        giftCardId: result.giftCard?.id || giftCardLookup.id,
+        giftCardLast4: result.giftCard?.last4 || giftCardLookup.last4,
+        balanceAfter: result.giftCard?.balance
+      }];
+
+      if (remainingAmount > 0) {
+        payments.push({
+          method: giftCardRemainderMethod,
+          amount: remainingAmount,
+          provider: giftCardRemainderMethod === 'Tarjeta' ? 'BBVA' : ''
+        });
+      }
+
+      const methodText = remainingAmount > 0 ? 'Mixto (Tarjeta regalo)' : 'Tarjeta Regalo';
+      const message = remainingAmount > 0
+        ? `Tarjeta regalo canjeada por ${giftAmount.toFixed(2)} euros. Resto cobrado en ${giftCardRemainderMethod}.`
+        : 'Pago con tarjeta regalo registrado correctamente.';
+      await completePaidTicket(methodText, message, payments);
+    } catch (error) {
+      console.warn(error);
+      giftCardStatus = error.message || 'No se pudo canjear la tarjeta regalo.';
+      showToast(giftCardStatus, 'error');
+      giftCardBusy = false;
+      renderPaymentContent();
+    }
   };
 
   const completePaidTicket = async (paymentMethod, successMessage, paymentBreakdown = null) => {
@@ -4819,8 +4934,12 @@ function showPaymentModal(totalAmount) {
     const change = getChangeAmount();
     const isEfectivo = selectedMethod === 'Efectivo';
     const isDividir = selectedMethod === 'Dividir';
+    const isGiftCard = selectedMethod === 'Tarjeta Regalo';
     const existingLoyaltyAward = store.getActiveLoyaltyAward();
     const loyaltyPoints = getEstimatedLoyaltyPoints();
+    const giftCardBalance = Number(giftCardLookup?.balance || 0);
+    const giftCardRedeemAmount = Number(Math.min(totalAmount, giftCardBalance).toFixed(2));
+    const giftCardRemainingAmount = Number(Math.max(0, totalAmount - giftCardRedeemAmount).toFixed(2));
     const loyaltyHTML = `
       <div class="payment-loyalty-box">
         <div class="payment-loyalty-header">
@@ -4890,6 +5009,59 @@ function showPaymentModal(totalAmount) {
           <div class="loading-spinner" style="margin: 0 auto; width: 44px; height: 44px;"></div>
           <p style="margin-top:16px; font-weight:600; color:var(--text-muted); font-size:0.9rem;">Esperando respuesta del datáfono...</p>
           <span style="font-size:0.75rem; color:var(--text-muted); display:block; margin-top:4px;">(Puedes pulsar "Confirmar Pago" para simular cobro exitoso)</span>
+        </div>
+      `;
+    } else if (isGiftCard) {
+      methodSpecificHTML = `
+        <div class="payment-gift-card-section" style="margin-top: 16px; animation: fadeIn 0.2s ease;">
+          <div class="editor-form-group">
+            <label class="editor-form-label">Codigo de tarjeta regalo Square</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="text" class="search-input" id="gift-card-code-input" value="${giftCardCodeInput}" placeholder="Escanear QR o introducir codigo" ${giftCardBusy ? 'disabled' : ''} style="flex:1;">
+              <button type="button" class="btn btn-secondary" id="gift-card-lookup-btn" ${giftCardBusy ? 'disabled' : ''}>
+                ${giftCardBusy ? '...' : 'Saldo'}
+              </button>
+            </div>
+          </div>
+
+          ${giftCardStatus ? `<p class="payment-loyalty-status" style="margin-top:8px;">${giftCardStatus}</p>` : ''}
+
+          ${giftCardLookup ? `
+            <div style="background:var(--bg-panel); border:1px solid var(--border-color); border-radius:var(--border-radius-md); padding:12px; margin-top:12px;">
+              <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+                <div>
+                  <div style="font-size:0.72rem; color:var(--text-muted); font-weight:700; text-transform:uppercase;">Tarjeta</div>
+                  <strong style="display:block; margin-top:3px;">**** ${giftCardLookup.last4 || '----'}</strong>
+                  <small style="color:var(--text-muted);">${giftCardLookup.state || 'Sin estado'}</small>
+                </div>
+                <div style="text-align:right;">
+                  <div style="font-size:0.72rem; color:var(--text-muted); font-weight:700; text-transform:uppercase;">Saldo</div>
+                  <strong style="display:block; margin-top:3px; font-size:1.25rem; color:var(--secondary);">${formatGiftCardBalance(giftCardBalance)}</strong>
+                </div>
+              </div>
+
+              <div style="border-top:1px solid var(--border-color); margin-top:12px; padding-top:12px; display:grid; gap:8px;">
+                <div style="display:flex; justify-content:space-between; color:var(--text-muted); font-weight:700;">
+                  <span>Se canjea</span>
+                  <span>${giftCardRedeemAmount.toFixed(2)}â‚¬</span>
+                </div>
+                ${giftCardRemainingAmount > 0 ? `
+                  <div style="display:flex; justify-content:space-between; color:var(--text-main); font-weight:700;">
+                    <span>Resto pendiente</span>
+                    <span>${giftCardRemainingAmount.toFixed(2)}â‚¬</span>
+                  </div>
+                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px;">
+                    <button type="button" class="split-part-pay-btn card-btn gift-remainder-btn ${giftCardRemainderMethod === 'Tarjeta' ? 'active' : ''}" data-method="Tarjeta">Resto tarjeta</button>
+                    <button type="button" class="split-part-pay-btn cash-btn gift-remainder-btn ${giftCardRemainderMethod === 'Efectivo' ? 'active' : ''}" data-method="Efectivo">Resto efectivo</button>
+                  </div>
+                ` : ''}
+              </div>
+            </div>
+          ` : `
+            <div style="background:var(--bg-panel); border:1px dashed var(--border-color); border-radius:var(--border-radius-md); padding:12px; margin-top:12px; color:var(--text-muted); font-size:0.85rem;">
+              Escanea el QR de la tarjeta regalo o pega el codigo para consultar el saldo antes de cobrar.
+            </div>
+          `}
         </div>
       `;
     } else if (isDividir) {
@@ -5080,7 +5252,7 @@ function showPaymentModal(totalAmount) {
           ${loyaltyHTML}
           <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">Método de Pago</div>
 
-          <div class="payment-methods-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px;">
+          <div class="payment-methods-grid" style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px;">
             <button class="payment-method-card ${selectedMethod === 'Tarjeta' ? 'active' : ''}" data-method="Tarjeta" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:12px 6px; display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.8rem; transition:all 0.2s ease;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:20px; height:20px; color:${selectedMethod === 'Tarjeta' ? 'var(--secondary)' : 'var(--text-muted)'};"><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></svg>
               <span>Tarjeta</span>
@@ -5088,6 +5260,10 @@ function showPaymentModal(totalAmount) {
             <button class="payment-method-card ${selectedMethod === 'Efectivo' ? 'active' : ''}" data-method="Efectivo" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:12px 6px; display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.8rem; transition:all 0.2s ease;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:20px; height:20px; color:${selectedMethod === 'Efectivo' ? '#10b981' : 'var(--text-muted)'};"><rect x="2" y="6" width="20" height="12" rx="2" /><circle cx="12" cy="12" r="2" /><path d="M6 12h.01M18 12h.01" /></svg>
               <span>Efectivo</span>
+            </button>
+            <button class="payment-method-card ${selectedMethod === 'Tarjeta Regalo' ? 'active' : ''}" data-method="Tarjeta Regalo" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:12px 6px; display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.72rem; transition:all 0.2s ease;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:20px; height:20px; color:${selectedMethod === 'Tarjeta Regalo' ? 'var(--secondary)' : 'var(--text-muted)'};"><rect x="3" y="8" width="18" height="12" rx="2" /><path d="M12 8v12M3 12h18M7.5 8a2.5 2.5 0 1 1 4.5 0M16.5 8a2.5 2.5 0 1 0-4.5 0" /></svg>
+              <span>Regalo</span>
             </button>
             <button class="payment-method-card ${selectedMethod === 'Dividir' ? 'active' : ''}" data-method="Dividir" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:12px 6px; display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.8rem; transition:all 0.2s ease;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:20px; height:20px; color:${selectedMethod === 'Dividir' ? '#f59e0b' : 'var(--text-muted)'};"><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><circle cx="4" cy="12" r="2" /><circle cx="12" cy="10" r="2" /><circle cx="20" cy="14" r="2" /></svg>
@@ -5099,7 +5275,7 @@ function showPaymentModal(totalAmount) {
         </div>
         <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px; border-top: 1px solid var(--border-color); padding-top: 12px; flex-shrink:0;">
           <button class="btn btn-secondary" id="payment-cancel-btn" style="height:40px; padding:0 16px; font-weight:600; border-radius:var(--border-radius-md); background:var(--bg-item); border:1px solid var(--border-color); color:var(--text-main); cursor:pointer; font-size:0.85rem;">Cancelar</button>
-          ${!isDividir ? `<button class="btn btn-primary" id="payment-confirm-btn" style="height:40px; padding:0 20px; font-weight:600; border-radius:var(--border-radius-md); background:var(--secondary); border:none; color:white; cursor:pointer; font-size:0.85rem;">Confirmar Pago</button>` : ''}
+          ${!isDividir ? `<button class="btn btn-primary" id="payment-confirm-btn" ${giftCardBusy ? 'disabled' : ''} style="height:40px; padding:0 20px; font-weight:600; border-radius:var(--border-radius-md); background:var(--secondary); border:none; color:white; cursor:pointer; font-size:0.85rem; ${giftCardBusy ? 'opacity:0.65;' : ''}">${giftCardBusy ? 'Procesando...' : 'Confirmar Pago'}</button>` : ''}
         </div>
       </div>
     `;
@@ -5149,6 +5325,31 @@ function showPaymentModal(totalAmount) {
       loyaltyManualBtn.addEventListener('click', awardManualLoyalty);
     }
 
+    const giftCardInput = modal.querySelector('#gift-card-code-input');
+    if (giftCardInput) {
+      giftCardInput.addEventListener('input', (e) => {
+        giftCardCodeInput = e.target.value;
+        giftCardLookup = null;
+        giftCardStatus = '';
+      });
+      giftCardInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') lookupGiftCard();
+      });
+      setTimeout(() => giftCardInput.focus(), 30);
+    }
+
+    const giftCardLookupBtn = modal.querySelector('#gift-card-lookup-btn');
+    if (giftCardLookupBtn) {
+      giftCardLookupBtn.addEventListener('click', lookupGiftCard);
+    }
+
+    modal.querySelectorAll('.gift-remainder-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        giftCardRemainderMethod = btn.dataset.method;
+        renderPaymentContent();
+      });
+    });
+
     // Botón Confirmar Pago Directo (no dividido)
     const confirmBtn = modal.querySelector('#payment-confirm-btn');
     if (confirmBtn) {
@@ -5158,6 +5359,8 @@ function showPaymentModal(totalAmount) {
           await completePaidTicket('Efectivo', `Pago en efectivo registrado. Cambio: ${change.toFixed(2)} euros.`);
         } else if (selectedMethod === 'Tarjeta') {
           await completePaidTicket('Tarjeta', 'Pago con tarjeta procesado correctamente.');
+        } else if (selectedMethod === 'Tarjeta Regalo') {
+          await payWithGiftCard();
         }
       });
     }
