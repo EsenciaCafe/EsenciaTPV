@@ -32,6 +32,9 @@ function jsonResponse(body: unknown, status = 200) {
 
 function normalizeGan(value = '') {
   const text = String(value).trim();
+  const squareBalanceUrlMatch = text.match(/squareup\.com\/gift\/balance\/([A-Za-z0-9_-]+)/i);
+  if (squareBalanceUrlMatch) return `gftc:${squareBalanceUrlMatch[1]}`;
+
   const giftCardIdMatch = text.match(/gftc:[A-Za-z0-9_-]+/i);
   if (giftCardIdMatch) return giftCardIdMatch[0];
 
