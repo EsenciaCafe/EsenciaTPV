@@ -31,7 +31,10 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 function normalizeGan(value = '') {
-  return String(value).trim().replace(/^sqgc:\/\//i, '').replace(/[\s-]/g, '');
+  const text = String(value).trim();
+  const sqgcMatch = text.match(/sqgc:\/\/([A-Za-z0-9-]+)/i);
+  const rawCode = sqgcMatch ? sqgcMatch[1] : text;
+  return rawCode.trim().replace(/^sqgc:\/\//i, '').replace(/[\s-]/g, '');
 }
 
 function euroToCents(value: number) {

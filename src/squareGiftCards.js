@@ -1,9 +1,10 @@
-import { supabase } from './supabase.js';
-
 const currencyFormatter = new Intl.NumberFormat('es-ES', {
   style: 'currency',
   currency: 'EUR'
 });
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export function normalizeSquareGiftCardCode(value = '') {
   const text = String(value).trim();
@@ -16,23 +17,43 @@ export function normalizeSquareGiftCardCode(value = '') {
     .replace(/[\s-]/g, '');
 }
 
+export function validateSquareGiftCardCode(value = '') {
+  const code = normalizeSquareGiftCardCode(value);
+  if (!code) {
+    return 'Introduce o escanea el codigo de la tarjeta regalo.';
+  }
+  if (!/^\d{8,255}$/.test(code)) {
+    return 'El QR leido no contiene el numero de tarjeta Square. Busca el codigo numerico de la tarjeta o un QR/barcode con formato sqgc://numero.';
+  }
+  return '';
+}
+
 function assertGiftCardCode(value) {
   const gan = normalizeSquareGiftCardCode(value);
-  if (!gan) throw new Error('Introduce o escanea el codigo de la tarjeta regalo.');
+  const validationError = validateSquareGiftCardCode(gan);
+  if (validationError) throw new Error(validationError);
   return gan;
 }
 
 async function invokeSquareGiftCards(body) {
-  const { data, error } = await supabase.functions.invoke('square-gift-cards', {
-    body
-  });
-
-  if (error) {
-    throw new Error(error.message || 'No se pudo conectar con Square.');
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error('Falta configurar Supabase para consultar tarjetas regalo.');
   }
 
-  if (data?.error) {
-    throw new Error(data.error);
+  const response = await fetch(`${supabaseUrl}/functions/v1/square-gift-cards`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': supabaseAnonKey,
+      'Authorization': `Bearer ${supabaseAnonKey}`
+    },
+    body: JSON.stringify(body)
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok || data?.error) {
+    throw new Error(data?.error || `Square respondio con error ${response.status}.`);
   }
 
   return data;
