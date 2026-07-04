@@ -159,7 +159,10 @@ class Store {
     this.lastRemotePersistSnapshot = '';
     this.pendingRemotePersist = null;
     this.remotePersistTimer = null;
+    this.resumeSyncTimer = null;
+    this.realtimeReconnectTimer = null;
     this.listeners = [];
+    this.setupResumeSync();
   }
 
   restoreDiningState() {
@@ -241,6 +244,10 @@ class Store {
 
   flushRemotePersist() {
     if (!this.pendingRemotePersist) return;
+    if (this.remotePersistTimer) {
+      clearTimeout(this.remotePersistTimer);
+      this.remotePersistTimer = null;
+    }
 
     const { payload, snapshot } = this.pendingRemotePersist;
     this.pendingRemotePersist = null;
@@ -294,6 +301,7 @@ class Store {
 
   notify(options = {}) {
     this.persistDiningState(options);
+    if (options.flushRemote) this.flushRemotePersist();
     this.emitChange(options);
   }
 
@@ -645,6 +653,104 @@ class Store {
     }
   }
 
+  applyRemoteSharedState(newState) {
+    if (!newState) return false;
+
+    let changed = false;
+
+    if (Array.isArray(newState.tables) && JSON.stringify(this.state.tables) !== JSON.stringify(newState.tables)) {
+      this.state.tables = newState.tables;
+      changed = true;
+    }
+
+    if (newState.direct_sale) {
+      const { role_permissions: rolePermissions } = newState.direct_sale;
+      if (newState.direct_sale.legal_data && JSON.stringify(this.state.legal) !== JSON.stringify(newState.direct_sale.legal_data)) {
+        this.state.legal = newState.direct_sale.legal_data;
+        changed = true;
+      }
+      if (rolePermissions) {
+        const mergedPermissions = this.mergeRolePermissions(rolePermissions);
+        if (JSON.stringify(this.state.rolePermissions) !== JSON.stringify(mergedPermissions)) {
+          this.state.rolePermissions = mergedPermissions;
+          changed = true;
+        }
+      }
+    }
+
+    if (Array.isArray(newState.transactions) && JSON.stringify(this.state.transactions) !== JSON.stringify(newState.transactions)) {
+      this.state.transactions = newState.transactions;
+      changed = true;
+    }
+
+    if (newState.legal_data && JSON.stringify(this.state.legal) !== JSON.stringify(newState.legal_data)) {
+      this.state.legal = newState.legal_data;
+      changed = true;
+    }
+
+    if (newState.role_permissions && JSON.stringify(this.state.rolePermissions) !== JSON.stringify(newState.role_permissions)) {
+      this.state.rolePermissions = this.mergeRolePermissions(newState.role_permissions);
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  persistRemoteSnapshotLocally() {
+    const remoteSnapshot = JSON.stringify(this.getRemotePersistPayload());
+    const localSnapshot = JSON.stringify(this.getPersistPayload());
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        window.localStorage.setItem(DINING_STATE_STORAGE_KEY, localSnapshot);
+      } catch (err) {
+        console.warn('[Store] No se pudo guardar el estado remoto en LocalStorage.', err);
+      }
+    }
+    this.lastLocalPersistSnapshot = localSnapshot;
+    this.lastRemotePersistSnapshot = remoteSnapshot;
+  }
+
+  async refreshSharedStateFromSupabase({ silent = true } = {}) {
+    if (this.pendingRemotePersist) return false;
+
+    try {
+      const tpvState = await loadTPVState();
+      const changed = this.applyRemoteSharedState(tpvState);
+      if (changed) {
+        this.persistRemoteSnapshotLocally();
+        this.emitChange({ source: 'remote-refresh', silent });
+      }
+      return changed;
+    } catch (err) {
+      console.warn('[Store] No se pudo refrescar el estado compartido.', err);
+      return false;
+    }
+  }
+
+  scheduleResumeSync(delay = 250) {
+    if (typeof window === 'undefined') return;
+    if (this.resumeSyncTimer) clearTimeout(this.resumeSyncTimer);
+    this.resumeSyncTimer = setTimeout(() => {
+      this.resumeSyncTimer = null;
+      void this.refreshSharedStateFromSupabase();
+    }, delay);
+  }
+
+  setupResumeSync() {
+    if (typeof window === 'undefined') return;
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        this.scheduleResumeSync(150);
+      }
+    });
+    window.addEventListener('focus', () => this.scheduleResumeSync(200));
+    window.addEventListener('online', () => {
+      this.subscribeToRealtime();
+      this.scheduleResumeSync(250);
+    });
+  }
+
   subscribeToRealtime() {
     if (this.realtimeChannel) {
       this.realtimeChannel.unsubscribe();
@@ -661,59 +767,27 @@ class Store {
           filter: 'id=eq.global'
         },
         (payload) => {
-          const newState = payload.new;
-          if (newState) {
-            let changed = false;
-            
-            if (Array.isArray(newState.tables) && JSON.stringify(this.state.tables) !== JSON.stringify(newState.tables)) {
-              this.state.tables = newState.tables;
-              changed = true;
-            }
-            if (newState.direct_sale) {
-              const { role_permissions: rolePermissions } = newState.direct_sale;
-              if (newState.direct_sale.legal_data && JSON.stringify(this.state.legal) !== JSON.stringify(newState.direct_sale.legal_data)) {
-                this.state.legal = newState.direct_sale.legal_data;
-                changed = true;
-              }
-              if (rolePermissions) {
-                const mergedPermissions = this.mergeRolePermissions(rolePermissions);
-                if (JSON.stringify(this.state.rolePermissions) !== JSON.stringify(mergedPermissions)) {
-                  this.state.rolePermissions = mergedPermissions;
-                  changed = true;
-                }
-              }
-            }
-            if (Array.isArray(newState.transactions) && JSON.stringify(this.state.transactions) !== JSON.stringify(newState.transactions)) {
-              this.state.transactions = newState.transactions;
-              changed = true;
-            }
-            if (newState.legal_data && JSON.stringify(this.state.legal) !== JSON.stringify(newState.legal_data)) {
-              this.state.legal = newState.legal_data;
-              changed = true;
-            }
-            if (newState.role_permissions && JSON.stringify(this.state.rolePermissions) !== JSON.stringify(newState.role_permissions)) {
-              this.state.rolePermissions = this.mergeRolePermissions(newState.role_permissions);
-              changed = true;
-            }
-
-            if (changed) {
-              const remoteSnapshot = JSON.stringify(this.getRemotePersistPayload());
-              const localSnapshot = JSON.stringify(this.getPersistPayload());
-              if (typeof window !== 'undefined' && window.localStorage) {
-                try {
-                  window.localStorage.setItem(DINING_STATE_STORAGE_KEY, localSnapshot);
-                } catch (err) {
-                  console.warn('[Store] No se pudo guardar el estado remoto en LocalStorage.', err);
-                }
-              }
-              this.lastLocalPersistSnapshot = localSnapshot;
-              this.lastRemotePersistSnapshot = remoteSnapshot;
-              this.emitChange();
-            }
+          if (this.applyRemoteSharedState(payload.new)) {
+            this.persistRemoteSnapshotLocally();
+            this.emitChange({ source: 'realtime' });
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          this.scheduleResumeSync(50);
+          return;
+        }
+
+        if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status)) {
+          if (this.realtimeReconnectTimer) clearTimeout(this.realtimeReconnectTimer);
+          this.realtimeReconnectTimer = setTimeout(() => {
+            this.realtimeReconnectTimer = null;
+            this.subscribeToRealtime();
+            this.scheduleResumeSync(200);
+          }, 2000);
+        }
+      });
   }
 
   // Action Methods
@@ -741,6 +815,9 @@ class Store {
       tab = 'mesas';
     }
     this.state.activeTab = tab;
+    if (tab === 'mesas') {
+      this.scheduleResumeSync(50);
+    }
     if (tab === 'inicio') {
       this.state.gridPath = ['root'];
     }
@@ -1761,7 +1838,7 @@ class Store {
     this.state.tables[tableIndex] = { ...table, status: 'pending-bill' };
     this.state.selectedTableId = null;
     this.state.activeTab = 'inicio';
-    this.notify();
+    this.notify({ flushRemote: true });
   }
 
   saveActiveOrder() {
@@ -1777,7 +1854,7 @@ class Store {
     this.state.selectedTableId = null;
     this.state.activeTab = 'inicio';
     this.state.gridPath = ['root'];
-    this.notify();
+    this.notify({ flushRemote: true });
   }
 
   saveActiveOrderToTable(tableId) {
@@ -1818,7 +1895,7 @@ class Store {
     this.state.selectedTableId = null;
     this.state.activeTab = 'inicio';
     this.state.gridPath = ['root'];
-    this.notify();
+    this.notify({ flushRemote: true });
   }
 
   assignActiveOrderToTable(tableId) {
@@ -1892,7 +1969,7 @@ class Store {
     this.state.selectedTableId = tableId;
     this.state.activeTab = 'inicio';
     this.state.gridPath = ['root'];
-    this.notify();
+    this.notify({ flushRemote: true });
   }
 
   payActiveTicket(paymentMethod = 'Tarjeta', options = {}) {
@@ -1966,7 +2043,7 @@ class Store {
     }
     this.state.activeTab = 'inicio';
     this.state.gridPath = ['root'];
-    this.notify();
+    this.notify({ flushRemote: true });
     return transaction;
   }
 
@@ -1984,7 +2061,7 @@ class Store {
     } else {
       this.state.directSaleTicket = { items: [] };
     }
-    this.notify();
+    this.notify({ flushRemote: this.state.selectedTableId !== null });
   }
 
   getSelectedTable() {
