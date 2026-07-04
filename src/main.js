@@ -1096,6 +1096,7 @@ function showTransactionDetailModal(transactionId) {
               `).join('')}
             </div>
           ` : ''}
+          ${item.note ? `<div class="tx-detail-note">Nota: ${escapeHtml(item.note)}</div>` : ''}
         </div>
         <span class="tx-detail-qty">x${item.qty}</span>
       </div>
@@ -3476,9 +3477,15 @@ function renderInlineTicketPanel() {
             `).join('')}
           </div>
         ` : ''}
-        <button class="ticket-defer-btn ${item.deferUntilLater ? 'active' : ''}" data-defer-ticket-item-id="${item.ticketItemId}" type="button">
-          ${item.deferUntilLater ? 'Para después' : 'Servir ahora'}
-        </button>
+        ${item.note ? `<div class="ticket-item-note">Nota: ${escapeHtml(item.note)}</div>` : ''}
+        <div class="ticket-item-tools">
+          <button class="ticket-defer-btn ${item.deferUntilLater ? 'active' : ''}" data-defer-ticket-item-id="${item.ticketItemId}" type="button">
+                    ${item.deferUntilLater ? 'Para después' : 'Servir ahora'}
+                  </button>
+          <button class="ticket-note-btn ${item.note ? 'active' : ''}" data-note-ticket-item-id="${item.ticketItemId}" type="button">
+            ${item.note ? 'Editar nota' : 'Nota'}
+          </button>
+        </div>
       </div>
       <div class="ticket-item-qty-actions">
         <button class="qty-btn qty-minus-btn" data-ticket-item-id="${item.ticketItemId}">-</button>
@@ -3571,9 +3578,15 @@ function renderDrawerOverlay() {
             `).join('')}
           </div>
         ` : ''}
-        <button class="ticket-defer-btn ${item.deferUntilLater ? 'active' : ''}" data-defer-ticket-item-id="${item.ticketItemId}" type="button">
-          ${item.deferUntilLater ? 'Para después' : 'Servir ahora'}
-        </button>
+        ${item.note ? `<div class="ticket-item-note">Nota: ${escapeHtml(item.note)}</div>` : ''}
+        <div class="ticket-item-tools">
+          <button class="ticket-defer-btn ${item.deferUntilLater ? 'active' : ''}" data-defer-ticket-item-id="${item.ticketItemId}" type="button">
+                    ${item.deferUntilLater ? 'Para después' : 'Servir ahora'}
+                  </button>
+          <button class="ticket-note-btn ${item.note ? 'active' : ''}" data-note-ticket-item-id="${item.ticketItemId}" type="button">
+            ${item.note ? 'Editar nota' : 'Nota'}
+          </button>
+        </div>
       </div>
       <div class="ticket-item-qty-actions">
         <button class="qty-btn qty-minus-btn" data-ticket-item-id="${item.ticketItemId}">-</button>
@@ -3667,10 +3680,19 @@ function setupTicketOnlyEventListeners(container) {
     });
   });
 
+  container.querySelectorAll('.ticket-note-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ticketItemId = btn.dataset.noteTicketItemId;
+      if (ticketItemId) showItemNoteModal(ticketItemId);
+    });
+  });
+
   container.querySelectorAll('.ticket-item').forEach(row => {
     row.addEventListener('click', (e) => {
       if (e.target.closest('.ticket-item-qty-actions')) return;
       if (e.target.closest('.ticket-defer-btn')) return;
+      if (e.target.closest('.ticket-note-btn')) return;
       const itemId = row.dataset.itemId;
       const ticketItemId = row.dataset.ticketItemId;
       if (itemHasModifiers(itemId) && ticketItemId) {
@@ -4157,6 +4179,7 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
   if (!item) return;
   const isEditingExistingItem = Boolean(ticketItemId);
   let itemQuantity = 1;
+  let initialItemNote = '';
 
   // Find existing selected options if editing
   let initialSelectedOptions = [];
@@ -4165,6 +4188,7 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
     const existingItem = activeItems.find(i => i.ticketItemId === ticketItemId);
     if (existingItem) {
       initialSelectedOptions = existingItem.selectedOptions || [];
+      initialItemNote = existingItem.note || '';
     }
   }
 
@@ -4264,6 +4288,10 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
           </div>
         ` : ''}
         ${modifiersHTML}
+        <div class="modifier-note-group">
+          <label class="modifier-note-label" for="modifier-item-note">Nota para cocina</label>
+          <textarea class="modifier-note-input" id="modifier-item-note" rows="3" maxlength="180" placeholder="Ej: sin nata, poco hecho, sacar al final...">${escapeHtml(initialItemNote)}</textarea>
+        </div>
       </div>
       <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px; border-top: 1px solid var(--border-color); padding-top: 16px;">
         <button class="btn btn-secondary" id="modifier-cancel-btn" style="height:44px; padding:0 20px; background-color: var(--bg-item); color: var(--text-main); border: 1px solid var(--border-color); border-radius: var(--border-radius-md); font-weight:600; cursor:pointer;">Cancelar</button>
@@ -4338,10 +4366,13 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
       });
     });
 
+    const itemNote = modal.querySelector('#modifier-item-note')?.value || '';
+
     if (ticketItemId) {
       store.updateTicketItemModifiers(ticketItemId, selectedOptions);
+      store.updateTicketItemNote(ticketItemId, itemNote);
     } else {
-      store.addItemToActiveTicket(itemId, selectedOptions, itemQuantity);
+      store.addItemToActiveTicket(itemId, selectedOptions, itemQuantity, itemNote);
     }
 
     modal.remove();
@@ -4349,6 +4380,49 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
 }
 
 // Modal de confirmación estilizado
+function showItemNoteModal(ticketItemId) {
+  const item = store.getActiveItems().find(i => i.ticketItemId === ticketItemId);
+  if (!item) return;
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.id = 'item-note-modal';
+  modal.innerHTML = `
+    <div class="modal-dialog" style="max-width: 420px; width: 92%;">
+      <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
+        <h3 style="margin:0; font-size:1.15rem; font-weight:800;">Nota para ${escapeHtml(item.name)}</h3>
+      </div>
+      <div class="modal-body">
+        <label class="modifier-note-label" for="ticket-item-note-input">Instruccion para cocina</label>
+        <textarea class="modifier-note-input" id="ticket-item-note-input" rows="4" maxlength="180" placeholder="Ej: sin nata, sacar al final, poco hecho...">${escapeHtml(item.note || '')}</textarea>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:12px; margin-top:18px; border-top: 1px solid var(--border-color); padding-top: 16px;">
+        <button class="btn btn-secondary" id="item-note-clear-btn" style="height:44px; padding:0 18px; background-color: var(--bg-item); color: var(--text-main); border: 1px solid var(--border-color); border-radius: var(--border-radius-md); font-weight:700; cursor:pointer;">Borrar</button>
+        <button class="btn btn-secondary" id="item-note-cancel-btn" style="height:44px; padding:0 18px; background-color: var(--bg-item); color: var(--text-main); border: 1px solid var(--border-color); border-radius: var(--border-radius-md); font-weight:700; cursor:pointer;">Cancelar</button>
+        <button class="btn btn-primary" id="item-note-save-btn" style="height:44px; padding:0 22px; background-color: var(--secondary); color:white; border: 1px solid var(--secondary); border-radius: var(--border-radius-md); font-weight:800; cursor:pointer;">Guardar</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+  const input = modal.querySelector('#ticket-item-note-input');
+  const save = () => {
+    store.updateTicketItemNote(ticketItemId, input?.value || '');
+    modal.remove();
+  };
+
+  modal.querySelector('#item-note-cancel-btn')?.addEventListener('click', () => modal.remove());
+  modal.querySelector('#item-note-clear-btn')?.addEventListener('click', () => {
+    store.updateTicketItemNote(ticketItemId, '');
+    modal.remove();
+  });
+  modal.querySelector('#item-note-save-btn')?.addEventListener('click', save);
+  input?.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') save();
+  });
+  setTimeout(() => input?.focus(), 30);
+}
+
 function showConfirm(title, message, onConfirm, onCancel = null, isDanger = false) {
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop';
@@ -4605,13 +4679,15 @@ function showReassignTableModal() {
           'Combinar Comandas',
           `La ${table.name} ya tiene una comanda activa.\n¿Deseas combinar la comanda de la ${currentTable.name} con la ${table.name}?`,
           () => {
-            store.assignActiveOrderToTable(tableId);
+            store.moveActiveOrderToTable(tableId);
+            isDrawerOpen = false;
             modal.remove();
             showToast(`Comanda de la ${currentTable.name} combinada con la ${table.name}.`, 'success');
           }
         );
       } else {
-        store.assignActiveOrderToTable(tableId);
+        store.moveActiveOrderToTable(tableId);
+        isDrawerOpen = false;
         modal.remove();
         showToast(`Comanda movida de la ${currentTable.name} a la ${table.name}.`, 'success');
       }
@@ -6954,11 +7030,20 @@ function setupEventListeners(container) {
     });
   });
 
+  container.querySelectorAll('.ticket-note-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ticketItemId = btn.dataset.noteTicketItemId;
+      if (ticketItemId) showItemNoteModal(ticketItemId);
+    });
+  });
+
   // Ticket item click (edit modifiers)
   container.querySelectorAll('.ticket-item').forEach(row => {
     row.addEventListener('click', (e) => {
       if (e.target.closest('.ticket-item-qty-actions')) return;
       if (e.target.closest('.ticket-defer-btn')) return;
+      if (e.target.closest('.ticket-note-btn')) return;
       const itemId = row.dataset.itemId;
       const ticketItemId = row.dataset.ticketItemId;
       if (itemHasModifiers(itemId) && ticketItemId) {

@@ -1541,12 +1541,13 @@ class Store {
     return true;
   }
 
-  addItemToActiveTicket(itemId, selectedOptions = [], quantity = 1) {
+  addItemToActiveTicket(itemId, selectedOptions = [], quantity = 1, note = '') {
     const menuItem = this.state.menuItems.find(item => item.id === itemId);
     if (!menuItem) return;
 
     const itemQuantity = Math.max(1, Math.floor(Number(quantity) || 1));
     const sortedOptions = [...selectedOptions].sort((a, b) => a.id.localeCompare(b.id));
+    const itemNote = String(note || '').trim();
     const ticketItemId = `${itemId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     if (this.state.selectedTableId !== null) {
@@ -1558,13 +1559,14 @@ class Store {
       const existingIdx = newItems.findIndex(i => 
         i.id === itemId && 
         (i.deferUntilLater === true) === false &&
-        JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions)
+        JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions) &&
+        String(i.note || '').trim() === itemNote
       );
       
       if (existingIdx > -1) {
         newItems[existingIdx] = { ...newItems[existingIdx], qty: newItems[existingIdx].qty + itemQuantity };
       } else {
-        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions, deferUntilLater: false });
+        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions, deferUntilLater: false, note: itemNote });
       }
 
       this.state.tables[tableIndex] = {
@@ -1577,18 +1579,71 @@ class Store {
       const existingIdx = newItems.findIndex(i => 
         i.id === itemId && 
         (i.deferUntilLater === true) === false &&
-        JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions)
+        JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions) &&
+        String(i.note || '').trim() === itemNote
       );
 
       if (existingIdx > -1) {
         newItems[existingIdx] = { ...newItems[existingIdx], qty: newItems[existingIdx].qty + itemQuantity };
       } else {
-        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions, deferUntilLater: false });
+        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions, deferUntilLater: false, note: itemNote });
       }
       this.state.directSaleTicket.items = newItems;
     }
 
     this.notify();
+  }
+
+  updateTicketItemNote(ticketItemId, note = '') {
+    if (!ticketItemId) return false;
+    const cleanNote = String(note || '').trim();
+
+    const updateInItems = (items = []) => {
+      const idx = items.findIndex(i => i.ticketItemId === ticketItemId);
+      if (idx === -1) return { items, changed: false };
+
+      const nextItems = [...items];
+      nextItems[idx] = { ...nextItems[idx], note: cleanNote };
+      const target = nextItems[idx];
+      const identicalIdx = nextItems.findIndex((item, i) =>
+        i !== idx &&
+        item.id === target.id &&
+        (item.deferUntilLater === true) === (target.deferUntilLater === true) &&
+        JSON.stringify(item.selectedOptions || []) === JSON.stringify(target.selectedOptions || []) &&
+        String(item.note || '').trim() === cleanNote
+      );
+
+      if (identicalIdx > -1) {
+        nextItems[identicalIdx] = {
+          ...nextItems[identicalIdx],
+          qty: nextItems[identicalIdx].qty + target.qty
+        };
+        nextItems.splice(idx, 1);
+      }
+
+      return { items: nextItems, changed: true };
+    };
+
+    if (this.state.selectedTableId !== null) {
+      const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
+      if (tableIndex === -1) return false;
+      const result = updateInItems(this.state.tables[tableIndex].items);
+      if (!result.changed) return false;
+      this.state.tables[tableIndex] = {
+        ...this.state.tables[tableIndex],
+        items: result.items
+      };
+    } else {
+      const result = updateInItems(this.state.directSaleTicket.items);
+      if (!result.changed) return false;
+      this.state.directSaleTicket = {
+        ...this.state.directSaleTicket,
+        items: result.items
+      };
+    }
+
+    this.notify({ renderScope: 'ticket' });
+    return true;
   }
 
   toggleTicketItemDeferred(ticketItemId) {
@@ -1712,7 +1767,8 @@ class Store {
         const currentQty = newItems[idx].qty;
         const identicalIdx = newItems.findIndex((item, i) => 
           i !== idx && item.id === targetId &&
-          JSON.stringify(item.selectedOptions || []) === JSON.stringify(sortedOptions)
+          JSON.stringify(item.selectedOptions || []) === JSON.stringify(sortedOptions) &&
+          String(item.note || '').trim() === String(newItems[idx].note || '').trim()
         );
         
         if (identicalIdx > -1) {
@@ -1732,7 +1788,8 @@ class Store {
         const currentQty = newItems[idx].qty;
         const identicalIdx = newItems.findIndex((item, i) => 
           i !== idx && item.id === targetId &&
-          JSON.stringify(item.selectedOptions || []) === JSON.stringify(sortedOptions)
+          JSON.stringify(item.selectedOptions || []) === JSON.stringify(sortedOptions) &&
+          String(item.note || '').trim() === String(newItems[idx].note || '').trim()
         );
         
         if (identicalIdx > -1) {
@@ -1870,7 +1927,8 @@ class Store {
       const sortedOptions = [...(sourceItem.selectedOptions || [])].sort((a, b) => a.id.localeCompare(b.id));
       const existingIdx = tableItems.findIndex(i => 
         i.id === sourceItem.id && 
-        JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions)
+        JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions) &&
+        String(i.note || '').trim() === String(sourceItem.note || '').trim()
       );
 
       if (existingIdx > -1) {
@@ -1898,7 +1956,8 @@ class Store {
     this.notify({ flushRemote: true });
   }
 
-  assignActiveOrderToTable(tableId) {
+  assignActiveOrderToTable(tableId, options = {}) {
+    const shouldNotify = options.notify !== false;
     const tableIndex = this.state.tables.findIndex(t => t.id === tableId);
     if (tableIndex === -1) return;
     const table = this.state.tables[tableIndex];
@@ -1926,7 +1985,8 @@ class Store {
       const sortedOptions = [...(sourceItem.selectedOptions || [])].sort((a, b) => a.id.localeCompare(b.id));
       const existingIdx = tableItems.findIndex(i => 
         i.id === sourceItem.id && 
-        JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions)
+        JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions) &&
+        String(i.note || '').trim() === String(sourceItem.note || '').trim()
       );
 
       if (existingIdx > -1) {
@@ -1969,7 +2029,19 @@ class Store {
     this.state.selectedTableId = tableId;
     this.state.activeTab = 'inicio';
     this.state.gridPath = ['root'];
+    if (shouldNotify) this.notify({ flushRemote: true });
+  }
+
+  moveActiveOrderToTable(tableId) {
+    const previousTableId = this.state.selectedTableId;
+    if (previousTableId === null || previousTableId === tableId) return false;
+
+    this.assignActiveOrderToTable(tableId, { notify: false });
+    this.state.selectedTableId = null;
+    this.state.activeTab = 'mesas';
+    this.state.gridPath = ['root'];
     this.notify({ flushRemote: true });
+    return true;
   }
 
   payActiveTicket(paymentMethod = 'Tarjeta', options = {}) {
@@ -1986,6 +2058,7 @@ class Store {
       name: item.name,
       price: item.price,
       qty: item.qty,
+      note: item.note || '',
       deferUntilLater: item.deferUntilLater === true,
       selectedOptions: (item.selectedOptions || []).map(opt => ({ ...opt })),
       total: parseFloat(this.getItemTotal(item).toFixed(2))

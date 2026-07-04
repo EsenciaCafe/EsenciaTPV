@@ -70,6 +70,15 @@ function loadConfig() {
 }
 function saveConfig(cfg) { localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg)); }
 
+function escapeHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 // ── Table KDS state ───────────────────────────────────────────────────────────
 const TABLE_KDS_KEY = 'kds-table-state-v1';
 function loadTableKdsState() {
@@ -387,6 +396,8 @@ function renderItem(item, deliveredItems, kds = {}) {
     : '';
 
 
+  const note = item.note ? `<div class="kds-item-note">Nota: ${escapeHtml(item.note)}</div>` : '';
+
   const priceSpan = (qty) => showPrice
     ? `<span class="kds-item-price">${getItemTotal({ ...item, qty }).toFixed(2)}€</span>`
     : '';
@@ -396,7 +407,7 @@ function renderItem(item, deliveredItems, kds = {}) {
     return `
       <div class="kds-item delivered ${isDeferred ? 'later' : ''}">
         <span class="kds-item-qty">${currentQty}×</span>
-        <div class="kds-item-body"><div class="kds-item-name">${item.name}${deferredBadge}</div>${opts}</div>
+        <div class="kds-item-body"><div class="kds-item-name">${escapeHtml(item.name)}${deferredBadge}</div>${opts}${note}</div>
         ${priceSpan(currentQty)}
       </div>`;
   }
@@ -407,12 +418,12 @@ function renderItem(item, deliveredItems, kds = {}) {
     return `
       <div class="kds-item delivered">
         <span class="kds-item-qty">${deliveredQty}×</span>
-        <div class="kds-item-body"><div class="kds-item-name">${item.name}${deferredBadge}</div>${opts}</div>
+        <div class="kds-item-body"><div class="kds-item-name">${escapeHtml(item.name)}${deferredBadge}</div>${opts}${note}</div>
         ${priceSpan(deliveredQty)}
       </div>
       <div class="kds-item new-item ${isDeferred ? 'later' : ''}">
         <span class="kds-item-qty">${pendingQty}×</span>
-        <div class="kds-item-body"><div class="kds-item-name">${item.name}${deferredBadge}</div>${opts}</div>
+        <div class="kds-item-body"><div class="kds-item-name">${escapeHtml(item.name)}${deferredBadge}</div>${opts}${note}</div>
         ${priceSpan(pendingQty)}
       </div>`;
   }
@@ -421,7 +432,7 @@ function renderItem(item, deliveredItems, kds = {}) {
   return `
     <div class="kds-item ${isDeferred ? 'later' : ''}">
       <span class="kds-item-qty">${currentQty}×</span>
-      <div class="kds-item-body"><div class="kds-item-name">${item.name}${deferredBadge}</div>${opts}</div>
+      <div class="kds-item-body"><div class="kds-item-name">${escapeHtml(item.name)}${deferredBadge}</div>${opts}${note}</div>
       ${priceSpan(currentQty)}
     </div>`;
 }
