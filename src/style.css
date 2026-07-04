@@ -1764,9 +1764,15 @@ body.light-theme .btn-quick-pay {
 
 .ticket-actions-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin-top: 10px;
+}
+
+.ticket-actions-grid .pay-btn-opt.danger {
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
 }
 
 .ticket-summary .summary-row:not(.total) {

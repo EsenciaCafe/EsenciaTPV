@@ -229,6 +229,16 @@ class Store {
     };
   }
 
+  getRemotePersistPayload() {
+    return {
+      tables: this.state.tables,
+      directSaleTicket: { items: [] },
+      transactions: this.state.transactions,
+      legal: this.state.legal,
+      rolePermissions: this.state.rolePermissions
+    };
+  }
+
   flushRemotePersist() {
     if (!this.pendingRemotePersist) return;
 
@@ -244,23 +254,25 @@ class Store {
   }
 
   persistDiningState({ remote = true } = {}) {
-    const payload = this.getPersistPayload();
-    const snapshot = JSON.stringify(payload);
+    const localPayload = this.getPersistPayload();
+    const localSnapshot = JSON.stringify(localPayload);
 
     // 1. Save to LocalStorage fallback
-    if (snapshot !== this.lastLocalPersistSnapshot && typeof window !== 'undefined' && window.localStorage) {
+    if (localSnapshot !== this.lastLocalPersistSnapshot && typeof window !== 'undefined' && window.localStorage) {
       try {
-        window.localStorage.setItem(DINING_STATE_STORAGE_KEY, snapshot);
-        this.lastLocalPersistSnapshot = snapshot;
+        window.localStorage.setItem(DINING_STATE_STORAGE_KEY, localSnapshot);
+        this.lastLocalPersistSnapshot = localSnapshot;
       } catch (err) {
         console.warn('[Store] No se pudo guardar el estado de mesas en LocalStorage.', err);
       }
     }
 
     // 2. Save to Supabase (Realtime Sync)
-    if (!remote || snapshot === this.lastRemotePersistSnapshot) return;
+    const remotePayload = this.getRemotePersistPayload();
+    const remoteSnapshot = JSON.stringify(remotePayload);
+    if (!remote || remoteSnapshot === this.lastRemotePersistSnapshot) return;
 
-    this.pendingRemotePersist = { payload, snapshot };
+    this.pendingRemotePersist = { payload: remotePayload, snapshot: remoteSnapshot };
     if (this.remotePersistTimer) clearTimeout(this.remotePersistTimer);
     this.remotePersistTimer = setTimeout(() => {
       this.remotePersistTimer = null;
@@ -586,8 +598,6 @@ class Store {
             if (tpvState.direct_sale.role_permissions) {
               this.state.rolePermissions = this.mergeRolePermissions(tpvState.direct_sale.role_permissions);
             }
-            const { legal_data: _ld, role_permissions: _rp, ...directSaleClean } = tpvState.direct_sale;
-            this.state.directSaleTicket = directSaleClean;
           }
           if (Array.isArray(tpvState.transactions)) {
             this.state.transactions = tpvState.transactions;
@@ -625,9 +635,8 @@ class Store {
       // Suscribirse a cambios en tiempo real
       this.subscribeToRealtime();
       
-      const loadedSnapshot = JSON.stringify(this.getPersistPayload());
-      this.lastLocalPersistSnapshot = loadedSnapshot;
-      this.lastRemotePersistSnapshot = loadedSnapshot;
+      this.lastLocalPersistSnapshot = JSON.stringify(this.getPersistPayload());
+      this.lastRemotePersistSnapshot = JSON.stringify(this.getRemotePersistPayload());
       this.emitChange();
       return true;
     } catch (err) {
@@ -661,11 +670,7 @@ class Store {
               changed = true;
             }
             if (newState.direct_sale) {
-              const { legal_data: _ld, role_permissions: rolePermissions, ...directSaleClean } = newState.direct_sale;
-              if (JSON.stringify(this.state.directSaleTicket) !== JSON.stringify(directSaleClean)) {
-                this.state.directSaleTicket = directSaleClean;
-                changed = true;
-              }
+              const { role_permissions: rolePermissions } = newState.direct_sale;
               if (newState.direct_sale.legal_data && JSON.stringify(this.state.legal) !== JSON.stringify(newState.direct_sale.legal_data)) {
                 this.state.legal = newState.direct_sale.legal_data;
                 changed = true;
@@ -692,8 +697,16 @@ class Store {
             }
 
             if (changed) {
-              const remoteSnapshot = JSON.stringify(this.getPersistPayload());
-              this.lastLocalPersistSnapshot = remoteSnapshot;
+              const remoteSnapshot = JSON.stringify(this.getRemotePersistPayload());
+              const localSnapshot = JSON.stringify(this.getPersistPayload());
+              if (typeof window !== 'undefined' && window.localStorage) {
+                try {
+                  window.localStorage.setItem(DINING_STATE_STORAGE_KEY, localSnapshot);
+                } catch (err) {
+                  console.warn('[Store] No se pudo guardar el estado remoto en LocalStorage.', err);
+                }
+              }
+              this.lastLocalPersistSnapshot = localSnapshot;
               this.lastRemotePersistSnapshot = remoteSnapshot;
               this.emitChange();
             }
@@ -1901,8 +1914,8 @@ class Store {
       total: parseFloat(this.getItemTotal(item).toFixed(2))
     }));
 
-    const txId = `TX-${1000 + this.state.transactions.length + 1}`;
     const dateNow = new Date();
+    const txId = `TX-${dateNow.getTime()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
     const dateStr = `${String(dateNow.getDate()).padStart(2, '0')}/${String(dateNow.getMonth() + 1).padStart(2, '0')}/${dateNow.getFullYear()}`;
     const timeStr = `${String(dateNow.getHours()).padStart(2, '0')}:${String(dateNow.getMinutes()).padStart(2, '0')}`;
     

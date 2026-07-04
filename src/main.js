@@ -3514,6 +3514,7 @@ function renderInlineTicketPanel() {
     <div class="ticket-actions-grid">
       <button class="pay-btn-opt primary" id="split-pay-btn">Cobrar</button>
       <button class="pay-btn-opt" id="split-save-order-btn">Guardar Comanda</button>
+      <button class="pay-btn-opt danger" id="split-clear-btn">Vaciar</button>
     </div>
   ` : `
     <div class="empty-ticket-state">
@@ -3633,6 +3634,7 @@ function renderDrawerOverlay() {
           <div class="ticket-actions-grid">
             <button class="pay-btn-opt primary" id="drawer-pay-btn">Cobrar</button>
             <button class="pay-btn-opt" id="drawer-save-order-btn">Guardar Comanda</button>
+            <button class="pay-btn-opt danger" id="drawer-clear-btn">Vaciar</button>
           </div>
         </div>
       </div>
