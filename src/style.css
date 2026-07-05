@@ -2567,6 +2567,12 @@ body.modal-open {
   padding: 18px;
 }
 
+#modifier-selection-modal .modifier-item-quantity-sticky {
+  margin: 14px 0 0;
+  padding: 14px 16px;
+  background: var(--bg-item);
+}
+
 #modifier-selection-modal .modifier-item-quantity strong,
 #modifier-selection-modal .modifier-option-name {
   font-size: 1.12rem;

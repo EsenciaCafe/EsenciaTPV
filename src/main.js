@@ -4342,10 +4342,8 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
         <div class="modifier-selection-subtitle">
           Precio base: ${item.price.toFixed(2)}€
         </div>
-      </div>
-      <div class="modal-body modifier-selection-body">
         ${!isEditingExistingItem ? `
-          <div class="modifier-item-quantity">
+          <div class="modifier-item-quantity modifier-item-quantity-sticky">
             <div>
               <span class="modifier-item-quantity-label">Cantidad</span>
               <strong>${item.name}</strong>
@@ -4357,6 +4355,8 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
             </div>
           </div>
         ` : ''}
+      </div>
+      <div class="modal-body modifier-selection-body">
         ${modifiersHTML}
         <div class="modifier-note-group">
           <label class="modifier-note-label" for="modifier-item-note">Nota para cocina</label>
