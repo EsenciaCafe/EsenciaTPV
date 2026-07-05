@@ -594,7 +594,10 @@ class Store {
         const tpvState = await loadTPVState();
         if (tpvState) {
           if (Array.isArray(tpvState.tables) && tpvState.tables.length > 0) {
-            this.state.tables = tpvState.tables;
+            this.state.tables = tpvState.tables.map(table => ({
+              ...table,
+              items: this.sortTicketItemsForService(table.items || [])
+            }));
           }
           // Restore direct sale ticket (but keep legal_data separate)
           if (tpvState.direct_sale) {
@@ -659,7 +662,10 @@ class Store {
     let changed = false;
 
     if (Array.isArray(newState.tables) && JSON.stringify(this.state.tables) !== JSON.stringify(newState.tables)) {
-      this.state.tables = newState.tables;
+      this.state.tables = newState.tables.map(table => ({
+        ...table,
+        items: this.sortTicketItemsForService(table.items || [])
+      }));
       changed = true;
     }
 
@@ -1503,10 +1509,61 @@ class Store {
   getActiveItems() {
     if (this.state.selectedTableId !== null) {
       const table = this.state.tables.find(t => t.id === this.state.selectedTableId);
-      return table ? table.items : [];
+      return table ? this.sortTicketItemsForService(table.items) : [];
     } else {
-      return this.state.directSaleTicket.items;
+      return this.sortTicketItemsForService(this.state.directSaleTicket.items);
     }
+  }
+
+  normalizeServiceText(value = '') {
+    return String(value)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+  }
+
+  getCategoryTrailText(categoryId) {
+    const names = [];
+    let currentId = categoryId;
+    const visited = new Set();
+
+    while (currentId && !visited.has(currentId)) {
+      visited.add(currentId);
+      const category = this.state.categories.find(c => c.id === currentId);
+      if (!category) break;
+      names.push(category.name || '');
+      currentId = category.parentId || null;
+    }
+
+    return names.join(' ');
+  }
+
+  getTicketItemServiceGroup(ticketItem = {}) {
+    const menuItem = this.state.menuItems.find(item => item.id === ticketItem.id) || null;
+    const text = this.normalizeServiceText([
+      ticketItem.name,
+      menuItem?.name,
+      menuItem?.category,
+      this.getCategoryTrailText(menuItem?.category)
+    ].filter(Boolean).join(' '));
+
+    const drinkPattern = /\b(bebida|bebidas|cafe|cafes|te|tes|matcha|latte|leche|cappuccino|capuccino|espresso|americano|cortado|zumo|smoothie|batido|refresco|agua|cerveza|vino|infusion|chai|cola|fanta|sprite|tonica)\b/;
+    const foodPattern = /\b(comida|comidas|alimento|alimentos|pancake|pancakes|minipancake|minipancakes|tostada|tostadas|bocadillo|sandwich|bagel|croissant|galleta|dulce|salado|ensalada|postre|tarta|brownie|arepa|pan|bolleria)\b/;
+
+    if (drinkPattern.test(text)) return 0;
+    if (foodPattern.test(text)) return 1;
+    return 2;
+  }
+
+  sortTicketItemsForService(items = []) {
+    return [...items]
+      .map((item, index) => ({
+        item,
+        index,
+        group: this.getTicketItemServiceGroup(item)
+      }))
+      .sort((a, b) => (a.group - b.group) || (a.index - b.index))
+      .map(entry => entry.item);
   }
 
   getActiveLoyaltyAward() {
@@ -1571,7 +1628,7 @@ class Store {
 
       this.state.tables[tableIndex] = {
         ...table,
-        items: newItems,
+        items: this.sortTicketItemsForService(newItems),
         status: table.status === 'available' ? 'occupied' : table.status
       };
     } else {
@@ -1588,7 +1645,7 @@ class Store {
       } else {
         newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions, deferUntilLater: false, note: itemNote });
       }
-      this.state.directSaleTicket.items = newItems;
+      this.state.directSaleTicket.items = this.sortTicketItemsForService(newItems);
     }
 
     this.notify({ renderScope: 'ticket' });
@@ -1631,14 +1688,14 @@ class Store {
       if (!result.changed) return false;
       this.state.tables[tableIndex] = {
         ...this.state.tables[tableIndex],
-        items: result.items
+        items: this.sortTicketItemsForService(result.items)
       };
     } else {
       const result = updateInItems(this.state.directSaleTicket.items);
       if (!result.changed) return false;
       this.state.directSaleTicket = {
         ...this.state.directSaleTicket,
-        items: result.items
+        items: this.sortTicketItemsForService(result.items)
       };
     }
 
@@ -1667,14 +1724,14 @@ class Store {
       if (!result.changed) return false;
       this.state.tables[tableIndex] = {
         ...this.state.tables[tableIndex],
-        items: result.items
+        items: this.sortTicketItemsForService(result.items)
       };
     } else {
       const result = toggleInItems(this.state.directSaleTicket.items);
       if (!result.changed) return false;
       this.state.directSaleTicket = {
         ...this.state.directSaleTicket,
-        items: result.items
+        items: this.sortTicketItemsForService(result.items)
       };
     }
 
@@ -1725,7 +1782,7 @@ class Store {
 
       this.state.tables[tableIndex] = {
         ...table,
-        items: newItems,
+        items: this.sortTicketItemsForService(newItems),
         status: newStatus,
         ...(newItems.length > 0 && table.loyaltyAwarded ? { loyaltyAwarded: table.loyaltyAwarded } : { loyaltyAwarded: undefined })
       };
@@ -1742,7 +1799,7 @@ class Store {
       }
       this.state.directSaleTicket = {
         ...this.state.directSaleTicket,
-        items: newItems,
+        items: this.sortTicketItemsForService(newItems),
         ...(newItems.length > 0 && this.state.directSaleTicket.loyaltyAwarded
           ? { loyaltyAwarded: this.state.directSaleTicket.loyaltyAwarded }
           : { loyaltyAwarded: undefined })
@@ -1776,7 +1833,7 @@ class Store {
           newItems.splice(idx, 1);
         }
         
-        this.state.tables[tableIndex] = { ...table, items: newItems };
+        this.state.tables[tableIndex] = { ...table, items: this.sortTicketItemsForService(newItems) };
       }
     } else {
       const newItems = [...this.state.directSaleTicket.items];
@@ -1797,7 +1854,7 @@ class Store {
           newItems.splice(idx, 1);
         }
         
-        this.state.directSaleTicket.items = newItems;
+        this.state.directSaleTicket.items = this.sortTicketItemsForService(newItems);
       }
     }
     this.notify({ renderScope: 'ticket' });
@@ -1944,7 +2001,7 @@ class Store {
     const status = tableItems.length > 0 ? 'occupied' : 'available';
     this.state.tables[tableIndex] = { 
       ...table, 
-      items: tableItems, 
+      items: this.sortTicketItemsForService(tableItems),
       status: status,
       ...(table.loyaltyAwarded || sourceLoyaltyAward ? { loyaltyAwarded: table.loyaltyAwarded || sourceLoyaltyAward } : {})
     };
@@ -2003,7 +2060,7 @@ class Store {
     const status = tableItems.length > 0 ? 'occupied' : 'available';
     this.state.tables[tableIndex] = { 
       ...table, 
-      items: tableItems, 
+      items: this.sortTicketItemsForService(tableItems),
       status: status,
       ...(table.loyaltyAwarded || sourceLoyaltyAward ? { loyaltyAwarded: table.loyaltyAwarded || sourceLoyaltyAward } : {})
     };

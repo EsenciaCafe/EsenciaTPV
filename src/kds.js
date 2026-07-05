@@ -288,6 +288,30 @@ function isItemDeferredForKds(item, kds = {}) {
   return item.deferUntilLater === true && !getReleasedDeferredItems(kds).includes(item.ticketItemId);
 }
 
+function normalizeServiceText(value = '') {
+  return String(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function getKdsItemServiceGroup(item = {}) {
+  const text = normalizeServiceText(item.name || '');
+  const drinkPattern = /\b(bebida|bebidas|cafe|cafes|te|tes|matcha|latte|leche|cappuccino|capuccino|espresso|americano|cortado|zumo|smoothie|batido|refresco|agua|cerveza|vino|infusion|chai|cola|fanta|sprite|tonica)\b/;
+  const foodPattern = /\b(comida|comidas|alimento|alimentos|pancake|pancakes|minipancake|minipancakes|tostada|tostadas|bocadillo|sandwich|bagel|croissant|galleta|dulce|salado|ensalada|postre|tarta|brownie|arepa|pan|bolleria)\b/;
+
+  if (drinkPattern.test(text)) return 0;
+  if (foodPattern.test(text)) return 1;
+  return 2;
+}
+
+function sortKdsItemsForService(items = []) {
+  return [...items]
+    .map((item, index) => ({ item, index, group: getKdsItemServiceGroup(item) }))
+    .sort((a, b) => (a.group - b.group) || (a.index - b.index))
+    .map(entry => entry.item);
+}
+
 /**
  * Card color class:
  *  'empty'   → green  (table has no items)
@@ -449,7 +473,7 @@ function renderCard(table, orderNum) {
   const total        = getTableTotal(table);
   const deliveredItems = kds.deliveredItems || [];
   const hasItems     = (table.items || []).length > 0;
-  const pendingItems = getPendingItems(table, deliveredItems);
+  const pendingItems = sortKdsItemsForService(getPendingItems(table, deliveredItems));
   const activePendingItems = pendingItems.filter(item => !isItemDeferredForKds(item, kds));
   const deferredPendingItems = pendingItems.filter(item => isItemDeferredForKds(item, kds));
   const collapsed    = isCollapsed(table.id);
