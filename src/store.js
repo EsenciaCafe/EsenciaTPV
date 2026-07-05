@@ -1591,7 +1591,7 @@ class Store {
       this.state.directSaleTicket.items = newItems;
     }
 
-    this.notify();
+    this.notify({ renderScope: 'ticket' });
   }
 
   updateTicketItemNote(ticketItemId, note = '') {

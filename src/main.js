@@ -3846,6 +3846,68 @@ function renderTicketOnly() {
   return false;
 }
 
+const SCROLL_PRESERVE_SELECTORS = [
+  '.app-workspace',
+  '.tables-view',
+  '.products-scroll-area',
+  '.tx-history-list',
+  '.settings-tree-list',
+  '.settings-editor-container',
+  '.loyalty-admin-panel',
+  '.gemini-import-panel',
+  '.pos-split-grid > div',
+  '.pos-grid-container > div',
+  '.drawer-content .ticket-list'
+];
+
+function getScrollViewKey(state = store.state) {
+  return [
+    state.activeTab,
+    state.activePosTab,
+    (state.gridPath || []).join('/'),
+    (state.settingsPath || []).join('/')
+  ].join('|');
+}
+
+function captureScrollState(state = store.state) {
+  const positions = [];
+
+  SCROLL_PRESERVE_SELECTORS.forEach(selector => {
+    document.querySelectorAll(selector).forEach((el, index) => {
+      if (el.scrollTop > 0 || el.scrollLeft > 0) {
+        positions.push({
+          selector,
+          index,
+          top: el.scrollTop,
+          left: el.scrollLeft
+        });
+      }
+    });
+  });
+
+  return {
+    key: getScrollViewKey(state),
+    windowX: window.scrollX || 0,
+    windowY: window.scrollY || 0,
+    positions
+  };
+}
+
+function restoreScrollState(snapshot, state = store.state) {
+  if (!snapshot || snapshot.key !== getScrollViewKey(state)) return;
+
+  snapshot.positions.forEach(pos => {
+    const el = document.querySelectorAll(pos.selector)[pos.index];
+    if (!el) return;
+    el.scrollTop = pos.top;
+    el.scrollLeft = pos.left;
+  });
+
+  if (snapshot.windowX || snapshot.windowY) {
+    window.scrollTo(snapshot.windowX, snapshot.windowY);
+  }
+}
+
 // Master Shell Render Engine
 function render(state = store.state) {
   const appRoot = document.getElementById('app-root');
@@ -9007,12 +9069,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   let pendingRenderFrame = null;
 
   const scheduleRender = (state = store.state) => {
+    const scrollSnapshot = captureScrollState(store.state);
     pendingRenderState = state;
     if (pendingRenderFrame) return;
 
     pendingRenderFrame = requestAnimationFrame(() => {
       pendingRenderFrame = null;
-      render(pendingRenderState || store.state);
+      const nextState = pendingRenderState || store.state;
+      render(nextState);
+      restoreScrollState(scrollSnapshot, nextState);
       pendingRenderState = null;
     });
   };
