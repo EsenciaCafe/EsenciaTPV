@@ -2501,6 +2501,12 @@ body.modal-open {
   border-bottom: 1px solid var(--border-color);
 }
 
+#modifier-selection-modal .modal-header h3.modifier-selection-title {
+  margin: 0;
+  padding: 0;
+  border-bottom: 0;
+}
+
 .modifier-selection-title {
   margin: 0;
   padding: 0;
@@ -2526,6 +2532,15 @@ body.modal-open {
   overscroll-behavior: contain;
   padding: 18px 18px 20px;
   touch-action: pan-y;
+}
+
+#modifier-selection-modal .modifier-selection-quantitybar {
+  flex-shrink: 0;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-card);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+  z-index: 2;
 }
 
 #modifier-selection-modal .modifier-selection-footer {
@@ -2568,7 +2583,7 @@ body.modal-open {
 }
 
 #modifier-selection-modal .modifier-item-quantity-sticky {
-  margin: 14px 0 0;
+  margin: 0;
   padding: 14px 16px;
   background: var(--bg-item);
 }

@@ -4342,7 +4342,9 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
         <div class="modifier-selection-subtitle">
           Precio base: ${item.price.toFixed(2)}€
         </div>
-        ${!isEditingExistingItem ? `
+      </div>
+      ${!isEditingExistingItem ? `
+        <div class="modifier-selection-quantitybar">
           <div class="modifier-item-quantity modifier-item-quantity-sticky">
             <div>
               <span class="modifier-item-quantity-label">Cantidad</span>
@@ -4354,8 +4356,8 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
               <button class="modifier-qty-btn" id="modifier-item-qty-plus" type="button" aria-label="Sumar unidad">+</button>
             </div>
           </div>
-        ` : ''}
-      </div>
+        </div>
+      ` : ''}
       <div class="modal-body modifier-selection-body">
         ${modifiersHTML}
         <div class="modifier-note-group">
