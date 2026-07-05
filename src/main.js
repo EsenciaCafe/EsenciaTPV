@@ -4279,6 +4279,7 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop';
   modal.id = 'modifier-selection-modal';
+  modal.classList.add('modifier-selection-backdrop');
 
   // Render modifiers content
   let modifiersHTML = '';
@@ -4333,16 +4334,16 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
   };
 
   modal.innerHTML = `
-    <div class="modal-dialog" style="max-width: 500px;">
+    <div class="modal-dialog modifier-selection-dialog">
       <div class="modal-header">
-        <h3 style="margin-bottom: 0; border-bottom: none; padding-bottom: 0; font-weight: 700;">
+        <h3 class="modifier-selection-title">
           ${ticketItemId ? 'Editar' : 'Personalizar'} ${item.name}
         </h3>
-        <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px; margin-bottom: 12px;">
+        <div class="modifier-selection-subtitle">
           Precio base: ${item.price.toFixed(2)}€
         </div>
       </div>
-      <div class="modal-body" style="max-height: 400px; overflow-y: auto;">
+      <div class="modal-body modifier-selection-body">
         ${!isEditingExistingItem ? `
           <div class="modifier-item-quantity">
             <div>
@@ -4362,14 +4363,15 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
           <textarea class="modifier-note-input" id="modifier-item-note" rows="3" maxlength="180" placeholder="Ej: sin nata, poco hecho, sacar al final...">${escapeHtml(initialItemNote)}</textarea>
         </div>
       </div>
-      <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px; border-top: 1px solid var(--border-color); padding-top: 16px;">
-        <button class="btn btn-secondary" id="modifier-cancel-btn" style="height:44px; padding:0 20px; background-color: var(--bg-item); color: var(--text-main); border: 1px solid var(--border-color); border-radius: var(--border-radius-md); font-weight:600; cursor:pointer;">Cancelar</button>
+      <div class="modal-footer modifier-selection-footer">
+        <button class="btn btn-secondary modifier-selection-action modifier-selection-cancel" id="modifier-cancel-btn">Cancelar</button>
         <button class="btn btn-primary" id="modifier-save-btn" style="background-color: var(--secondary); border-color: var(--secondary); height:44px; padding:0 24px; border-radius: var(--border-radius-md); font-weight:600; cursor:pointer; color: white;">Añadir</button>
       </div>
     </div>
   `;
 
   document.body.appendChild(modal);
+  document.body.classList.add('modal-open');
   updateModalTotal();
 
   if (!isEditingExistingItem) {
@@ -4414,8 +4416,13 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
     });
   });
 
-  modal.querySelector('#modifier-cancel-btn').addEventListener('click', () => {
+  const closeModifierModal = () => {
+    document.body.classList.remove('modal-open');
     modal.remove();
+  };
+
+  modal.querySelector('#modifier-cancel-btn').addEventListener('click', () => {
+    closeModifierModal();
   });
 
   modal.querySelector('#modifier-save-btn').addEventListener('click', () => {
@@ -4444,7 +4451,7 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
       store.addItemToActiveTicket(itemId, selectedOptions, itemQuantity, itemNote);
     }
 
-    modal.remove();
+    closeModifierModal();
   });
 }
 

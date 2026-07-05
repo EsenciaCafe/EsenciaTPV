@@ -2188,6 +2188,10 @@ body.light-theme .btn-quick-pay {
   animation: fadeIn 0.2s ease;
 }
 
+body.modal-open {
+  overflow: hidden;
+}
+
 .modal-dialog {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
@@ -2465,6 +2469,157 @@ body.light-theme .btn-quick-pay {
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius-md);
   padding: 16px;
+}
+
+#modifier-selection-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+#modifier-selection-modal .modifier-selection-dialog {
+  width: 100%;
+  max-width: none;
+  height: 100dvh;
+  max-height: 100dvh;
+  border-radius: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: none;
+}
+
+#modifier-selection-modal .modal-header {
+  flex-shrink: 0;
+  padding: calc(env(safe-area-inset-top, 0px) + 22px) 22px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.modifier-selection-title {
+  margin: 0;
+  padding: 0;
+  border-bottom: 0;
+  color: var(--text-main);
+  font-size: 1.45rem;
+  line-height: 1.15;
+  font-weight: 900;
+}
+
+.modifier-selection-subtitle {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+#modifier-selection-modal .modifier-selection-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 18px 18px 20px;
+  touch-action: pan-y;
+}
+
+#modifier-selection-modal .modifier-selection-footer {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: minmax(108px, 0.8fr) minmax(0, 1.4fr);
+  gap: 12px;
+  margin: 0;
+  padding: 14px 18px calc(env(safe-area-inset-bottom, 0px) + 14px);
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-card);
+}
+
+#modifier-selection-modal .modifier-selection-action,
+#modifier-selection-modal #modifier-save-btn {
+  width: 100%;
+  min-height: 58px !important;
+  height: 58px !important;
+  border-radius: var(--border-radius-md) !important;
+  padding: 0 16px !important;
+  font-size: 1.05rem !important;
+  font-weight: 900 !important;
+  cursor: pointer;
+}
+
+#modifier-selection-modal .modifier-selection-cancel {
+  background-color: var(--bg-item) !important;
+  color: var(--text-main) !important;
+  border: 1px solid var(--border-color) !important;
+}
+
+#modifier-selection-modal #modifier-save-btn {
+  background-color: var(--secondary) !important;
+  border-color: var(--secondary) !important;
+  color: white !important;
+}
+
+#modifier-selection-modal .modifier-item-quantity {
+  padding: 18px;
+}
+
+#modifier-selection-modal .modifier-item-quantity strong,
+#modifier-selection-modal .modifier-option-name {
+  font-size: 1.12rem;
+}
+
+#modifier-selection-modal .modifier-group-title,
+#modifier-selection-modal .modifier-note-label,
+#modifier-selection-modal .modifier-item-quantity-label {
+  font-size: 0.82rem;
+}
+
+#modifier-selection-modal .modifier-option-price {
+  font-size: 0.9rem;
+}
+
+#modifier-selection-modal .modifier-option-row {
+  min-height: 62px;
+}
+
+#modifier-selection-modal .modifier-qty-btn {
+  width: 44px;
+  height: 44px;
+  font-size: 1.35rem;
+}
+
+#modifier-selection-modal .modifier-qty-val,
+#modifier-selection-modal .modifier-item-qty-val {
+  min-width: 28px;
+  font-size: 1.2rem;
+}
+
+#modifier-selection-modal .modifier-note-input {
+  min-height: 108px;
+  font-size: 1rem;
+}
+
+@media (min-width: 768px) {
+  #modifier-selection-modal {
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  #modifier-selection-modal .modifier-selection-dialog {
+    width: min(620px, 100%);
+    height: min(760px, 94dvh);
+    max-height: 94dvh;
+    border-radius: var(--border-radius-lg);
+  }
+
+  #modifier-selection-modal .modal-header {
+    padding-top: 22px;
+  }
 }
 
 .modifier-item-quantity {
