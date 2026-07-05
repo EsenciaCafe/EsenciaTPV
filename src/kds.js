@@ -244,6 +244,9 @@ function getElapsedMinutes(tableId) {
   const s = state.tableStartTimes[tableId];
   return s ? Math.floor((Date.now() - s) / 60000) : 0;
 }
+function resetTableStartTime(tableId) {
+  state.tableStartTimes[tableId] = Date.now();
+}
 function formatElapsed(minutes) {
   if (minutes < 1)  return '< 1 min';
   if (minutes < 60) return `${minutes} min`;
@@ -345,6 +348,7 @@ function markTableReady(tableId) {
   const deferredPendingItems = pendingItems.filter(item => isItemDeferredForKds(item, currentKds));
 
   if (activePendingItems.length === 0 && deferredPendingItems.length > 0) {
+    resetTableStartTime(tableId);
     state.tableKdsState[tableId] = {
       ...currentKds,
       status: 'waiting',
@@ -368,6 +372,9 @@ function markTableReady(tableId) {
   });
   const deliveredItems = Array.from(markedItems.values());
   const remainingPending = getPendingItems(table, deliveredItems);
+  const hasDeferredOnlyPending = remainingPending.length > 0
+    && remainingPending.every(item => isItemDeferredForKds(item, currentKds));
+  if (hasDeferredOnlyPending) resetTableStartTime(tableId);
 
   state.tableKdsState[tableId] = {
     status: remainingPending.length > 0 ? 'waiting' : 'ready',
@@ -383,6 +390,7 @@ function markTableReady(tableId) {
 
 function reopenTable(tableId) {
   const kds = getTableKds(tableId);
+  resetTableStartTime(tableId);
   state.tableKdsState[tableId] = { ...kds, status: 'waiting', readyAt: null };
   saveTableKdsState();
   render();
@@ -395,6 +403,7 @@ function checkForNewItemsOnReadyTable(tableId, newItems) {
   for (const item of newItems) {
     const del = delivered.find(d => d.ticketItemId === item.ticketItemId);
     if (!del || item.qty > del.qty) {
+      resetTableStartTime(tableId);
       state.tableKdsState[tableId] = { ...kds, status: 'waiting', readyAt: null };
       saveTableKdsState();
       return true;
