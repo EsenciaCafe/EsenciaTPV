@@ -3788,6 +3788,13 @@ function setupTicketOnlyEventListeners(container) {
       showToast('Comanda guardada.', 'success');
     });
   }
+
+  container.querySelectorAll('.ticket-reassign-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showReassignTableModal();
+    });
+  });
 }
 
 function refreshDrawerOverlay() {
@@ -4654,6 +4661,8 @@ function showTableSelectionModal() {
 
 // Modal para mover/reasignar comanda de mesa
 function showReassignTableModal() {
+  if (document.getElementById('table-reassign-modal')) return;
+
   const currentTable = store.getSelectedTable();
   if (!currentTable) {
     showToast('No hay ninguna mesa activa seleccionada.', 'warning');
@@ -4741,17 +4750,25 @@ function showReassignTableModal() {
           'Combinar Comandas',
           `La ${table.name} ya tiene una comanda activa.\n¿Deseas combinar la comanda de la ${currentTable.name} con la ${table.name}?`,
           () => {
-            store.moveActiveOrderToTable(tableId);
-            isDrawerOpen = false;
-            modal.remove();
-            showToast(`Comanda de la ${currentTable.name} combinada con la ${table.name}.`, 'success');
+            const moved = store.moveActiveOrderToTable(tableId);
+            if (moved) {
+              isDrawerOpen = false;
+              modal.remove();
+              showToast(`Comanda de la ${currentTable.name} combinada con la ${table.name}.`, 'success');
+            } else {
+              showToast('No se pudo mover la comanda. Vuelve a seleccionar la mesa e intentalo otra vez.', 'error');
+            }
           }
         );
       } else {
-        store.moveActiveOrderToTable(tableId);
-        isDrawerOpen = false;
-        modal.remove();
-        showToast(`Comanda movida de la ${currentTable.name} a la ${table.name}.`, 'success');
+        const moved = store.moveActiveOrderToTable(tableId);
+        if (moved) {
+          isDrawerOpen = false;
+          modal.remove();
+          showToast(`Comanda movida de la ${currentTable.name} a la ${table.name}.`, 'success');
+        } else {
+          showToast('No se pudo mover la comanda. Vuelve a seleccionar la mesa e intentalo otra vez.', 'error');
+        }
       }
     });
   });
@@ -7225,7 +7242,6 @@ function setupEventListeners(container) {
   container.querySelectorAll('.ticket-reassign-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      isDrawerOpen = false;
       showReassignTableModal();
     });
   });

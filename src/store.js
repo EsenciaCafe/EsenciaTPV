@@ -2092,6 +2092,8 @@ class Store {
   moveActiveOrderToTable(tableId) {
     const previousTableId = this.state.selectedTableId;
     if (previousTableId === null || previousTableId === tableId) return false;
+    const previousTable = this.state.tables.find(t => t.id === previousTableId);
+    if (!previousTable || !Array.isArray(previousTable.items) || previousTable.items.length === 0) return false;
 
     this.assignActiveOrderToTable(tableId, { notify: false });
     this.state.selectedTableId = null;
