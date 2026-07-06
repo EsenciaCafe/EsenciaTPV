@@ -890,6 +890,11 @@ function renderTablesView(state) {
         : 'available';
     const typeClass = table.type === 'takeaway' ? 'takeaway' : '';
     const isEmpty = itemCount === 0 && table.status !== 'pending-bill';
+    const kitchenState = state.kdsState?.[table.id] || state.kdsState?.[String(table.id)];
+    const showKitchenBadge = itemCount > 0 && table.status !== 'pending-bill' && kitchenState?.status !== 'ready';
+    const kitchenBadge = showKitchenBadge
+      ? `<span class="table-kitchen-badge" title="Pedido en preparación">En cocina</span>`
+      : '';
 
     if (isEmpty) {
       return `
@@ -905,6 +910,7 @@ function renderTablesView(state) {
           <span class="table-card-name">${table.name}</span>
           <span class="table-card-status">${status}</span>
         </div>
+        ${kitchenBadge}
         <div class="table-card-meta">
           <span>${itemCount === 1 ? '1 articulo' : `${itemCount} articulos`}</span>
           <strong>${total.toFixed(2)}€</strong>

@@ -1323,6 +1323,32 @@ body.light-theme .btn-quick-pay {
   font-size: 1.05rem;
 }
 
+.table-kitchen-badge {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.38);
+  color: #f59e0b;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.table-kitchen-badge::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.14);
+}
+
 /* View Content: Transactions (Transacciones) History */
 .tx-list-container {
   display: flex;

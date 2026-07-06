@@ -756,11 +756,12 @@ export async function loadTPVState() {
   return data;
 }
 
-export async function saveTPVState(tables, directSale, transactions, legal, rolePermissions = null) {
+export async function saveTPVState(tables, directSale, transactions, legal, rolePermissions = null, kdsState = null) {
   const directSaleWithFallback = {
     ...directSale,
     legal_data: legal,
-    role_permissions: rolePermissions || undefined
+    role_permissions: rolePermissions || undefined,
+    kds_state: kdsState || directSale?.kds_state || {}
   };
 
   const { error } = await supabase

@@ -108,6 +108,7 @@ class Store {
       
       // 12 tables for our cafe
       tables: createInitialTables(),
+      kdsState: {},
       
       // Direct Sale (Venta Directa) ticket when no table is selected
       directSaleTicket: {
@@ -217,6 +218,9 @@ class Store {
       if (savedState.rolePermissions) {
         this.state.rolePermissions = this.mergeRolePermissions(savedState.rolePermissions);
       }
+      if (savedState.kdsState && typeof savedState.kdsState === 'object') {
+        this.state.kdsState = savedState.kdsState;
+      }
     } catch (err) {
       console.warn('[Store] No se pudo restaurar el estado de mesas.', err);
     }
@@ -225,6 +229,7 @@ class Store {
   getPersistPayload() {
     return {
       tables: this.state.tables,
+      kdsState: this.state.kdsState,
       directSaleTicket: this.state.directSaleTicket,
       transactions: this.state.transactions,
       legal: this.state.legal,
@@ -235,6 +240,7 @@ class Store {
   getRemotePersistPayload() {
     return {
       tables: this.state.tables,
+      kdsState: this.state.kdsState,
       directSaleTicket: { items: [] },
       transactions: this.state.transactions,
       legal: this.state.legal,
@@ -253,7 +259,7 @@ class Store {
     this.pendingRemotePersist = null;
     this.lastRemotePersistSnapshot = snapshot;
 
-    saveTPVState(payload.tables, payload.directSaleTicket, payload.transactions, payload.legal, payload.rolePermissions)
+    saveTPVState(payload.tables, payload.directSaleTicket, payload.transactions, payload.legal, payload.rolePermissions, payload.kdsState)
       .catch(err => {
         console.warn('[Store] No se pudo guardar el estado en Supabase.', err);
         this.lastRemotePersistSnapshot = '';
@@ -609,6 +615,9 @@ class Store {
             if (tpvState.direct_sale.role_permissions) {
               this.state.rolePermissions = this.mergeRolePermissions(tpvState.direct_sale.role_permissions);
             }
+            if (tpvState.direct_sale.kds_state && typeof tpvState.direct_sale.kds_state === 'object') {
+              this.state.kdsState = tpvState.direct_sale.kds_state;
+            }
           }
           if (Array.isArray(tpvState.transactions)) {
             this.state.transactions = tpvState.transactions;
@@ -671,8 +680,15 @@ class Store {
 
     if (newState.direct_sale) {
       const { role_permissions: rolePermissions } = newState.direct_sale;
+      const nextKdsState = newState.direct_sale.kds_state && typeof newState.direct_sale.kds_state === 'object'
+        ? newState.direct_sale.kds_state
+        : {};
       if (newState.direct_sale.legal_data && JSON.stringify(this.state.legal) !== JSON.stringify(newState.direct_sale.legal_data)) {
         this.state.legal = newState.direct_sale.legal_data;
+        changed = true;
+      }
+      if (JSON.stringify(this.state.kdsState || {}) !== JSON.stringify(nextKdsState)) {
+        this.state.kdsState = nextKdsState;
         changed = true;
       }
       if (rolePermissions) {

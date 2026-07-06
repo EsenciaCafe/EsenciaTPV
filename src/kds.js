@@ -89,6 +89,62 @@ function saveTableKdsState() {
   localStorage.setItem(TABLE_KDS_KEY, JSON.stringify(state.tableKdsState));
 }
 
+async function publishSharedKdsState() {
+  try {
+    const { data, error } = await supabase
+      .from('tpv_state')
+      .select('direct_sale')
+      .eq('id', 'global')
+      .single();
+
+    if (error) throw error;
+
+    const directSale = data?.direct_sale && typeof data.direct_sale === 'object'
+      ? data.direct_sale
+      : { items: [] };
+
+    const compactState = Object.fromEntries(
+      Object.entries(state.tableKdsState || {})
+        .filter(([, value]) => value && value.status)
+        .map(([tableId, value]) => [tableId, {
+          status: value.status,
+          readyAt: value.readyAt || null,
+          updatedAt: new Date().toISOString()
+        }])
+    );
+
+    const { error: updateError } = await supabase
+      .from('tpv_state')
+      .update({
+        direct_sale: { ...directSale, kds_state: compactState },
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', 'global');
+
+    if (updateError) throw updateError;
+  } catch (err) {
+    console.warn('[KDS] No se pudo publicar el estado de cocina:', err?.message || err);
+  }
+}
+
+function persistTableKdsState() {
+  saveTableKdsState();
+  void publishSharedKdsState();
+}
+
+function mergeSharedKdsState(sharedKdsState = {}) {
+  if (!sharedKdsState || typeof sharedKdsState !== 'object') return;
+  Object.entries(sharedKdsState).forEach(([tableId, shared]) => {
+    if (!shared || typeof shared !== 'object') return;
+    const current = state.tableKdsState[tableId] || {};
+    state.tableKdsState[tableId] = {
+      ...current,
+      status: shared.status || current.status || 'waiting',
+      readyAt: shared.readyAt || null
+    };
+  });
+}
+
 // ── App State ─────────────────────────────────────────────────────────────────
 let state = {
   tables:         [],
@@ -360,7 +416,7 @@ function markTableReady(tableId) {
         ])
       ]
     };
-    saveTableKdsState();
+    persistTableKdsState();
     render();
     return;
   }
@@ -384,7 +440,7 @@ function markTableReady(tableId) {
       (table.items || []).some(item => item.ticketItemId === ticketItemId)
     )
   };
-  saveTableKdsState();
+  persistTableKdsState();
   render();
 }
 
@@ -392,7 +448,7 @@ function reopenTable(tableId) {
   const kds = getTableKds(tableId);
   resetTableStartTime(tableId);
   state.tableKdsState[tableId] = { ...kds, status: 'waiting', readyAt: null };
-  saveTableKdsState();
+  persistTableKdsState();
   render();
 }
 
@@ -405,7 +461,7 @@ function checkForNewItemsOnReadyTable(tableId, newItems) {
     if (!del || item.qty > del.qty) {
       resetTableStartTime(tableId);
       state.tableKdsState[tableId] = { ...kds, status: 'waiting', readyAt: null };
-      saveTableKdsState();
+      persistTableKdsState();
       return true;
     }
   }
@@ -1049,12 +1105,22 @@ async function loadInitialState() {
       updateTableStartTimes(merged);
       state.tables = merged;
     }
+    if (data.direct_sale?.kds_state && typeof data.direct_sale.kds_state === 'object') {
+      mergeSharedKdsState(data.direct_sale.kds_state);
+      saveTableKdsState();
+    }
   } catch (err) { console.warn('[KDS] Error cargando estado:', err); }
 }
 
-function onRealtimeUpdate(newTables) {
+function onRealtimeUpdate(newTables, sharedKdsState = null) {
+  if (sharedKdsState && typeof sharedKdsState === 'object') {
+    mergeSharedKdsState(sharedKdsState);
+    saveTableKdsState();
+  }
+
   const merged = mergeTablesWithDefs(newTables);
   let needSound = false;
+  let kdsStateChanged = false;
 
   merged.forEach(table => {
     const prev     = state.tables.find(t => t.id === table.id);
@@ -1062,14 +1128,20 @@ function onRealtimeUpdate(newTables) {
     const hasItems = (table.items || []).length > 0;
 
     if (hasItems) {
+      if (!state.tableKdsState[table.id]) {
+        state.tableKdsState[table.id] = { status: 'waiting', readyAt: null, deliveredItems: [] };
+        kdsStateChanged = true;
+      }
       if (wasEmpty && state.config.soundOnNew) needSound = true;
       const reverted = checkForNewItemsOnReadyTable(table.id, table.items);
       if (reverted && state.config.soundOnNew) needSound = true;
-    } else if (!hasItems && state.config.autoResetReady) {
+    } else if (!hasItems && state.tableKdsState[table.id]) {
       delete state.tableKdsState[table.id];
-      saveTableKdsState();
+      kdsStateChanged = true;
     }
   });
+
+  if (kdsStateChanged) persistTableKdsState();
 
   if (needSound) playBeep();
   updateTableStartTimes(merged);
@@ -1086,7 +1158,9 @@ function subscribeRealtime() {
     .on('postgres_changes', {
       event: 'UPDATE', schema: 'public', table: 'tpv_state', filter: 'id=eq.global'
     }, (payload) => {
-      if (payload.new && Array.isArray(payload.new.tables)) onRealtimeUpdate(payload.new.tables);
+      if (payload.new && Array.isArray(payload.new.tables)) {
+        onRealtimeUpdate(payload.new.tables, payload.new.direct_sale?.kds_state || null);
+      }
     })
     .subscribe((status) => {
       const wasConnected = state.connected;
