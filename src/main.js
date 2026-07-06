@@ -104,6 +104,8 @@ let loyaltyAdminPromos = [];
 let loyaltyAdminVouchers = [];
 let loyaltyAdminLoading = false;
 let loyaltyAdminError = '';
+let transactionsFiltersOpen = false;
+let transactionsPaymentFilter = 'all';
 const GEMINI_SINGLE_INVOICE_PROMPT = `Analiza únicamente esta factura.
 
 Devuélveme solo una tabla Markdown con estas columnas exactas:
@@ -254,6 +256,49 @@ function summarizePayments(tx = {}) {
     summary: count > 1 ? `${count} pagos: ${parts.join(' · ')}` : (payments[0]?.method || tx.paymentMethod || ''),
     rows: payments
   };
+}
+
+const TRANSACTION_PAYMENT_FILTERS = [
+  { id: 'all', label: 'Todos' },
+  { id: 'card', label: 'Tarjeta' },
+  { id: 'cash', label: 'Efectivo' },
+  { id: 'gift', label: 'Regalo' }
+];
+
+function getPaymentFilterId(method = '') {
+  const value = String(method).toLowerCase();
+  if (value.includes('regalo') || value.includes('gift')) return 'gift';
+  if (value.includes('efectivo')) return 'cash';
+  if (value.includes('tarjeta') || value.includes('bbva') || value.includes('card')) return 'card';
+  return 'other';
+}
+
+function transactionMatchesPaymentFilter(tx = {}, filterId = 'all') {
+  if (!filterId || filterId === 'all') return true;
+  return getPaymentBreakdown(tx).some(payment => getPaymentFilterId(payment.method || tx.paymentMethod) === filterId);
+}
+
+function getTransactionAmountForPaymentFilter(tx = {}, filterId = 'all') {
+  if (!filterId || filterId === 'all') return Number(tx.total || 0);
+  return getPaymentBreakdown(tx).reduce((sum, payment) => {
+    const method = payment.method || tx.paymentMethod;
+    return getPaymentFilterId(method) === filterId ? sum + Number(payment.amount || 0) : sum;
+  }, 0);
+}
+
+function renderPaymentSummaryForFilter(tx = {}, filterId = 'all') {
+  const paymentSummary = summarizePayments(tx);
+  if (!filterId || filterId === 'all' || paymentSummary.rows.length <= 1) {
+    return escapeHtml(paymentSummary.summary);
+  }
+
+  return paymentSummary.rows.map(payment => {
+    const method = payment.method || tx.paymentMethod || 'Pago';
+    const matches = getPaymentFilterId(method) === filterId;
+    const amount = Number(payment.amount || 0);
+    const label = `${method}${amount > 0 ? ` (${amount.toFixed(2)}€)` : ''}`;
+    return `<span class="tx-payment-part ${matches ? 'is-match' : 'is-muted'}">${escapeHtml(label)}</span>`;
+  }).join('<span class="tx-payment-separator"> · </span>');
 }
 
 // ─────────────────────────────────────────
@@ -902,7 +947,21 @@ function renderTablesView(state) {
 
 // 7. Transacciones View
 function renderTransaccionesView(state) {
-  const grouped = (state.transactions || []).reduce((groups, tx) => {
+  const activeFilter = transactionsPaymentFilter || 'all';
+  const filterLabel = TRANSACTION_PAYMENT_FILTERS.find(item => item.id === activeFilter)?.label || 'Todos';
+  const filteredTransactions = (state.transactions || [])
+    .filter(tx => transactionMatchesPaymentFilter(tx, activeFilter));
+  const filtersHtml = transactionsFiltersOpen ? `
+    <div class="tx-filter-panel">
+      ${TRANSACTION_PAYMENT_FILTERS.map(filter => `
+        <button class="tx-filter-chip ${activeFilter === filter.id ? 'is-active' : ''}" data-tx-payment-filter="${filter.id}">
+          ${escapeHtml(filter.label)}
+        </button>
+      `).join('')}
+    </div>
+  ` : '';
+
+  const grouped = filteredTransactions.reduce((groups, tx) => {
     const dayKey = getTransactionDayKey(tx);
     if (!groups[dayKey]) groups[dayKey] = [];
     groups[dayKey].push(tx);
@@ -912,20 +971,23 @@ function renderTransaccionesView(state) {
   const daySections = Object.entries(grouped)
     .sort(([a], [b]) => b.localeCompare(a))
     .map(([dayKey, transactions]) => {
-      const dayTotal = transactions.reduce((sum, tx) => sum + Number(tx.total || 0), 0);
+      const dayTotal = transactions.reduce((sum, tx) => sum + getTransactionAmountForPaymentFilter(tx, activeFilter), 0);
       const rows = transactions.map(tx => {
         const isRefund = tx.type === 'refund';
+        const displayAmount = getTransactionAmountForPaymentFilter(tx, activeFilter);
+        tx = { ...tx, total: displayAmount };
         const badge = isRefund
           ? `<span class="badge badge--danger" style="margin-left: 8px;">Devolución</span>`
           : tx.hasRefund
           ? `<span class="badge badge--warning" style="margin-left: 8px;">Devuelta parcial</span>`
           : '';
-        const paymentSummary = summarizePayments(tx);
+        const paymentSummaryHtml = renderPaymentSummaryForFilter(tx, activeFilter);
+        const paymentSummary = { summary: paymentSummaryHtml };
 
         return `
           <button class="tx-card" data-transaction-id="${tx.id}">
             <div class="tx-meta">
-              <span class="tx-table-name">${tx.table} ${badge}</span>
+              <span class="tx-table-name">${escapeHtml(tx.table || 'Venta')} ${badge}</span>
               <span class="tx-date-method">${tx.date} · ${paymentSummary.summary}</span>
             </div>
             <div class="tx-financial">
@@ -949,7 +1011,18 @@ function renderTransaccionesView(state) {
 
   return `
     <div class="tx-list-container">
-      <h2 class="tx-header">Historial de Ventas</h2>
+      <div class="tx-header-row">
+        <h2 class="tx-header">Historial de Ventas</h2>
+        <button class="tx-filter-toggle ${transactionsFiltersOpen || activeFilter !== 'all' ? 'is-active' : ''}" id="tx-filter-toggle-btn" type="button" aria-label="Filtrar transacciones">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 5h18" />
+            <path d="M7 12h10" />
+            <path d="M10 19h4" />
+          </svg>
+          ${activeFilter !== 'all' ? `<span>${escapeHtml(filterLabel)}</span>` : ''}
+        </button>
+      </div>
+      ${filtersHtml}
       <div class="tx-history-list">
         ${daySections.length > 0 ? daySections : '<p style="text-align:center; padding: 40px; color: var(--text-muted);">Aún no hay transacciones cobradas</p>'}
       </div>
@@ -6850,6 +6923,22 @@ function setupEventListeners(container) {
   container.querySelectorAll('[data-transaction-id]').forEach(btn => {
     btn.addEventListener('click', () => {
       showTransactionDetailModal(btn.dataset.transactionId);
+    });
+  });
+
+  const txFilterToggle = container.querySelector('#tx-filter-toggle-btn');
+  if (txFilterToggle) {
+    txFilterToggle.addEventListener('click', () => {
+      transactionsFiltersOpen = !transactionsFiltersOpen;
+      render(store.state);
+    });
+  }
+
+  container.querySelectorAll('[data-tx-payment-filter]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      transactionsPaymentFilter = btn.dataset.txPaymentFilter || 'all';
+      transactionsFiltersOpen = true;
+      render(store.state);
     });
   });
 
