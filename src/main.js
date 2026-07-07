@@ -4007,10 +4007,56 @@ function restoreScrollState(snapshot, state = store.state) {
   }
 }
 
+function captureFocusState() {
+  const el = document.activeElement;
+  if (!el || !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return null;
+
+  const idSelector = el.id ? `#${CSS.escape(el.id)}` : null;
+  const nameSelector = el.name ? `${el.tagName.toLowerCase()}[name="${CSS.escape(el.name)}"]` : null;
+  const selector = idSelector || nameSelector;
+  if (!selector) return null;
+
+  return {
+    selector,
+    value: 'value' in el ? el.value : null,
+    selectionStart: typeof el.selectionStart === 'number' ? el.selectionStart : null,
+    selectionEnd: typeof el.selectionEnd === 'number' ? el.selectionEnd : null
+  };
+}
+
+function restoreFocusState(snapshot) {
+  if (!snapshot?.selector) return;
+  const el = document.querySelector(snapshot.selector);
+  if (!el || !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
+
+  if (snapshot.value !== null && 'value' in el) {
+    el.value = snapshot.value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  el.focus({ preventScroll: true });
+  if (
+    snapshot.selectionStart !== null &&
+    typeof el.setSelectionRange === 'function' &&
+    ['text', 'search', 'tel', 'url', 'password', 'number', 'email', 'date', 'month'].includes(el.type || 'text') === false
+  ) {
+    return;
+  }
+  if (snapshot.selectionStart !== null && typeof el.setSelectionRange === 'function') {
+    try {
+      el.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd ?? snapshot.selectionStart);
+    } catch (_) {
+      // Some input types do not support selection ranges.
+    }
+  }
+}
+
 // Master Shell Render Engine
 function render(state = store.state) {
   const appRoot = document.getElementById('app-root');
   if (!appRoot) return;
+  const scrollSnapshot = captureScrollState(state);
+  const focusSnapshot = captureFocusState();
 
   const isDesktop = window.innerWidth >= 768;
 
@@ -4096,6 +4142,8 @@ function render(state = store.state) {
 
   setupEventListeners(appRoot);
   refreshDrawerOverlay();
+  restoreScrollState(scrollSnapshot, state);
+  restoreFocusState(focusSnapshot);
 }
 
 function setupAuthEventListeners(container) {
@@ -9215,6 +9263,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const scheduleRender = (state = store.state) => {
     const scrollSnapshot = captureScrollState(store.state);
+    const focusSnapshot = captureFocusState();
     pendingRenderState = state;
     if (pendingRenderFrame) return;
 
@@ -9223,6 +9272,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const nextState = pendingRenderState || store.state;
       render(nextState);
       restoreScrollState(scrollSnapshot, nextState);
+      restoreFocusState(focusSnapshot);
       pendingRenderState = null;
     });
   };
