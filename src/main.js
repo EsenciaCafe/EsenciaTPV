@@ -1444,7 +1444,7 @@ function renderAjustesView(state) {
     const shiftSummary = store.getActiveShiftSummary();
     const shiftSinceText = shiftSummary.lastClosure?.closedAt
       ? `Desde ${new Date(shiftSummary.lastClosure.closedAt).toLocaleString('es-ES')}`
-      : 'Desde el inicio';
+      : `Desde inicio del dia ${formatIsoDateEs(shiftSummary.businessDate)}`;
     const settingsMenuItems = [
       store.canManageCatalog() ? `
           <button class="settings-tree-item" id="settings-to-articulos">

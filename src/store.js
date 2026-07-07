@@ -1041,9 +1041,17 @@ class Store {
   }
 
   getActiveShiftSummary() {
-    const lastClosure = this.getLatestCashClosure();
-    const lastClosureTime = lastClosure ? new Date(lastClosure.closedAt || `${lastClosure.businessDate}T23:59:59`).getTime() : 0;
-    const transactions = this.state.transactions.filter(tx => this.getTransactionDate(tx).getTime() > lastClosureTime);
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const businessDate = `${yyyy}-${mm}-${dd}`;
+    const lastClosure = this.getLatestCashClosure(businessDate);
+    const lastClosureTime = lastClosure ? new Date(lastClosure.closedAt || `${businessDate}T23:59:59`).getTime() : 0;
+    const transactions = this.state.transactions.filter(tx =>
+      this.getTransactionDateKey(tx) === businessDate &&
+      this.getTransactionDate(tx).getTime() > lastClosureTime
+    );
 
     return transactions.reduce((acc, tx) => {
       const total = Number(tx.total || 0);
@@ -1057,6 +1065,7 @@ class Store {
       return acc;
     }, {
       lastClosure,
+      businessDate,
       transactions,
       tickets: 0,
       sales: 0,
