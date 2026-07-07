@@ -873,6 +873,18 @@ function renderTablesView(state) {
   const occupiedCount = state.tables.filter(t => t.items.length > 0).length;
   const pendingCount = state.tables.filter(t => t.status === 'pending-bill').length;
   const totalOpen = state.tables.reduce((sum, table) => sum + store.getTableTotal(table), 0);
+  const pendingPreviousClosure = store.getPendingPreviousDayClosure();
+  const pendingPreviousClosureHtml = pendingPreviousClosure ? `
+    <div class="pending-closure-alert">
+      <div>
+        <strong>Falta cerrar el ${formatIsoDateEs(pendingPreviousClosure.businessDate)}</strong>
+        <span>${pendingPreviousClosure.transactionsCount} tickets · ${pendingPreviousClosure.totalSales.toFixed(2)}€ en ventas. Revisa el cierre antes de seguir el dia.</span>
+      </div>
+      <button type="button" class="btn btn-secondary" data-open-cash-closure-date="${pendingPreviousClosure.businessDate}">
+        Cerrar dia
+      </button>
+    </div>
+  ` : '';
 
   const renderTableCards = (tables) => tables.map(table => {
     const total = store.getTableTotal(table);
@@ -921,6 +933,7 @@ function renderTablesView(state) {
 
   return `
     <div class="tables-view">
+      ${pendingPreviousClosureHtml}
       <div class="tables-summary">
         <div>
           <span class="tables-summary-label">Mesas ocupadas</span>
@@ -1861,8 +1874,8 @@ function renderAjustesView(state) {
   if (path.length === 1 && path[0] === 'cierre') {
     const selectedDate = state.selectedReportDate || new Date().toISOString().slice(0, 10);
     const selectedMonth = state.selectedReportMonth || selectedDate.slice(0, 7);
-    const lastClosure = store.getLatestCashClosure();
-    const shiftStartAt = lastClosure?.closedAt || null;
+    const lastClosureForDate = store.getLatestCashClosure(selectedDate);
+    const shiftStartAt = lastClosureForDate?.closedAt || null;
     const summary = store.getCashClosureSummary(selectedDate, {
       sinceTime: shiftStartAt ? new Date(shiftStartAt).getTime() : 0
     });
@@ -1982,7 +1995,7 @@ function renderAjustesView(state) {
             <button type="submit" class="btn btn-primary" style="height:48px; background-color:var(--secondary);" ${store.cashClosurePersistenceReady && store.canCloseCash() ? '' : 'disabled'}>
               Guardar cierre de turno
             </button>
-            ${lastClosure ? `<p class="gemini-muted">Ultimo cierre guardado: ${new Date(lastClosure.closedAt).toLocaleString('es-ES')}</p>` : ''}
+            ${lastClosureForDate ? `<p class="gemini-muted">Ultimo cierre de este dia: ${new Date(lastClosureForDate.closedAt).toLocaleString('es-ES')}</p>` : ''}
           </form>
         </div>
       </div>
@@ -7496,6 +7509,18 @@ function setupEventListeners(container) {
   if (toCierreBtn) {
     toCierreBtn.addEventListener('click', () => {
       store.navigateSettings(['cierre']);
+    });
+  }
+
+  const pendingClosureBtn = container.querySelector('[data-open-cash-closure-date]');
+  if (pendingClosureBtn) {
+    pendingClosureBtn.addEventListener('click', () => {
+      const date = pendingClosureBtn.dataset.openCashClosureDate || new Date().toISOString().slice(0, 10);
+      store.state.selectedReportDate = date;
+      store.state.selectedReportMonth = date.slice(0, 7);
+      store.state.activeTab = 'ajustes';
+      store.state.settingsPath = ['cierre'];
+      store.notify();
     });
   }
 

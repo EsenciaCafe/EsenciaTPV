@@ -987,6 +987,52 @@ class Store {
       })[0] || null;
   }
 
+  getPendingPreviousDayClosure(referenceDate = new Date()) {
+    const reference = referenceDate instanceof Date
+      ? new Date(referenceDate)
+      : new Date(`${String(referenceDate).slice(0, 10)}T12:00:00`);
+    if (Number.isNaN(reference.getTime())) return null;
+
+    reference.setHours(12, 0, 0, 0);
+    const refYyyy = reference.getFullYear();
+    const refMm = String(reference.getMonth() + 1).padStart(2, '0');
+    const refDd = String(reference.getDate()).padStart(2, '0');
+    const referenceKey = `${refYyyy}-${refMm}-${refDd}`;
+    const salesDates = [...new Set(this.state.transactions
+      .filter(tx => tx.type !== 'refund')
+      .map(tx => this.getTransactionDateKey(tx))
+      .filter(date => date < referenceKey))]
+      .sort()
+      .reverse();
+
+    for (const businessDate of salesDates) {
+      const daySales = this.state.transactions.filter(tx =>
+        this.getTransactionDateKey(tx) === businessDate &&
+        tx.type !== 'refund'
+      );
+
+      if (daySales.length === 0) continue;
+
+      const latestSaleTime = Math.max(...daySales.map(tx => this.getTransactionDate(tx).getTime()));
+      const latestClosure = this.getLatestCashClosure(businessDate);
+      const latestClosureTime = latestClosure
+        ? new Date(latestClosure.closedAt || `${businessDate}T23:59:59`).getTime()
+        : 0;
+
+      if (latestClosure && latestClosureTime >= latestSaleTime) continue;
+
+      const totalSales = daySales.reduce((sum, tx) => sum + Number(tx.total || 0), 0);
+      return {
+        businessDate,
+        transactionsCount: daySales.length,
+        totalSales: Number(totalSales.toFixed(2)),
+        latestSaleAt: new Date(latestSaleTime).toISOString()
+      };
+    }
+
+    return null;
+  }
+
   getNextCashClosureShiftNumber(date) {
     const shifts = this.state.cashClosures
       .filter(closure => closure.businessDate === date)
@@ -1081,7 +1127,7 @@ class Store {
 
   async saveCashClosure(data) {
     if (!this.canCloseCash() || !this.cashClosurePersistenceReady) return false;
-    const lastClosure = this.getLatestCashClosure();
+    const lastClosure = this.getLatestCashClosure(data.businessDate);
     const shiftStartAt = lastClosure?.closedAt || null;
     const sinceTime = shiftStartAt ? new Date(shiftStartAt).getTime() : 0;
     const shiftNumber = this.getNextCashClosureShiftNumber(data.businessDate);
