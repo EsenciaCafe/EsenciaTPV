@@ -240,7 +240,7 @@ class Store {
   getRemotePersistPayload() {
     return {
       tables: this.state.tables,
-      kdsState: this.state.kdsState,
+      kdsState: null,
       directSaleTicket: { items: [] },
       transactions: this.state.transactions,
       legal: this.state.legal,

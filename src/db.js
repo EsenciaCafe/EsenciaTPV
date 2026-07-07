@@ -757,11 +757,23 @@ export async function loadTPVState() {
 }
 
 export async function saveTPVState(tables, directSale, transactions, legal, rolePermissions = null, kdsState = null) {
+  let preservedKdsState = {};
+  if (!kdsState && !directSale?.kds_state) {
+    const { data: currentState } = await supabase
+      .from('tpv_state')
+      .select('direct_sale')
+      .eq('id', 'global')
+      .single();
+    preservedKdsState = currentState?.direct_sale?.kds_state && typeof currentState.direct_sale.kds_state === 'object'
+      ? currentState.direct_sale.kds_state
+      : {};
+  }
+
   const directSaleWithFallback = {
     ...directSale,
     legal_data: legal,
     role_permissions: rolePermissions || undefined,
-    kds_state: kdsState || directSale?.kds_state || {}
+    kds_state: kdsState || directSale?.kds_state || preservedKdsState
   };
 
   const { error } = await supabase
