@@ -259,6 +259,32 @@ function summarizePayments(tx = {}) {
   };
 }
 
+function normalizePaymentBucket(method = '') {
+  const key = String(method || '').toLowerCase();
+  if (key.includes('efectivo')) return 'Efectivo';
+  if (key.includes('regalo') || key.includes('gift')) return 'Tarjeta Regalo';
+  if (key.includes('tarjeta') || key.includes('card') || key.includes('bbva')) return 'Tarjeta';
+  return 'Tarjeta';
+}
+
+function applyTransactionPaymentsToBuckets(tx = {}, buckets = {}) {
+  const sign = tx.type === 'refund' ? -1 : 1;
+  getPaymentBreakdown(tx).forEach(payment => {
+    const bucket = normalizePaymentBucket(payment.method);
+    if (!(bucket in buckets)) buckets[bucket] = 0;
+    buckets[bucket] += Number(payment.amount || 0) * sign;
+  });
+  return buckets;
+}
+
+function getTransactionPaymentTotals(tx = {}) {
+  return applyTransactionPaymentsToBuckets(tx, {
+    Efectivo: 0,
+    Tarjeta: 0,
+    'Tarjeta Regalo': 0
+  });
+}
+
 const TRANSACTION_PAYMENT_FILTERS = [
   { id: 'all', label: 'Todos' },
   { id: 'card', label: 'Tarjeta' },
@@ -2455,22 +2481,13 @@ function renderAjustesView(state) {
 
     dayTx.forEach(tx => {
       const val = Number(tx.total || 0);
-      const method = (tx.paymentMethod || '').toLowerCase().trim();
-      
-      let matchedMethod = 'Tarjeta';
-      if (method.includes('efectivo')) {
-        matchedMethod = 'Efectivo';
-      } else if (method.includes('regalo') || method.includes('gift')) {
-        matchedMethod = 'Tarjeta Regalo';
-      }
 
       if (tx.type === 'refund') {
         totalRefunds += Math.abs(val);
-        paymentMethods[matchedMethod] += val; // negative
       } else {
         totalGross += val;
-        paymentMethods[matchedMethod] += val; // positive
       }
+      applyTransactionPaymentsToBuckets(tx, paymentMethods);
     });
 
     const totalNet = totalGross - totalRefunds;
@@ -2576,7 +2593,7 @@ function renderAjustesView(state) {
         <button class="tx-card" data-transaction-id="${tx.id}">
           <div class="tx-meta">
             <span class="tx-table-name">${tx.id} ${badge}</span>
-            <span class="tx-date-method">${txTime} • ${tx.table} • ${tx.paymentMethod}</span>
+            <span class="tx-date-method">${txTime} • ${tx.table} • ${summarizePayments(tx).summary}</span>
           </div>
           <div class="tx-financial">
             <span class="tx-amount ${isRefund ? 'text-danger' : ''}" style="${isRefund ? 'color: var(--danger); font-weight: 700;' : ''}">${tx.total.toFixed(2)}€</span>
@@ -2730,33 +2747,22 @@ function renderAjustesView(state) {
       }
 
       const val = Number(tx.total || 0);
-      const method = (tx.paymentMethod || '').toLowerCase().trim();
-      const isCash = method.includes('efectivo');
+      const paymentTotals = getTransactionPaymentTotals(tx);
 
       if (tx.type === 'refund') {
         totalRefunds += Math.abs(val);
         dailyAgg[day].refunds += Math.abs(val);
         dailyAgg[day].net += val; // negative
-        if (isCash) {
-          cashSales += val;
-          dailyAgg[day].cash += val;
-        } else {
-          cardSales += val;
-          dailyAgg[day].card += val;
-        }
       } else {
         totalGross += val;
         dailyAgg[day].count += 1;
         dailyAgg[day].gross += val;
         dailyAgg[day].net += val; // positive
-        if (isCash) {
-          cashSales += val;
-          dailyAgg[day].cash += val;
-        } else {
-          cardSales += val;
-          dailyAgg[day].card += val;
-        }
       }
+      cashSales += paymentTotals.Efectivo;
+      cardSales += paymentTotals.Tarjeta;
+      dailyAgg[day].cash += paymentTotals.Efectivo;
+      dailyAgg[day].card += paymentTotals.Tarjeta;
     });
 
     const totalNet = totalGross - totalRefunds;
@@ -5951,7 +5957,7 @@ function showPaymentModal(totalAmount) {
   const checkPartsComplete = () => {
     if (parts.every(p => p.status !== 'pending')) {
       const paymentMethodsUsed = [...new Set(parts.map(p => p.status === 'paid-card' ? 'Tarjeta' : 'Efectivo'))];
-      const methodText = paymentMethodsUsed.length > 1 ? 'Mixto (Partes)' : (paymentMethodsUsed[0] === 'paid-card' ? 'Tarjeta' : 'Efectivo');
+      const methodText = paymentMethodsUsed.length > 1 ? 'Mixto (Partes)' : paymentMethodsUsed[0];
       
       const breakdown = parts.map(part => ({
         method: part.status === 'paid-card' ? 'Tarjeta' : 'Efectivo',
@@ -6072,12 +6078,9 @@ function aggregateDailyData(transactions, getTxDate) {
     groups[key].tax += tax;
     groups[key].total += total;
     
-    const method = (tx.paymentMethod || '').toLowerCase().trim();
-    if (method.includes('efectivo')) {
-      groups[key].cash += total;
-    } else {
-      groups[key].card += total;
-    }
+    const paymentTotals = getTransactionPaymentTotals(tx);
+    groups[key].cash += paymentTotals.Efectivo;
+    groups[key].card += paymentTotals.Tarjeta;
   });
   
   return Object.keys(groups).sort().map(k => groups[k]);
@@ -6115,12 +6118,9 @@ function aggregateMonthlyData(transactions, getTxDate) {
     groups[key].tax += tax;
     groups[key].total += total;
     
-    const method = (tx.paymentMethod || '').toLowerCase().trim();
-    if (method.includes('efectivo')) {
-      groups[key].cash += total;
-    } else {
-      groups[key].card += total;
-    }
+    const paymentTotals = getTransactionPaymentTotals(tx);
+    groups[key].cash += paymentTotals.Efectivo;
+    groups[key].card += paymentTotals.Tarjeta;
   });
   
   return Object.keys(groups).sort().map(k => groups[k]);
@@ -6500,21 +6500,13 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
 
     dayTx.forEach(tx => {
       const val = Number(tx.total || 0);
-      const method = (tx.paymentMethod || '').toLowerCase().trim();
-      let matchedMethod = 'Tarjeta';
-      if (method.includes('efectivo')) {
-        matchedMethod = 'Efectivo';
-      } else if (method.includes('regalo') || method.includes('gift')) {
-        matchedMethod = 'Tarjeta Regalo';
-      }
       
       if (tx.type === 'refund') {
         totalRefunds += Math.abs(val);
-        paymentMethods[matchedMethod] += val;
       } else {
         totalGross += val;
-        paymentMethods[matchedMethod] += val;
       }
+      applyTransactionPaymentsToBuckets(tx, paymentMethods);
     });
     const totalNet = totalGross - totalRefunds;
 
@@ -6559,7 +6551,7 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
         tx.id,
         tx.date.split(', ')[1] || '',
         tx.table,
-        tx.paymentMethod,
+        summarizePayments(tx).summary,
         isRefund ? 'Devolución' : `${tx.itemsCount} art.`,
         isRefund ? `-${Math.abs(tx.total).toFixed(2)} €` : `${tx.total.toFixed(2)} €`
       ];
@@ -8266,21 +8258,18 @@ function setupEventListeners(container) {
         }
 
         const val = Number(tx.total || 0);
-        const method = (tx.paymentMethod || '').toLowerCase().trim();
-        const isCash = method.includes('efectivo');
+        const paymentTotals = getTransactionPaymentTotals(tx);
 
         if (tx.type === 'refund') {
           dailyAgg[day].refunds += Math.abs(val);
           dailyAgg[day].net += val;
-          if (isCash) dailyAgg[day].cash += val;
-          else dailyAgg[day].card += val;
         } else {
           dailyAgg[day].count += 1;
           dailyAgg[day].gross += val;
           dailyAgg[day].net += val;
-          if (isCash) dailyAgg[day].cash += val;
-          else dailyAgg[day].card += val;
         }
+        dailyAgg[day].cash += paymentTotals.Efectivo;
+        dailyAgg[day].card += paymentTotals.Tarjeta;
       });
 
       const sortedDays = Object.values(dailyAgg).sort((a, b) => a.day - b.day);
