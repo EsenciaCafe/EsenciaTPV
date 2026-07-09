@@ -90,6 +90,7 @@ let keypadAmount = '0'; // Accumulated cents as string
 let productSearchText = '';
 let isDrawerOpen = false;
 let dbStatus = 'loading'; // 'loading' | 'connected' | 'fallback' | 'error'
+let cashClosureEditLocked = false;
 let selectedReportsTab = 'horas'; // 'horas' | 'diaria' | 'semanal' | 'mensual' | 'anual'
 let geminiInvoiceRawText = '';
 let geminiInvoicePreview = null;
@@ -4051,6 +4052,23 @@ function restoreFocusState(snapshot) {
   }
 }
 
+function isCashClosureViewActive(state = store.state) {
+  return state.activeTab === 'ajustes' &&
+    Array.isArray(state.settingsPath) &&
+    state.settingsPath.length === 1 &&
+    state.settingsPath[0] === 'cierre';
+}
+
+function isExternalRenderMeta(meta = {}) {
+  return ['realtime', 'remote-refresh'].includes(meta.source);
+}
+
+function shouldDeferExternalRender(meta = {}) {
+  return cashClosureEditLocked &&
+    isExternalRenderMeta(meta) &&
+    isCashClosureViewActive(store.state);
+}
+
 // Master Shell Render Engine
 function render(state = store.state) {
   const appRoot = document.getElementById('app-root');
@@ -6939,6 +6957,7 @@ function setupEventListeners(container) {
           return;
         }
         isDrawerOpen = false; // Reset drawer on tab switch
+        cashClosureEditLocked = false;
         store.state.settingsPath = []; // Always go to root of that section
         store.setActiveTab(tab);
       }
@@ -7735,6 +7754,13 @@ function setupEventListeners(container) {
 
   const cashClosureForm = container.querySelector('#cash-closure-form');
   if (cashClosureForm) {
+    cashClosureForm.addEventListener('focusin', () => {
+      cashClosureEditLocked = true;
+    });
+    cashClosureForm.addEventListener('input', () => {
+      cashClosureEditLocked = true;
+    });
+
     const calcClosure = () => {
       const preview = container.querySelector('#closure-live-preview');
       if (!preview) return;
@@ -7769,6 +7795,7 @@ function setupEventListeners(container) {
 
     cashClosureForm.addEventListener('submit', async (e) => {
       e.preventDefault();
+      cashClosureEditLocked = false;
       const businessDate = container.querySelector('#cash-closure-date-input')?.value || new Date().toISOString().slice(0, 10);
       const saved = await store.saveCashClosure({
         businessDate,
@@ -8306,6 +8333,7 @@ function setupEventListeners(container) {
     backSettingsBtn.addEventListener('click', () => {
       // Clear article search when leaving the list
       store.state.articleSearchQuery = '';
+      cashClosureEditLocked = false;
       store.goBackSettings();
     });
   }
@@ -9294,6 +9322,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Bind store event reactive updates
   store.subscribe((state, meta = {}) => {
+    if (shouldDeferExternalRender(meta)) {
+      return;
+    }
     if (meta.renderScope === 'ticket' && renderTicketOnly()) {
       return;
     }
