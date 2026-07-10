@@ -469,6 +469,7 @@ export async function loadCashClosures(limit = 120) {
   }
 
   return (data || []).map(row => ({
+    ...(row.payload || {}),
     id: row.id,
     businessDate: row.business_date,
     shiftNumber: Number(row.shift_number || 1),
@@ -523,6 +524,37 @@ export async function upsertCashClosure(closure) {
     return null;
   }
   return id;
+}
+
+export async function loadSquareGiftCardEvents(limit = 1000) {
+  const { data, error } = await supabase
+    .from('square_gift_card_events')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    if (['42P01', 'PGRST205'].includes(error.code)) {
+      console.warn('[DB] Ejecuta sql/square_gift_cards_migration.sql para cargar eventos de tarjetas regalo Square.');
+      return [];
+    }
+    console.warn('[DB] Error loading Square gift card events:', error.message);
+    return [];
+  }
+
+  return (data || []).map(row => ({
+    id: row.id,
+    saleId: row.sale_id || '',
+    eventType: row.event_type || '',
+    giftCardId: row.gift_card_id || '',
+    giftCardGanLast4: row.gift_card_gan_last4 || '',
+    squareActivityId: row.square_activity_id || '',
+    referenceId: row.reference_id || '',
+    amount: parseFloat(row.amount || 0),
+    currency: row.currency || 'EUR',
+    rawPayload: row.raw_payload || {},
+    createdAt: row.created_at
+  }));
 }
 
 export async function loadStaffProfiles() {

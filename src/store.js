@@ -15,6 +15,7 @@ import {
   createFiscalDocumentForSale,
   loadCashClosures,
   upsertCashClosure,
+  loadSquareGiftCardEvents,
   loadStaffProfiles,
   findStaffByPin,
   upsertStaffProfile,
@@ -138,6 +139,7 @@ class Store {
       supplierInvoiceLines: [],
       supplierSenderRules: [],
       cashClosures: [],
+      squareGiftCardEvents: [],
       rolePermissions: JSON.parse(JSON.stringify(DEFAULT_ROLE_PERMISSIONS)),
 
       // ── REPORT NAVIGATION ─────────────────────────────────────
@@ -442,6 +444,26 @@ class Store {
     if (Array.isArray(closures)) this.state.cashClosures = closures;
   }
 
+  async loadSquareGiftCardEvents() {
+    this.state.squareGiftCardEvents = await loadSquareGiftCardEvents();
+  }
+
+  mapSquareGiftCardEventRow(row = {}) {
+    return {
+      id: row.id,
+      saleId: row.sale_id || '',
+      eventType: row.event_type || '',
+      giftCardId: row.gift_card_id || '',
+      giftCardGanLast4: row.gift_card_gan_last4 || '',
+      squareActivityId: row.square_activity_id || '',
+      referenceId: row.reference_id || '',
+      amount: parseFloat(row.amount || 0),
+      currency: row.currency || 'EUR',
+      rawPayload: row.raw_payload || {},
+      createdAt: row.created_at
+    };
+  }
+
   async loadAuthSession() {
     this.state.auth.isLoading = true;
     try {
@@ -652,6 +674,12 @@ class Store {
         console.warn('[Store] No se pudieron cargar los cierres de caja.', err);
       }
 
+      try {
+        await this.loadSquareGiftCardEvents();
+      } catch (err) {
+        console.warn('[Store] No se pudieron cargar los eventos de tarjetas regalo Square.', err);
+      }
+
       // Suscribirse a cambios en tiempo real
       this.subscribeToRealtime();
       
@@ -793,6 +821,20 @@ class Store {
             this.persistRemoteSnapshotLocally();
             this.emitChange({ source: 'realtime' });
           }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'square_gift_card_events'
+        },
+        (payload) => {
+          const event = this.mapSquareGiftCardEventRow(payload.new || {});
+          if (!event.id || this.state.squareGiftCardEvents.some(item => item.id === event.id)) return;
+          this.state.squareGiftCardEvents = [event, ...this.state.squareGiftCardEvents].slice(0, 1000);
+          this.emitChange({ source: 'square-gift-card-event' });
         }
       )
       .subscribe((status) => {
@@ -955,15 +997,15 @@ class Store {
   }
 
   getTransactionDateKey(tx) {
-    const toLocalDateKey = (date) => {
-      const d = new Date(date);
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
-      return `${yyyy}-${mm}-${dd}`;
-    };
+    return this.toLocalDateKey(this.getTransactionDate(tx));
+  }
 
-    return toLocalDateKey(this.getTransactionDate(tx));
+  toLocalDateKey(date) {
+    const d = new Date(date);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
   }
 
   getTransactionDate(tx) {
@@ -1087,6 +1129,22 @@ class Store {
     }];
   }
 
+  getSquareGiftCardOnlineSalesSummary(date = new Date().toISOString().slice(0, 10), options = {}) {
+    const sinceTime = Number(options.sinceTime || 0);
+    const events = (this.state.squareGiftCardEvents || []).filter(event => {
+      const eventTime = event.createdAt ? new Date(event.createdAt).getTime() : 0;
+      return event.eventType === 'activate' &&
+        this.toLocalDateKey(new Date(event.createdAt || Date.now())) === date &&
+        eventTime > sinceTime;
+    });
+
+    const total = events.reduce((sum, event) => sum + Number(event.amount || 0), 0);
+    return {
+      count: events.length,
+      total: Number(total.toFixed(2))
+    };
+  }
+
   getCashClosureSummary(date = new Date().toISOString().slice(0, 10), options = {}) {
     const sinceTime = Number(options.sinceTime || 0);
     const dayTx = this.state.transactions.filter(tx =>
@@ -1127,6 +1185,10 @@ class Store {
       expectedCard: 0,
       otherPayments: 0
     });
+
+    const squareGiftCardOnlineSales = this.getSquareGiftCardOnlineSalesSummary(date, { sinceTime });
+    summary.squareGiftCardOnlineSales = squareGiftCardOnlineSales.total;
+    summary.squareGiftCardOnlineSalesCount = squareGiftCardOnlineSales.count;
 
     Object.keys(summary).forEach(key => {
       if (typeof summary[key] === 'number') summary[key] = Number(summary[key].toFixed(2));

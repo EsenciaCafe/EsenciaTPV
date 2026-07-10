@@ -18,6 +18,13 @@ create index if not exists square_gift_card_events_sale_id_idx
 create index if not exists square_gift_card_events_reference_id_idx
   on public.square_gift_card_events (reference_id);
 
+create index if not exists square_gift_card_events_created_at_idx
+  on public.square_gift_card_events (created_at desc);
+
+create unique index if not exists square_gift_card_events_square_activity_id_uidx
+  on public.square_gift_card_events (square_activity_id)
+  where square_activity_id is not null;
+
 alter table public.square_gift_card_events enable row level security;
 
 drop policy if exists "Allow TPV read gift card events" on public.square_gift_card_events;

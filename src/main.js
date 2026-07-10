@@ -1987,6 +1987,7 @@ function renderAjustesView(state) {
               <div><span>Ventas netas</span><strong>${summary.netTotal.toFixed(2)}€</strong></div>
               <div><span>Efectivo app</span><strong>${summary.expectedCash.toFixed(2)}€</strong></div>
               <div><span>Tarjeta app</span><strong>${summary.expectedCard.toFixed(2)}€</strong></div>
+              <div><span>Regalo online Square</span><strong>${summary.squareGiftCardOnlineSales.toFixed(2)}€</strong></div>
               <div><span>Devoluciones</span><strong>${summary.totalRefunds.toFixed(2)}€</strong></div>
               <div><span>Tickets</span><strong>${summary.transactionsCount}</strong></div>
             </div>
@@ -2009,7 +2010,7 @@ function renderAjustesView(state) {
               <div class="${Math.abs(cashDifference) > 0.009 ? 'needs-review' : ''}"><span>Diferencia efectivo</span><strong>${cashDifference.toFixed(2)}€</strong></div>
               <div class="${Math.abs(cardDifference) > 0.009 ? 'needs-review' : ''}"><span>Diferencia BBVA</span><strong>${cardDifference.toFixed(2)}€</strong></div>
             </div>
-            <div id="closure-live-preview" class="gemini-muted" data-expected-cash="${summary.expectedCash}" data-expected-card="${summary.expectedCard}" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
+            <div id="closure-live-preview" class="gemini-muted" data-expected-cash="${summary.expectedCash}" data-expected-card="${summary.expectedCard}" data-square-online="${summary.squareGiftCardOnlineSales}" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
               Introduce el efectivo contado y pulsa Calcular descuadre antes de cerrar el turno.
             </div>
             <button type="button" class="btn btn-secondary" id="closure-calc-btn" style="height:44px;">
@@ -6184,6 +6185,7 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
     acc.expectedCard += Number(closure.expectedCard || 0);
     acc.bbvaTotal += Number(closure.bbvaTotal || 0);
     acc.cardDifference += Number(closure.cardDifference || 0);
+    acc.squareGiftCardOnlineSales += Number(closure.squareGiftCardOnlineSales || closure.payload?.squareGiftCardOnlineSales || 0);
     acc.transactionsCount += Number(closure.transactionsCount || 0);
     return acc;
   }, {
@@ -6195,6 +6197,7 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
     expectedCard: 0,
     bbvaTotal: 0,
     cardDifference: 0,
+    squareGiftCardOnlineSales: 0,
     transactionsCount: 0
   });
 
@@ -6213,6 +6216,7 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
       <td>${moneyCell(closure.expectedCard)}</td>
       <td>${moneyCell(closure.bbvaTotal)}</td>
       <td>${moneyCell(closure.cardDifference)}</td>
+      <td>${moneyCell(closure.squareGiftCardOnlineSales || closure.payload?.squareGiftCardOnlineSales || 0)}</td>
       <td>${escapeHtml(closure.staffName || closure.staff?.name || '')}</td>
       <td>${closure.closedAt ? escapeHtml(new Date(closure.closedAt).toLocaleString('es-ES')) : ''}</td>
       <td>${escapeHtml(closure.notes || '')}</td>
@@ -6249,6 +6253,7 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
         <th>Tarjeta app</th>
         <th>Total BBVA</th>
         <th>Diferencia BBVA</th>
+        <th>Regalo online Square</th>
         <th>Usuario</th>
         <th>Guardado</th>
         <th>Notas</th>
@@ -6269,6 +6274,7 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
         <td>${moneyCell(totals.expectedCard)}</td>
         <td>${moneyCell(totals.bbvaTotal)}</td>
         <td>${moneyCell(totals.cardDifference)}</td>
+        <td>${moneyCell(totals.squareGiftCardOnlineSales)}</td>
         <td></td>
         <td></td>
         <td></td>
@@ -7794,6 +7800,7 @@ function setupEventListeners(container) {
       if (!preview) return;
       const expectedCash = parseFloat(preview.dataset.expectedCash || '0');
       const expectedCard = parseFloat(preview.dataset.expectedCard || '0');
+      const squareOnline = parseFloat(preview.dataset.squareOnline || '0');
       const openingCash = parseFloat(container.querySelector('#closure-opening-cash')?.value || '0');
       const countedCash = parseFloat(container.querySelector('#closure-counted-cash')?.value || '0');
       const bbvaTotal = parseFloat(container.querySelector('#closure-bbva-total')?.value || '0');
@@ -7807,6 +7814,7 @@ function setupEventListeners(container) {
           <span>Cajón esperado: <strong>${expectedDrawer.toFixed(2)}€</strong> = fondo ${openingCash.toFixed(2)}€ + efectivo app ${expectedCash.toFixed(2)}€</span>
           <span>Diferencia efectivo: <strong style="color:${cashColor};">${cashDifference.toFixed(2)}€</strong></span>
           <span>Diferencia BBVA: <strong style="color:${cardColor};">${cardDifference.toFixed(2)}€</strong></span>
+          ${squareOnline > 0 ? `<span>Square online tarjetas regalo: <strong>${squareOnline.toFixed(2)}€</strong> aparte del cajon y del BBVA.</span>` : ''}
         </div>
       `;
     };
