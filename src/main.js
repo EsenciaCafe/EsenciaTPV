@@ -2619,7 +2619,7 @@ function renderAjustesView(state) {
           </button>
         </div>
         
-        <div style="flex-grow:1; overflow-y:auto; padding-bottom:32px;">
+        <div class="reports-scroll-area" style="flex-grow:1; overflow-y:auto; padding-bottom:32px;">
           <!-- Date Selector -->
           <div class="report-selector-card" style="margin: 0 16px 16px 16px; padding: 16px; background: var(--bg-item); border: 1px solid var(--border-color); border-radius: var(--border-radius); display: flex; flex-direction: column; gap: 12px; align-items: center;">
             <div style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted);">Seleccionar Fecha</div>
@@ -2795,7 +2795,7 @@ function renderAjustesView(state) {
           </button>
         </div>
         
-        <div style="flex-grow:1; overflow-y:auto; padding-bottom:32px;">
+        <div class="reports-scroll-area" style="flex-grow:1; overflow-y:auto; padding-bottom:32px;">
           <!-- Month Selector -->
           <div class="report-selector-card" style="margin: 0 16px 16px 16px; padding: 16px; background: var(--bg-item); border: 1px solid var(--border-color); border-radius: var(--border-radius); display: flex; flex-direction: column; gap: 12px; align-items: center;">
             <div style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted);">Seleccionar Mes</div>
@@ -3959,6 +3959,7 @@ const SCROLL_PRESERVE_SELECTORS = [
   '.tx-history-list',
   '.settings-tree-list',
   '.settings-editor-container',
+  '.reports-scroll-area',
   '.loyalty-admin-panel',
   '.gemini-import-panel',
   '.pos-split-grid > div',
@@ -3977,9 +3978,11 @@ function getScrollViewKey(state = store.state) {
 
 function captureScrollState(state = store.state) {
   const positions = [];
+  const seen = new Set();
 
   SCROLL_PRESERVE_SELECTORS.forEach(selector => {
     document.querySelectorAll(selector).forEach((el, index) => {
+      seen.add(el);
       if (el.scrollTop > 0 || el.scrollLeft > 0) {
         positions.push({
           selector,
@@ -3988,6 +3991,27 @@ function captureScrollState(state = store.state) {
           left: el.scrollLeft
         });
       }
+    });
+  });
+
+  document.querySelectorAll('*').forEach(el => {
+    if (seen.has(el)) return;
+    const canScroll = el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1;
+    if (!canScroll || (el.scrollTop <= 0 && el.scrollLeft <= 0)) return;
+
+    const selector = el.id
+      ? `#${CSS.escape(el.id)}`
+      : el.className && typeof el.className === 'string'
+        ? `.${el.className.trim().split(/\s+/).map(part => CSS.escape(part)).join('.')}`
+        : null;
+    if (!selector) return;
+
+    const matches = Array.from(document.querySelectorAll(selector));
+    positions.push({
+      selector,
+      index: Math.max(0, matches.indexOf(el)),
+      top: el.scrollTop,
+      left: el.scrollLeft
     });
   });
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tpv-cache-v56';
+const CACHE_NAME = 'tpv-cache-v57';
 const BASE_URL = new URL('./', self.location.href);
 const ASSETS = [
   './',
