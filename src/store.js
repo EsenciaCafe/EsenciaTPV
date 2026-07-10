@@ -2153,8 +2153,8 @@ class Store {
       this.state.directSaleTicket = { items: [] };
     }
 
-    // Set selected table
-    this.state.selectedTableId = tableId;
+    // Return to direct sale after assigning; tables should not remain armed for the next order.
+    this.state.selectedTableId = null;
     this.state.activeTab = 'inicio';
     this.state.gridPath = ['root'];
     if (shouldNotify) this.notify({ flushRemote: true });

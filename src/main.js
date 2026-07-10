@@ -6975,6 +6975,9 @@ function setupEventListeners(container) {
         isDrawerOpen = false; // Reset drawer on tab switch
         cashClosureEditLocked = false;
         store.state.settingsPath = []; // Always go to root of that section
+        if (tab === 'inicio') {
+          store.state.selectedTableId = null;
+        }
         store.setActiveTab(tab);
       }
     });
@@ -6989,11 +6992,20 @@ function setupEventListeners(container) {
         const currentTableId = store.state.selectedTableId;
         const activeItems = store.getActiveItems();
         const hasActiveItems = activeItems.length > 0;
+        const table = store.state.tables.find(t => t.id === tableId);
+        const isOccupied = table && table.items.length > 0;
+
+        if (!isOccupied) {
+          store.selectTable(null);
+          return;
+        }
+
+        if (currentTableId === null && hasActiveItems) {
+          showToast('La venta directa sigue activa. Usa Guardar Comanda para asignarla a una mesa.', 'warning');
+          return;
+        }
         
         if (hasActiveItems && tableId !== currentTableId) {
-          const table = store.state.tables.find(t => t.id === tableId);
-          const isOccupied = table && table.items.length > 0;
-          
           if (isOccupied) {
             showConfirm(
               'Combinar Mesa y Comanda',
