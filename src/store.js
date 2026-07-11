@@ -33,6 +33,7 @@ import { supabase } from './supabase.js';
 
 const DINING_STATE_STORAGE_KEY = 'tpv-dining-state-v1';
 const STAFF_SESSION_STORAGE_KEY = 'tpv-staff-session-v1';
+const SYNC_CLIENT_STORAGE_KEY = 'tpv-sync-client-id-v1';
 const DEFAULT_ROLE_PERMISSIONS = {
   admin: {
     accessSettings: true,
@@ -158,12 +159,16 @@ class Store {
     this.restoreDiningState();
     this.salesPersistenceReady = false;
     this.cashClosurePersistenceReady = false;
+    this.syncClientId = this.getSyncClientId();
+    this.tableSyncFingerprints = new Map();
+    this.refreshTableSyncFingerprints();
     this.lastLocalPersistSnapshot = '';
     this.lastRemotePersistSnapshot = '';
     this.pendingRemotePersist = null;
     this.remotePersistTimer = null;
     this.resumeSyncTimer = null;
     this.realtimeReconnectTimer = null;
+    this.salesRefreshTimer = null;
     this.listeners = [];
     this.setupResumeSync();
   }
@@ -228,6 +233,48 @@ class Store {
     }
   }
 
+  getSyncClientId() {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return `client-${Math.random().toString(36).slice(2)}`;
+    }
+
+    let clientId = window.localStorage.getItem(SYNC_CLIENT_STORAGE_KEY);
+    if (!clientId) {
+      clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      window.localStorage.setItem(SYNC_CLIENT_STORAGE_KEY, clientId);
+    }
+    return clientId;
+  }
+
+  getTableSyncFingerprint(table = {}) {
+    const { syncUpdatedAt, syncClientId, ...stableTable } = table;
+    return JSON.stringify(stableTable);
+  }
+
+  ensureTableSyncMetadata(tables = this.state.tables) {
+    const now = new Date().toISOString();
+    return tables.map(table => {
+      const fingerprint = this.getTableSyncFingerprint(table);
+      const previousFingerprint = this.tableSyncFingerprints.get(table.id);
+      const changedLocally = previousFingerprint !== undefined && previousFingerprint !== fingerprint;
+      const nextTable = (changedLocally || !table.syncUpdatedAt)
+        ? {
+            ...table,
+            syncUpdatedAt: changedLocally ? now : (table.syncUpdatedAt || now),
+            syncClientId: changedLocally ? this.syncClientId : (table.syncClientId || this.syncClientId)
+          }
+        : table;
+      this.tableSyncFingerprints.set(table.id, this.getTableSyncFingerprint(nextTable));
+      return nextTable;
+    });
+  }
+
+  refreshTableSyncFingerprints(tables = this.state.tables) {
+    this.tableSyncFingerprints = new Map(
+      tables.map(table => [table.id, this.getTableSyncFingerprint(table)])
+    );
+  }
+
   getPersistPayload() {
     return {
       tables: this.state.tables,
@@ -240,11 +287,12 @@ class Store {
   }
 
   getRemotePersistPayload() {
+    this.state.tables = this.ensureTableSyncMetadata(this.state.tables);
     return {
       tables: this.state.tables,
       kdsState: null,
       directSaleTicket: { items: [] },
-      transactions: this.state.transactions,
+      transactions: [],
       legal: this.state.legal,
       rolePermissions: this.state.rolePermissions
     };
@@ -269,6 +317,7 @@ class Store {
   }
 
   persistDiningState({ remote = true } = {}) {
+    this.state.tables = this.ensureTableSyncMetadata(this.state.tables);
     const localPayload = this.getPersistPayload();
     const localSnapshot = JSON.stringify(localPayload);
 
@@ -442,6 +491,30 @@ class Store {
     const closures = await loadCashClosures();
     this.cashClosurePersistenceReady = Array.isArray(closures);
     if (Array.isArray(closures)) this.state.cashClosures = closures;
+  }
+
+  scheduleSalesRefresh(delay = 250) {
+    if (this.salesRefreshTimer) clearTimeout(this.salesRefreshTimer);
+    this.salesRefreshTimer = setTimeout(async () => {
+      this.salesRefreshTimer = null;
+      await this.refreshSalesFromSupabase();
+    }, delay);
+  }
+
+  async refreshSalesFromSupabase() {
+    if (!this.salesPersistenceReady) return false;
+    try {
+      const normalizedSales = await loadSales();
+      if (!Array.isArray(normalizedSales)) return false;
+      if (JSON.stringify(this.state.transactions) === JSON.stringify(normalizedSales)) return false;
+      this.state.transactions = normalizedSales;
+      this.persistDiningState({ remote: false });
+      this.emitChange({ source: 'sales-realtime' });
+      return true;
+    } catch (err) {
+      console.warn('[Store] No se pudieron refrescar las ventas normalizadas.', err);
+      return false;
+    }
   }
 
   async loadSquareGiftCardEvents() {
@@ -626,6 +699,7 @@ class Store {
               ...table,
               items: this.sortTicketItemsForService(table.items || [])
             }));
+            this.refreshTableSyncFingerprints();
           }
           // Restore direct sale ticket (but keep legal_data separate)
           if (tpvState.direct_sale) {
@@ -698,12 +772,30 @@ class Store {
 
     let changed = false;
 
-    if (Array.isArray(newState.tables) && JSON.stringify(this.state.tables) !== JSON.stringify(newState.tables)) {
-      this.state.tables = newState.tables.map(table => ({
-        ...table,
-        items: this.sortTicketItemsForService(table.items || [])
-      }));
-      changed = true;
+    if (Array.isArray(newState.tables) && newState.tables.length > 0) {
+      const remoteTables = new Map(newState.tables.map(table => [Number(table.id), table]));
+      const mergedTables = this.state.tables.map(localTable => {
+        const remoteTable = remoteTables.get(Number(localTable.id));
+        if (!remoteTable) return localTable;
+
+        const localTime = new Date(localTable.syncUpdatedAt || 0).getTime();
+        const remoteTime = new Date(remoteTable.syncUpdatedAt || 0).getTime();
+        const shouldAcceptRemote = remoteTime > localTime ||
+          (!localTable.syncUpdatedAt && JSON.stringify(localTable) !== JSON.stringify(remoteTable));
+
+        return shouldAcceptRemote
+          ? {
+              ...remoteTable,
+              items: this.sortTicketItemsForService(remoteTable.items || [])
+            }
+          : localTable;
+      });
+
+      if (JSON.stringify(this.state.tables) !== JSON.stringify(mergedTables)) {
+        this.state.tables = mergedTables;
+        this.refreshTableSyncFingerprints();
+        changed = true;
+      }
     }
 
     if (newState.direct_sale) {
@@ -728,10 +820,8 @@ class Store {
       }
     }
 
-    if (Array.isArray(newState.transactions) && JSON.stringify(this.state.transactions) !== JSON.stringify(newState.transactions)) {
-      this.state.transactions = newState.transactions;
-      changed = true;
-    }
+    // Do not merge transactions from tpv_state. Sales are persisted in the normalized
+    // sales tables; the legacy snapshot can be stale and can resurrect or hide tickets.
 
     if (newState.legal_data && JSON.stringify(this.state.legal) !== JSON.stringify(newState.legal_data)) {
       this.state.legal = newState.legal_data;
@@ -835,6 +925,17 @@ class Store {
           if (!event.id || this.state.squareGiftCardEvents.some(item => item.id === event.id)) return;
           this.state.squareGiftCardEvents = [event, ...this.state.squareGiftCardEvents].slice(0, 1000);
           this.emitChange({ source: 'square-gift-card-event' });
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'sales'
+        },
+        () => {
+          this.scheduleSalesRefresh();
         }
       )
       .subscribe((status) => {

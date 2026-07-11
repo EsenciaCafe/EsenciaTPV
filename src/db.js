@@ -790,16 +790,27 @@ export async function loadTPVState() {
 
 export async function saveTPVState(tables, directSale, transactions, legal, rolePermissions = null, kdsState = null) {
   let preservedKdsState = {};
+  const { data: currentState } = await supabase
+    .from('tpv_state')
+    .select('tables, direct_sale')
+    .eq('id', 'global')
+    .maybeSingle();
+
   if (!kdsState && !directSale?.kds_state) {
-    const { data: currentState } = await supabase
-      .from('tpv_state')
-      .select('direct_sale')
-      .eq('id', 'global')
-      .single();
     preservedKdsState = currentState?.direct_sale?.kds_state && typeof currentState.direct_sale.kds_state === 'object'
       ? currentState.direct_sale.kds_state
       : {};
   }
+
+  const currentTablesById = new Map((currentState?.tables || []).map(table => [Number(table.id), table]));
+  const mergedTables = (tables || []).map(localTable => {
+    const currentTable = currentTablesById.get(Number(localTable.id));
+    if (!currentTable) return localTable;
+
+    const localTime = new Date(localTable.syncUpdatedAt || 0).getTime();
+    const currentTime = new Date(currentTable.syncUpdatedAt || 0).getTime();
+    return currentTime > localTime ? currentTable : localTable;
+  });
 
   const directSaleWithFallback = {
     ...directSale,
@@ -812,7 +823,7 @@ export async function saveTPVState(tables, directSale, transactions, legal, role
     .from('tpv_state')
     .upsert({
       id: 'global',
-      tables,
+      tables: mergedTables,
       direct_sale: directSaleWithFallback,
       transactions,
       legal_data: legal,
@@ -827,7 +838,7 @@ export async function saveTPVState(tables, directSale, transactions, legal, role
         .from('tpv_state')
         .upsert({
           id: 'global',
-          tables,
+          tables: mergedTables,
           direct_sale: directSaleWithFallback,
           transactions,
           updated_at: new Date().toISOString()

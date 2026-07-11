@@ -4091,7 +4091,7 @@ function isCashClosureViewActive(state = store.state) {
 }
 
 function isExternalRenderMeta(meta = {}) {
-  return ['realtime', 'remote-refresh', 'square-gift-card-event'].includes(meta.source);
+  return ['realtime', 'remote-refresh', 'square-gift-card-event', 'sales-realtime'].includes(meta.source);
 }
 
 function shouldDeferExternalRender(meta = {}) {
