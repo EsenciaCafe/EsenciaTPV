@@ -733,7 +733,7 @@ class Store {
       try {
         const normalizedSales = await loadSales();
         this.salesPersistenceReady = Array.isArray(normalizedSales);
-        if (normalizedSales?.length > 0) {
+        if (Array.isArray(normalizedSales)) {
           this.state.transactions = normalizedSales;
         }
       } catch (err) {

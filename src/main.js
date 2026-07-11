@@ -2493,6 +2493,45 @@ function renderAjustesView(state) {
 
     const totalNet = totalGross - totalRefunds;
 
+    // El informe es el libro vivo de ventas; los cierres son fotografias inmutables
+    // que deben conciliar con la parte ya cerrada de ese libro.
+    const dayClosures = state.cashClosures
+      .filter(closure => closure.businessDate === selectedDate)
+      .sort((a, b) => new Date(a.closedAt || 0) - new Date(b.closedAt || 0));
+    const latestDayClosure = dayClosures[dayClosures.length - 1] || null;
+    const latestClosureTime = latestDayClosure ? new Date(latestDayClosure.closedAt || 0).getTime() : 0;
+    const closedDayTx = latestDayClosure
+      ? dayTx.filter(tx => getTxDate(tx).getTime() <= latestClosureTime)
+      : [];
+    const closedReportNet = closedDayTx.reduce((sum, tx) => sum + Number(tx.total || 0), 0);
+    const closedReportTickets = closedDayTx.filter(tx => tx.type !== 'refund').length;
+    const closuresNet = dayClosures.reduce((sum, closure) => (
+      sum + Number(closure.totalSales || 0) - Number(closure.totalRefunds || 0)
+    ), 0);
+    const closuresTickets = dayClosures.reduce((sum, closure) => (
+      sum + Number(closure.transactionsCount || 0)
+    ), 0);
+    const reconciliationDifference = Number((closedReportNet - closuresNet).toFixed(2));
+    const reconciliationMatches = dayClosures.length > 0 &&
+      Math.abs(reconciliationDifference) < 0.01 &&
+      closedReportTickets === closuresTickets;
+    const openShiftTx = latestDayClosure
+      ? dayTx.filter(tx => getTxDate(tx).getTime() > latestClosureTime)
+      : dayTx;
+    const reconciliationHtml = dayClosures.length === 0
+      ? `<div class="gemini-muted" style="margin:0 16px 16px; padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
+          Dia abierto: el informe muestra ${dayTx.filter(tx => tx.type !== 'refund').length} tickets por ${totalNet.toFixed(2)}&euro;. Todavia no existe un cierre con el que conciliar.
+        </div>`
+      : reconciliationMatches
+        ? `<div class="gemini-muted" style="margin:0 16px 16px; padding:12px; border:1px solid var(--secondary); border-radius:var(--border-radius-md); background:var(--bg-item);">
+            <strong style="color:var(--secondary);">Cierre conciliado</strong><br>
+            Los cierres coinciden con ${closuresTickets} tickets y ${closuresNet.toFixed(2)}&euro; del informe.${openShiftTx.length ? ` Hay ${openShiftTx.filter(tx => tx.type !== 'refund').length} tickets posteriores en el turno abierto.` : ''}
+          </div>`
+        : `<div class="gemini-muted needs-review" style="margin:0 16px 16px; padding:12px; border:1px solid var(--danger); border-radius:var(--border-radius-md); background:var(--bg-item);">
+            <strong>Diferencia entre informe y cierre</strong><br>
+            Informe cerrado: ${closedReportTickets} tickets / ${closedReportNet.toFixed(2)}&euro;. Cierres: ${closuresTickets} tickets / ${closuresNet.toFixed(2)}&euro;. Diferencia: ${reconciliationDifference.toFixed(2)}&euro;.
+          </div>`;
+
     // Time-based groupings for the hourly chart (only for selected day)
     const hourlySales = Array(24).fill(0);
     dayTx.forEach(tx => {
@@ -2633,6 +2672,8 @@ function renderAjustesView(state) {
               ${formattedDateHeader.charAt(0).toUpperCase() + formattedDateHeader.slice(1)}
             </div>
           </div>
+
+          ${reconciliationHtml}
 
           <!-- 1. KPIs Section -->
           <div class="reports-kpis-grid" style="margin-bottom: 16px;">

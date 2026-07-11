@@ -316,7 +316,8 @@ export async function loadSales(limit = 1000) {
     return null;
   }
 
-  const saleIds = (sales || []).map(row => row.id);
+  const activeSales = (sales || []).filter(row => row.payload?.voided !== true);
+  const saleIds = activeSales.map(row => row.id);
   if (saleIds.length === 0) return [];
 
   const [
@@ -352,7 +353,7 @@ export async function loadSales(limit = 1000) {
     fiscalBySale.set(document.sale_id, mapFiscalDocument(document));
   });
 
-  return (sales || []).map(row => mapSaleRow(
+  return activeSales.map(row => mapSaleRow(
     row,
     linesBySale.get(row.id) || [],
     paymentsBySale.get(row.id) || [],
