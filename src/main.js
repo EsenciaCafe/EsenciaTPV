@@ -1216,10 +1216,15 @@ function showTransactionDetailModal(transactionId) {
             </div>
           ` : ''}
           ${item.note ? `<div class="tx-detail-note">Nota: ${escapeHtml(item.note)}</div>` : ''}
+          ${Number(item.discountAmount || 0) > 0 ? `
+            <div class="tx-detail-note" style="color:var(--secondary);">
+              ${escapeHtml(item.discountReason || 'Descuento')}: -${Number(item.discountAmount || 0).toFixed(2)}€ (${Number(item.discountPercent || 0)}%)
+            </div>
+          ` : ''}
         </div>
         <span class="tx-detail-qty">x${item.qty}</span>
       </div>
-      <strong>${Number(item.total || 0).toFixed(2)}€</strong>
+      <strong>${Number(item.discountAmount || 0) > 0 ? `<span style="text-decoration:line-through; color:var(--text-muted); margin-right:6px;">${Number(item.grossTotal || 0).toFixed(2)}€</span>` : ''}${Number(item.total || 0).toFixed(2)}€</strong>
     </div>
   `).join('') : `
     <div class="tx-detail-empty">
@@ -1303,6 +1308,16 @@ function showTransactionDetailModal(transactionId) {
         ` : ''}
         
         <div class="tx-detail-tax-breakdown" style="padding: 12px 0; border-bottom: 1px dashed var(--border-color); display: grid; gap: 6px; font-size: 0.85rem; color: var(--text-muted);">
+          ${Number(tx.discountTotal || 0) > 0 ? `
+            <div style="display:flex; justify-content:space-between;">
+              <span>Subtotal antes de descuentos</span>
+              <strong>${Number(tx.grossTotal || total).toFixed(2)}€</strong>
+            </div>
+            <div style="display:flex; justify-content:space-between; color:var(--secondary);">
+              <span>Descuentos / invitaciones</span>
+              <strong>-${Number(tx.discountTotal || 0).toFixed(2)}€</strong>
+            </div>
+          ` : ''}
           <div style="display:flex; justify-content:space-between;">
             <span>Base Imponible (${taxRate}%)</span>
             <strong>${baseImponible.toFixed(2)}€</strong>
@@ -2473,7 +2488,7 @@ function renderAjustesView(state) {
     // Calculate daily figures
     let totalGross = 0;
     let totalRefunds = 0;
-    let totalDiscounts = 0; // future placeholder
+    let totalDiscounts = 0;
     const paymentMethods = {
       'Efectivo': 0,
       'Tarjeta': 0,
@@ -2486,12 +2501,14 @@ function renderAjustesView(state) {
       if (tx.type === 'refund') {
         totalRefunds += Math.abs(val);
       } else {
-        totalGross += val;
+        const discount = Number(tx.discountTotal || 0);
+        totalDiscounts += discount;
+        totalGross += Number(tx.grossTotal ?? (val + discount));
       }
       applyTransactionPaymentsToBuckets(tx, paymentMethods);
     });
 
-    const totalNet = totalGross - totalRefunds;
+    const totalNet = totalGross - totalDiscounts - totalRefunds;
 
     // El informe es el libro vivo de ventas; los cierres son fotografias inmutables
     // que deben conciliar con la parte ya cerrada de ese libro.
@@ -2765,6 +2782,7 @@ function renderAjustesView(state) {
     // Calculate monthly figures
     let totalGross = 0;
     let totalRefunds = 0;
+    let totalDiscounts = 0;
     let cashSales = 0;
     let cardSales = 0;
     const txCount = monthTx.filter(t => t.type !== 'refund').length;
@@ -2781,6 +2799,7 @@ function renderAjustesView(state) {
           dateStr,
           count: 0,
           gross: 0,
+          discounts: 0,
           refunds: 0,
           net: 0,
           cash: 0,
@@ -2796,9 +2815,12 @@ function renderAjustesView(state) {
         dailyAgg[day].refunds += Math.abs(val);
         dailyAgg[day].net += val; // negative
       } else {
-        totalGross += val;
+        const discount = Number(tx.discountTotal || 0);
+        totalDiscounts += discount;
+        totalGross += Number(tx.grossTotal ?? (val + discount));
         dailyAgg[day].count += 1;
-        dailyAgg[day].gross += val;
+        dailyAgg[day].gross += Number(tx.grossTotal ?? (val + discount));
+        dailyAgg[day].discounts += discount;
         dailyAgg[day].net += val; // positive
       }
       cashSales += paymentTotals.Efectivo;
@@ -2807,7 +2829,7 @@ function renderAjustesView(state) {
       dailyAgg[day].card += paymentTotals.Tarjeta;
     });
 
-    const totalNet = totalGross - totalRefunds;
+    const totalNet = totalGross - totalDiscounts - totalRefunds;
     const sortedDays = Object.values(dailyAgg).sort((a, b) => a.day - b.day);
 
     // Month name display
@@ -2825,6 +2847,7 @@ function renderAjustesView(state) {
         <td style="text-align: right; color: #f59e0b;">${day.cash.toFixed(2)}€</td>
         <td style="text-align: right; color: #3b82f6;">${day.card.toFixed(2)}€</td>
         <td style="text-align: right; color: var(--danger); font-size: 0.85rem;">${day.refunds > 0 ? `-${day.refunds.toFixed(2)}€` : '0.00€'}</td>
+        <td style="text-align: right; color: var(--secondary); font-size: 0.85rem;">${day.discounts > 0 ? `-${day.discounts.toFixed(2)}€` : '0.00€'}</td>
         <td style="text-align: right; font-weight: 700; color: ${day.net >= 0 ? 'var(--secondary)' : 'var(--danger)'};">${day.net.toFixed(2)}€</td>
       </tr>
     `).join('');
@@ -2866,6 +2889,10 @@ function renderAjustesView(state) {
               <span class="reports-kpi-label">Tarjeta (Neto)</span>
               <span class="reports-kpi-val" style="color:#3b82f6;">${cardSales.toFixed(2)}€</span>
             </div>
+            <div class="reports-kpi-card">
+              <span class="reports-kpi-label">Descuentos / Invitaciones</span>
+              <span class="reports-kpi-val" style="color:var(--secondary);">${totalDiscounts.toFixed(2)}€</span>
+            </div>
           </div>
 
           <!-- Export Action -->
@@ -2890,11 +2917,12 @@ function renderAjustesView(state) {
                     <th style="padding: 10px 8px; text-align: right;">Efectivo</th>
                     <th style="padding: 10px 8px; text-align: right;">Tarjeta</th>
                     <th style="padding: 10px 8px; text-align: right;">Devoluciones</th>
+                    <th style="padding: 10px 8px; text-align: right;">Descuentos</th>
                     <th style="padding: 10px 8px; text-align: right;">Total Neto</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${tableRowsHTML ? tableRowsHTML : `<tr><td colspan="6" style="text-align: center; padding: 20px; color: var(--text-muted);">No hay ventas este mes</td></tr>`}
+                  ${tableRowsHTML ? tableRowsHTML : `<tr><td colspan="7" style="text-align: center; padding: 20px; color: var(--text-muted);">No hay ventas este mes</td></tr>`}
                 </tbody>
                 ${sortedDays.length > 0 ? `
                   <tfoot>
@@ -2904,6 +2932,7 @@ function renderAjustesView(state) {
                       <td style="padding: 10px 8px; text-align: right; color: #f59e0b;">${cashSales.toFixed(2)}€</td>
                       <td style="padding: 10px 8px; text-align: right; color: #3b82f6;">${cardSales.toFixed(2)}€</td>
                       <td style="padding: 10px 8px; text-align: right; color: var(--danger); font-size: 0.85rem;">-${totalRefunds.toFixed(2)}€</td>
+                      <td style="padding: 10px 8px; text-align: right; color: var(--secondary); font-size: 0.85rem;">-${totalDiscounts.toFixed(2)}€</td>
                       <td style="padding: 10px 8px; text-align: right; color: var(--secondary); font-size: 1.05rem;">${totalNet.toFixed(2)}€</td>
                     </tr>
                   </tfoot>
@@ -3586,15 +3615,30 @@ function renderQuickPayBar() {
   
   const count = activeItems.reduce((s, i) => s + i.qty, 0);
   const total = store.getActiveTicketTotal();
+  const isFullyInvited = total <= 0 && store.getActiveTicketDiscountTotal() > 0;
   const label = count === 1 ? '1 artículo' : `${count} artículos`;
 
   return `
     <div class="quick-pay-bar-container">
       <button class="btn-quick-pay" id="quick-pay-trigger">
-        Pagar ${label} • ${total.toFixed(2)}€
+        ${isFullyInvited ? 'Cerrar invitación' : `Pagar ${label} • ${total.toFixed(2)}€`}
       </button>
     </div>
   `;
+}
+
+function renderTicketItemDiscount(item) {
+  const percent = Number(item.discountPercent || 0);
+  if (percent <= 0) return '';
+  const label = percent >= 100 ? 'Invitación' : `${percent}% descuento`;
+  return `<span class="ticket-item-discount-badge">${escapeHtml(label)}</span>`;
+}
+
+function renderTicketItemTotal(item) {
+  const gross = store.getItemGrossTotal(item);
+  const total = store.getItemTotal(item);
+  if (Number(item.discountPercent || 0) <= 0) return `${total.toFixed(2)}&euro;`;
+  return `<span class="ticket-item-original-total">${gross.toFixed(2)}&euro;</span><span>${total.toFixed(2)}&euro;</span>`;
 }
 
 // 10. Active Ticket Panel (used in Tablet Split View)
@@ -3607,6 +3651,7 @@ function renderInlineTicketPanel() {
     <div class="ticket-item" style="margin-bottom: 8px;" data-item-id="${item.id}" data-ticket-item-id="${item.ticketItemId}">
       <div class="ticket-item-details">
         <span class="ticket-item-name">${item.name}</span>
+        ${renderTicketItemDiscount(item)}
         <span class="ticket-item-modifiers ticket-item-base-price" style="cursor: pointer; text-decoration: underline dashed 1px; text-underline-offset: 2px;" title="Editar precio base">${item.price.toFixed(2)}€ x ud.</span>
         ${item.selectedOptions && item.selectedOptions.length > 0 ? `
           <div class="ticket-item-options">
@@ -3626,6 +3671,9 @@ function renderInlineTicketPanel() {
           <button class="ticket-note-btn ${item.note ? 'active' : ''}" data-note-ticket-item-id="${item.ticketItemId}" type="button">
             ${item.note ? 'Editar nota' : 'Nota'}
           </button>
+          <button class="ticket-discount-btn ${Number(item.discountPercent || 0) > 0 ? 'active' : ''}" data-discount-ticket-item-id="${item.ticketItemId}" type="button">
+            ${Number(item.discountPercent || 0) > 0 ? 'Editar descuento' : 'Descuento'}
+          </button>
         </div>
       </div>
       <div class="ticket-item-qty-actions">
@@ -3633,11 +3681,13 @@ function renderInlineTicketPanel() {
         <span class="ticket-item-qty">${item.qty}</span>
         <button class="qty-btn qty-plus-btn" data-ticket-item-id="${item.ticketItemId}">+</button>
       </div>
-      <span class="ticket-item-total ticket-item-total-price" style="cursor: pointer; text-decoration: underline dashed 1px; text-underline-offset: 2px;" title="Editar precio base">${store.getItemTotal(item).toFixed(2)}€</span>
+      <span class="ticket-item-total ticket-item-total-price" style="cursor: pointer;" title="Editar precio base">${renderTicketItemTotal(item)}</span>
     </div>
   `).join('');
 
   const total = store.getActiveTicketTotal();
+  const grossTotal = store.getActiveTicketGrossTotal();
+  const discountTotal = store.getActiveTicketDiscountTotal();
   const tax = total * 0.10;
   const subtotal = total - tax;
 
@@ -3646,6 +3696,10 @@ function renderInlineTicketPanel() {
       ${itemsList}
     </div>
     <div class="ticket-summary" style="margin-top:auto;">
+      ${discountTotal > 0 ? `
+        <div class="summary-row discount-row"><span>Subtotal</span><span>${grossTotal.toFixed(2)}&euro;</span></div>
+        <div class="summary-row discount-row"><span>Descuentos / invitaciones</span><span>-${discountTotal.toFixed(2)}&euro;</span></div>
+      ` : ''}
       <div class="summary-row">
         <span></span>
         <span>${subtotal.toFixed(2)}€</span>
@@ -3660,7 +3714,8 @@ function renderInlineTicketPanel() {
       </div>
     </div>
     <div class="ticket-actions-grid">
-      <button class="pay-btn-opt primary" id="split-pay-btn">Cobrar</button>
+      <button class="pay-btn-opt primary" id="split-pay-btn">${total <= 0 && discountTotal > 0 ? 'Cerrar invitación' : 'Cobrar'}</button>
+      <button class="pay-btn-opt" id="split-discount-btn">Descuento / Invitar</button>
       <button class="pay-btn-opt" id="split-save-order-btn">Guardar Comanda</button>
       <button class="pay-btn-opt danger" id="split-clear-btn">Vaciar</button>
     </div>
@@ -3708,6 +3763,7 @@ function renderDrawerOverlay() {
     <div class="ticket-item" style="margin-bottom: 8px;" data-item-id="${item.id}" data-ticket-item-id="${item.ticketItemId}">
       <div class="ticket-item-details">
         <span class="ticket-item-name">${item.name}</span>
+        ${renderTicketItemDiscount(item)}
         <span class="ticket-item-modifiers ticket-item-base-price" style="cursor: pointer; text-decoration: underline dashed 1px; text-underline-offset: 2px;" title="Editar precio base">${item.price.toFixed(2)}€ x ud.</span>
         ${item.selectedOptions && item.selectedOptions.length > 0 ? `
           <div class="ticket-item-options">
@@ -3727,6 +3783,9 @@ function renderDrawerOverlay() {
           <button class="ticket-note-btn ${item.note ? 'active' : ''}" data-note-ticket-item-id="${item.ticketItemId}" type="button">
             ${item.note ? 'Editar nota' : 'Nota'}
           </button>
+          <button class="ticket-discount-btn ${Number(item.discountPercent || 0) > 0 ? 'active' : ''}" data-discount-ticket-item-id="${item.ticketItemId}" type="button">
+            ${Number(item.discountPercent || 0) > 0 ? 'Editar descuento' : 'Descuento'}
+          </button>
         </div>
       </div>
       <div class="ticket-item-qty-actions">
@@ -3734,11 +3793,13 @@ function renderDrawerOverlay() {
         <span class="ticket-item-qty">${item.qty}</span>
         <button class="qty-btn qty-plus-btn" data-ticket-item-id="${item.ticketItemId}">+</button>
       </div>
-      <span class="ticket-item-total ticket-item-total-price" style="cursor: pointer; text-decoration: underline dashed 1px; text-underline-offset: 2px;" title="Editar precio base">${store.getItemTotal(item).toFixed(2)}€</span>
+      <span class="ticket-item-total ticket-item-total-price" style="cursor: pointer;" title="Editar precio base">${renderTicketItemTotal(item)}</span>
     </div>
   `).join('');
 
   const total = store.getActiveTicketTotal();
+  const grossTotal = store.getActiveTicketGrossTotal();
+  const discountTotal = store.getActiveTicketDiscountTotal();
   const tax = total * 0.10;
   const subtotal = total - tax;
 
@@ -3770,6 +3831,10 @@ function renderDrawerOverlay() {
         </div>
 
         <div class="ticket-summary">
+          ${discountTotal > 0 ? `
+            <div class="summary-row discount-row"><span>Subtotal</span><span>${grossTotal.toFixed(2)}&euro;</span></div>
+            <div class="summary-row discount-row"><span>Descuentos / invitaciones</span><span>-${discountTotal.toFixed(2)}&euro;</span></div>
+          ` : ''}
           <div class="summary-row">
             <span></span>
             <span>${subtotal.toFixed(2)}€</span>
@@ -3786,7 +3851,8 @@ function renderDrawerOverlay() {
 
         <div style="display:flex; flex-direction:column; gap:8px; margin-top: 10px;">
           <div class="ticket-actions-grid">
-            <button class="pay-btn-opt primary" id="drawer-pay-btn">Cobrar</button>
+            <button class="pay-btn-opt primary" id="drawer-pay-btn">${total <= 0 && discountTotal > 0 ? 'Cerrar invitación' : 'Cobrar'}</button>
+            <button class="pay-btn-opt" id="drawer-discount-btn">Descuento / Invitar</button>
             <button class="pay-btn-opt" id="drawer-save-order-btn">Guardar Comanda</button>
             <button class="pay-btn-opt danger" id="drawer-clear-btn">Vaciar</button>
           </div>
@@ -3829,11 +3895,19 @@ function setupTicketOnlyEventListeners(container) {
     });
   });
 
+  container.querySelectorAll('.ticket-discount-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showDiscountModal(btn.dataset.discountTicketItemId || '');
+    });
+  });
+
   container.querySelectorAll('.ticket-item').forEach(row => {
     row.addEventListener('click', (e) => {
       if (e.target.closest('.ticket-item-qty-actions')) return;
       if (e.target.closest('.ticket-defer-btn')) return;
       if (e.target.closest('.ticket-note-btn')) return;
+      if (e.target.closest('.ticket-discount-btn')) return;
       const itemId = row.dataset.itemId;
       const ticketItemId = row.dataset.ticketItemId;
       if (itemHasModifiers(itemId) && ticketItemId) {
@@ -3915,6 +3989,11 @@ function setupTicketOnlyEventListeners(container) {
     });
   }
 
+  const splitDiscount = container.querySelector('#split-discount-btn');
+  if (splitDiscount) {
+    splitDiscount.addEventListener('click', () => showDiscountModal());
+  }
+
   const splitPayBtn = container.querySelector('#split-pay-btn');
   if (splitPayBtn) {
     splitPayBtn.addEventListener('click', () => {
@@ -3928,6 +4007,11 @@ function setupTicketOnlyEventListeners(container) {
       store.saveActiveOrder();
       showToast('Comanda guardada.', 'success');
     });
+  }
+
+  const drawerDiscount = container.querySelector('#drawer-discount-btn');
+  if (drawerDiscount) {
+    drawerDiscount.addEventListener('click', () => showDiscountModal());
   }
 
   container.querySelectorAll('.ticket-reassign-btn').forEach(btn => {
@@ -4731,6 +4815,150 @@ function showItemNoteModal(ticketItemId) {
   setTimeout(() => input?.focus(), 30);
 }
 
+function showDiscountModal(preselectedTicketItemId = '') {
+  const items = store.getActiveItems();
+  if (items.length === 0) {
+    showToast('No hay articulos en la comanda.', 'warning');
+    return;
+  }
+
+  document.getElementById('ticket-discount-modal')?.remove();
+  const preselectedItem = items.find(item => item.ticketItemId === preselectedTicketItemId);
+  const initialPercent = Number(preselectedItem?.discountPercent || 0);
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.id = 'ticket-discount-modal';
+  modal.innerHTML = `
+    <div class="modal-dialog ticket-discount-dialog">
+      <div class="modal-header ticket-discount-header">
+        <div>
+          <h3>Descuento / Invitación</h3>
+          <p>Los articulos siguen en la comanda y en cocina.</p>
+        </div>
+        <button class="modal-close-btn" id="ticket-discount-close-btn" type="button" aria-label="Cerrar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <path d="M6 6l12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="ticket-discount-body">
+        <label class="ticket-discount-select-all">
+          <input type="checkbox" id="ticket-discount-select-all">
+          <span>Seleccionar toda la cuenta</span>
+        </label>
+
+        <div class="ticket-discount-items">
+          ${items.map(item => {
+            const currentPercent = Number(item.discountPercent || 0);
+            const currentLabel = currentPercent >= 100
+              ? 'Invitado'
+              : currentPercent > 0 ? `-${currentPercent}%` : '';
+            return `
+              <label class="ticket-discount-item">
+                <input type="checkbox" value="${item.ticketItemId}" ${item.ticketItemId === preselectedTicketItemId ? 'checked' : ''}>
+                <span class="ticket-discount-item-copy">
+                  <strong>${escapeHtml(item.name)} <small>x${item.qty}</small></strong>
+                  <span>${store.getItemGrossTotal(item).toFixed(2)}&euro;</span>
+                </span>
+                ${currentLabel ? `<span class="ticket-discount-current">${escapeHtml(currentLabel)}</span>` : ''}
+              </label>
+            `;
+          }).join('')}
+        </div>
+
+        <div class="ticket-discount-section">
+          <span class="ticket-discount-label">Porcentaje</span>
+          <div class="ticket-discount-presets">
+            ${[10, 20, 50, 100].map(percent => `
+              <button type="button" class="ticket-discount-preset ${initialPercent === percent ? 'active' : ''}" data-discount-percent="${percent}">
+                ${percent === 100 ? 'Invitar' : `${percent}%`}
+              </button>
+            `).join('')}
+          </div>
+          <div class="ticket-discount-custom">
+            <input id="ticket-discount-percent" type="number" min="0" max="100" step="1" inputmode="decimal" value="${initialPercent || ''}" placeholder="Otro porcentaje">
+            <span>%</span>
+          </div>
+        </div>
+
+        <div class="ticket-discount-section">
+          <label class="ticket-discount-label" for="ticket-discount-reason">Motivo</label>
+          <select id="ticket-discount-reason">
+            <option value="Descuento" ${preselectedItem?.discountReason !== 'Invitación' ? 'selected' : ''}>Descuento</option>
+            <option value="Invitación" ${preselectedItem?.discountReason === 'Invitación' ? 'selected' : ''}>Invitación / cortesía</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="ticket-discount-footer">
+        <button class="btn btn-secondary" id="ticket-discount-remove-btn" type="button">Quitar descuento</button>
+        <button class="btn btn-secondary" id="ticket-discount-cancel-btn" type="button">Cancelar</button>
+        <button class="btn btn-primary" id="ticket-discount-apply-btn" type="button">Aplicar</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+  const itemCheckboxes = [...modal.querySelectorAll('.ticket-discount-item input[type="checkbox"]')];
+  const selectAll = modal.querySelector('#ticket-discount-select-all');
+  const percentInput = modal.querySelector('#ticket-discount-percent');
+  const reasonInput = modal.querySelector('#ticket-discount-reason');
+  const close = () => modal.remove();
+  const getSelectedIds = () => itemCheckboxes.filter(input => input.checked).map(input => input.value);
+
+  const syncSelectAll = () => {
+    selectAll.checked = itemCheckboxes.length > 0 && itemCheckboxes.every(input => input.checked);
+    selectAll.indeterminate = itemCheckboxes.some(input => input.checked) && !selectAll.checked;
+  };
+  syncSelectAll();
+
+  selectAll.addEventListener('change', () => {
+    itemCheckboxes.forEach(input => { input.checked = selectAll.checked; });
+    syncSelectAll();
+  });
+  itemCheckboxes.forEach(input => input.addEventListener('change', syncSelectAll));
+
+  modal.querySelectorAll('.ticket-discount-preset').forEach(button => {
+    button.addEventListener('click', () => {
+      const percent = Number(button.dataset.discountPercent || 0);
+      percentInput.value = String(percent);
+      if (percent === 100) reasonInput.value = 'Invitación';
+      modal.querySelectorAll('.ticket-discount-preset').forEach(item => item.classList.toggle('active', item === button));
+    });
+  });
+  percentInput.addEventListener('input', () => {
+    modal.querySelectorAll('.ticket-discount-preset').forEach(button => {
+      button.classList.toggle('active', Number(button.dataset.discountPercent) === Number(percentInput.value));
+    });
+    if (Number(percentInput.value) === 100) reasonInput.value = 'Invitación';
+  });
+
+  const applyDiscount = (remove = false) => {
+    const selectedIds = getSelectedIds();
+    if (selectedIds.length === 0) {
+      showToast('Selecciona al menos un articulo.', 'warning');
+      return;
+    }
+    const percent = remove ? 0 : Number(percentInput.value);
+    if (!remove && (!Number.isFinite(percent) || percent <= 0 || percent > 100)) {
+      showToast('Introduce un porcentaje entre 1 y 100.', 'warning');
+      return;
+    }
+    close();
+    store.applyDiscountToItems(selectedIds, percent, reasonInput.value);
+    showToast(remove ? 'Descuento eliminado.' : (percent === 100 ? 'Articulos invitados.' : `Descuento del ${percent}% aplicado.`), 'success');
+  };
+
+  modal.querySelector('#ticket-discount-close-btn').addEventListener('click', close);
+  modal.querySelector('#ticket-discount-cancel-btn').addEventListener('click', close);
+  modal.querySelector('#ticket-discount-remove-btn').addEventListener('click', () => applyDiscount(true));
+  modal.querySelector('#ticket-discount-apply-btn').addEventListener('click', () => applyDiscount(false));
+  modal.addEventListener('click', event => {
+    if (event.target === modal) close();
+  });
+}
+
 function showConfirm(title, message, onConfirm, onCancel = null, isDanger = false) {
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop';
@@ -5015,7 +5243,15 @@ function showReassignTableModal() {
 
 // Modal de pago unificado y táctil
 function showPaymentModal(totalAmount) {
-  if (totalAmount <= 0) return;
+  if (totalAmount <= 0) {
+    if (store.getActiveTicketDiscountTotal() <= 0) return;
+    showConfirm(
+      'Cerrar invitación',
+      'Toda la cuenta esta invitada. Se guardara el ticket con total 0,00 EUR y sin registrar ningun cobro.',
+      () => store.payActiveTicket('Invitación', { payments: [] })
+    );
+    return;
+  }
 
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop';
@@ -6376,6 +6612,7 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
   const paymentTotals = {};
   const itemTotals = {};
   let grossSales = 0;
+  let discountSales = 0;
   let refunds = 0;
   let ticketCount = 0;
 
@@ -6383,7 +6620,7 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
     const d = getTxDate(tx);
     const dayKey = getLocalDateKey(d);
     if (!daily[dayKey]) {
-      daily[dayKey] = { date: dayKey, tickets: 0, gross: 0, refunds: 0, net: 0, cash: 0, card: 0, other: 0 };
+      daily[dayKey] = { date: dayKey, tickets: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cash: 0, card: 0, other: 0 };
     }
 
     const total = Number(tx.total || 0);
@@ -6392,10 +6629,14 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
       refunds += Math.abs(total);
       daily[dayKey].refunds += Math.abs(total);
     } else {
-      grossSales += total;
+      const discount = Number(tx.discountTotal || 0);
+      const gross = Number(tx.grossTotal ?? (total + discount));
+      grossSales += gross;
+      discountSales += discount;
       ticketCount += 1;
       daily[dayKey].tickets += 1;
-      daily[dayKey].gross += total;
+      daily[dayKey].gross += gross;
+      daily[dayKey].discounts += discount;
     }
     daily[dayKey].net += total;
 
@@ -6422,6 +6663,7 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
       <td>${formatIsoDateEs(day.date)}</td>
       <td>${day.tickets}</td>
       <td>${moneyCell(day.gross)}</td>
+      <td>${moneyCell(day.discounts)}</td>
       <td>${moneyCell(day.refunds)}</td>
       <td>${moneyCell(day.cash)}</td>
       <td>${moneyCell(day.card)}</td>
@@ -6443,6 +6685,8 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
         <td>${escapeCell(payments.map(payment => payment.method).join(' + '))}</td>
         <td>${escapeCell(payments.map(payment => payment.provider).filter(Boolean).join(' + '))}</td>
         <td>${Number(tx.itemsCount || 0)}</td>
+        <td>${moneyCell(tx.grossTotal ?? (Number(tx.total || 0) + Number(tx.discountTotal || 0)))}</td>
+        <td>${moneyCell(tx.discountTotal)}</td>
         <td>${moneyCell(tx.total)}</td>
         <td>${escapeCell(tx.staff?.name || tx.staffName || '')}</td>
       </tr>
@@ -6468,7 +6712,7 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
       </tr>
     `).join('');
 
-  const netSales = grossSales - refunds;
+  const netSales = grossSales - discountSales - refunds;
   const html = `<!doctype html>
 <html>
 <head>
@@ -6488,14 +6732,14 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
 
   <h2>Resumen</h2>
   <table>
-    <tr><th>Tickets</th><th>Ventas brutas</th><th>Devoluciones</th><th>Ventas netas</th></tr>
-    <tr><td>${ticketCount}</td><td>${moneyCell(grossSales)}</td><td>${moneyCell(refunds)}</td><td>${moneyCell(netSales)}</td></tr>
+    <tr><th>Tickets</th><th>Ventas brutas</th><th>Descuentos</th><th>Devoluciones</th><th>Ventas netas</th></tr>
+    <tr><td>${ticketCount}</td><td>${moneyCell(grossSales)}</td><td>${moneyCell(discountSales)}</td><td>${moneyCell(refunds)}</td><td>${moneyCell(netSales)}</td></tr>
   </table>
 
   <h2>Resumen por dia</h2>
   <table>
-    <thead><tr><th>Fecha</th><th>Tickets</th><th>Ventas brutas</th><th>Devoluciones</th><th>Efectivo</th><th>Tarjeta</th><th>Otros</th><th>Neto</th></tr></thead>
-    <tbody>${dailyRows || '<tr><td colspan="8">Sin ventas</td></tr>'}</tbody>
+    <thead><tr><th>Fecha</th><th>Tickets</th><th>Ventas brutas</th><th>Descuentos</th><th>Devoluciones</th><th>Efectivo</th><th>Tarjeta</th><th>Otros</th><th>Neto</th></tr></thead>
+    <tbody>${dailyRows || '<tr><td colspan="9">Sin ventas</td></tr>'}</tbody>
   </table>
 
   <h2>Metodos de pago</h2>
@@ -6512,8 +6756,8 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
 
   <h2>Detalle de tickets</h2>
   <table>
-    <thead><tr><th>Fecha</th><th>Hora</th><th>Ticket</th><th>Mesa</th><th>Tipo</th><th>Metodo</th><th>Proveedor pago</th><th>Articulos</th><th>Total</th><th>Usuario</th></tr></thead>
-    <tbody>${txRows || '<tr><td colspan="10">Sin tickets</td></tr>'}</tbody>
+    <thead><tr><th>Fecha</th><th>Hora</th><th>Ticket</th><th>Mesa</th><th>Tipo</th><th>Metodo</th><th>Proveedor pago</th><th>Articulos</th><th>Bruto</th><th>Descuento</th><th>Total</th><th>Usuario</th></tr></thead>
+    <tbody>${txRows || '<tr><td colspan="12">Sin tickets</td></tr>'}</tbody>
   </table>
 </body>
 </html>`;
@@ -6567,6 +6811,7 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
     // Calculate figures
     let totalGross = 0;
     let totalRefunds = 0;
+    let totalDiscounts = 0;
     const paymentMethods = { 'Efectivo': 0, 'Tarjeta': 0, 'Tarjeta Regalo': 0 };
 
     dayTx.forEach(tx => {
@@ -6575,11 +6820,13 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
       if (tx.type === 'refund') {
         totalRefunds += Math.abs(val);
       } else {
-        totalGross += val;
+        const discount = Number(tx.discountTotal || 0);
+        totalDiscounts += discount;
+        totalGross += Number(tx.grossTotal ?? (val + discount));
       }
       applyTransactionPaymentsToBuckets(tx, paymentMethods);
     });
-    const totalNet = totalGross - totalRefunds;
+    const totalNet = totalGross - totalDiscounts - totalRefunds;
 
     // Draw KPI Summary boxes
     doc.setFillColor(248, 250, 252);
@@ -6596,7 +6843,7 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
     doc.setFontSize(8);
     doc.text(`Ventas Brutas: ${totalGross.toFixed(2)} €`, margin + 5, 55);
     doc.text(`Devoluciones: -${totalRefunds.toFixed(2)} €`, margin + 5, 60);
-    doc.text(`Descuentos: 0.00 €`, margin + 5, 65);
+    doc.text(`Descuentos: -${totalDiscounts.toFixed(2)} €`, margin + 5, 65);
     doc.setFont('helvetica', 'bold');
     doc.text(`VENTAS NETAS: ${totalNet.toFixed(2)} €`, margin + 5, 71);
 
@@ -6734,6 +6981,7 @@ function downloadMonthlyReportPDF(selectedMonth, sortedDays, legal, filename) {
     // Calculate figures
     let totalGross = 0;
     let totalRefunds = 0;
+    let totalDiscounts = 0;
     let totalCash = 0;
     let totalCard = 0;
     let totalOrders = 0;
@@ -6741,11 +6989,12 @@ function downloadMonthlyReportPDF(selectedMonth, sortedDays, legal, filename) {
     sortedDays.forEach(day => {
       totalGross += day.gross;
       totalRefunds += day.refunds;
+      totalDiscounts += day.discounts || 0;
       totalCash += day.cash;
       totalCard += day.card;
       totalOrders += day.count;
     });
-    const totalNet = totalGross - totalRefunds;
+    const totalNet = totalGross - totalDiscounts - totalRefunds;
 
     // Draw KPI Summary boxes
     doc.setFillColor(248, 250, 252);
@@ -6762,7 +7011,8 @@ function downloadMonthlyReportPDF(selectedMonth, sortedDays, legal, filename) {
     doc.setFontSize(8);
     doc.text(`Total Pedidos: ${totalOrders}`, margin + 5, 55);
     doc.text(`Ventas Brutas: ${totalGross.toFixed(2)} €`, margin + 5, 60);
-    doc.text(`Devoluciones: -${totalRefunds.toFixed(2)} €`, margin + 5, 65);
+    doc.setFontSize(7.5);
+    doc.text(`Descuentos: -${totalDiscounts.toFixed(2)} € · Dev.: -${totalRefunds.toFixed(2)} €`, margin + 5, 65);
     doc.setFont('helvetica', 'bold');
     doc.text(`VENTAS NETAS: ${totalNet.toFixed(2)} €`, margin + 5, 71);
 
@@ -6780,13 +7030,14 @@ function downloadMonthlyReportPDF(selectedMonth, sortedDays, legal, filename) {
     doc.text(`Tarjeta Bancaria: ${totalCard.toFixed(2)} €`, margin + 95 + 5, 60);
 
     // Draw breakdown table
-    const headers = ['Día', 'Pedidos', 'Efectivo', 'Tarjeta', 'Devoluciones', 'Total Neto'];
+    const headers = ['Día', 'Pedidos', 'Efectivo', 'Tarjeta', 'Devoluciones', 'Descuentos', 'Total Neto'];
     const tableBody = sortedDays.map(day => [
       day.dateStr,
       String(day.count),
       `${day.cash.toFixed(2)} €`,
       `${day.card.toFixed(2)} €`,
       day.refunds > 0 ? `-${day.refunds.toFixed(2)} €` : '0.00 €',
+      day.discounts > 0 ? `-${day.discounts.toFixed(2)} €` : '0.00 €',
       `${day.net.toFixed(2)} €`
     ]);
 
@@ -6797,6 +7048,7 @@ function downloadMonthlyReportPDF(selectedMonth, sortedDays, legal, filename) {
       `${totalCash.toFixed(2)} €`,
       `${totalCard.toFixed(2)} €`,
       `-${totalRefunds.toFixed(2)} €`,
+      `-${totalDiscounts.toFixed(2)} €`,
       `${totalNet.toFixed(2)} €`
     ]);
 
@@ -6828,13 +7080,14 @@ function downloadMonthlyReportPDF(selectedMonth, sortedDays, legal, filename) {
         2: { halign: 'right' },
         3: { halign: 'right' },
         4: { halign: 'right' },
-        5: { halign: 'right', cellWidth: 30 }
+        5: { halign: 'right' },
+        6: { halign: 'right', cellWidth: 27 }
       },
       didParseCell: (data) => {
         if (data.section === 'body' && data.row.index === totalRowIndex) {
           data.cell.styles.fontStyle = 'bold';
           data.cell.styles.fillColor = [241, 245, 249];
-          if (data.column.index === 5) {
+          if (data.column.index === 6) {
             data.cell.styles.textColor = totalNet >= 0 ? [5, 150, 105] : [220, 38, 38];
           } else {
             data.cell.styles.textColor = [15, 23, 42];
@@ -7376,12 +7629,20 @@ function setupEventListeners(container) {
     });
   });
 
+  container.querySelectorAll('.ticket-discount-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showDiscountModal(btn.dataset.discountTicketItemId || '');
+    });
+  });
+
   // Ticket item click (edit modifiers)
   container.querySelectorAll('.ticket-item').forEach(row => {
     row.addEventListener('click', (e) => {
       if (e.target.closest('.ticket-item-qty-actions')) return;
       if (e.target.closest('.ticket-defer-btn')) return;
       if (e.target.closest('.ticket-note-btn')) return;
+      if (e.target.closest('.ticket-discount-btn')) return;
       const itemId = row.dataset.itemId;
       const ticketItemId = row.dataset.ticketItemId;
       if (itemHasModifiers(itemId) && ticketItemId) {
@@ -7424,6 +7685,11 @@ function setupEventListeners(container) {
   }
 
   // Drawer Print bill
+  const drawerDiscount = container.querySelector('#drawer-discount-btn');
+  if (drawerDiscount) {
+    drawerDiscount.addEventListener('click', () => showDiscountModal());
+  }
+
   const drawerPrint = container.querySelector('#drawer-print-btn');
   if (drawerPrint) {
     drawerPrint.addEventListener('click', () => {
@@ -7468,6 +7734,11 @@ function setupEventListeners(container) {
         true // isDanger
       );
     });
+  }
+
+  const splitDiscount = container.querySelector('#split-discount-btn');
+  if (splitDiscount) {
+    splitDiscount.addEventListener('click', () => showDiscountModal());
   }
 
   const splitPrint = container.querySelector('#split-print-btn');

@@ -108,8 +108,11 @@ function renderTicket(tx) {
               <div>
                 <strong>${item.name}</strong>
                 <span>${formatMoney(item.price)} x ud. · x${item.qty}</span>
+                ${Number(item.discountAmount || 0) > 0 ? `
+                  <span style="color:#059669; font-weight:700;">${item.discountReason || 'Descuento'} · -${Number(item.discountPercent || 0)}%</span>
+                ` : ''}
               </div>
-              <strong>${formatMoney(item.total)}</strong>
+              <strong>${Number(item.discountAmount || 0) > 0 ? `<span style="text-decoration:line-through; color:var(--muted); margin-right:6px;">${formatMoney(item.grossTotal)}</span>` : ''}${formatMoney(item.total)}</strong>
             </div>
             ${(item.selectedOptions || []).length > 0 ? `
               <div class="receipt-options">
@@ -134,6 +137,16 @@ function renderTicket(tx) {
                 <span>${formatMoney(payment.amount)}</span>
               </div>
             `).join('')}
+          </div>
+        ` : ''}
+        ${Number(tx.discountTotal || 0) > 0 ? `
+          <div style="display:flex; justify-content:space-between;">
+            <span>Subtotal antes de descuentos</span>
+            <span>${formatMoney(tx.grossTotal)}</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; color:#059669;">
+            <span>Descuentos / invitaciones</span>
+            <span>-${formatMoney(tx.discountTotal)}</span>
           </div>
         ` : ''}
         <div style="display:flex; justify-content:space-between;">
@@ -172,8 +185,15 @@ function buildReceiptImageCanvas(tx) {
     detailRows.push({
       type: 'item',
       left: `${item.name} x${item.qty}`,
-      right: formatMoney(item.total)
+      right: formatMoney(Number(item.discountAmount || 0) > 0 ? item.grossTotal : item.total)
     });
+    if (Number(item.discountAmount || 0) > 0) {
+      detailRows.push({
+        type: 'discount',
+        left: `${item.discountReason || 'Descuento'} -${Number(item.discountPercent || 0)}%`,
+        right: `-${formatMoney(item.discountAmount)}`
+      });
+    }
     (item.selectedOptions || []).forEach(opt => {
       detailRows.push({
         type: 'option',
@@ -253,10 +273,11 @@ function buildReceiptImageCanvas(tx) {
 
   if (detailRows.length > 0) {
     detailRows.forEach(row => {
-      const isOption = row.type === 'option';
-      drawText(row.left, padding + (isOption ? 22 : 0), y, isOption ? 19 : 23, isOption ? '400' : '700', 'left', isOption ? '#666666' : '#111111');
-      drawText(row.right, width - padding, y, isOption ? 19 : 23, isOption ? '400' : '700', 'right', isOption ? '#666666' : '#111111');
-      y += isOption ? 32 : rowHeight;
+      const isSecondary = row.type === 'option' || row.type === 'discount';
+      const color = row.type === 'discount' ? '#059669' : (isSecondary ? '#666666' : '#111111');
+      drawText(row.left, padding + (isSecondary ? 22 : 0), y, isSecondary ? 19 : 23, isSecondary ? '400' : '700', 'left', color);
+      drawText(row.right, width - padding, y, isSecondary ? 19 : 23, isSecondary ? '400' : '700', 'right', color);
+      y += isSecondary ? 32 : rowHeight;
     });
   } else {
     drawText('Detalle de artículos no disponible', padding, y, 22, '400', 'left', '#666666');
@@ -281,6 +302,15 @@ function buildReceiptImageCanvas(tx) {
     });
     drawRule(y);
     y += 28;
+  }
+
+  if (Number(tx.discountTotal || 0) > 0) {
+    drawText('Subtotal antes de descuentos', padding, y, 20, '600', 'left', '#666666');
+    drawText(formatMoney(tx.grossTotal), width - padding, y, 20, '600', 'right', '#666666');
+    y += 32;
+    drawText('Descuentos / invitaciones', padding, y, 20, '700', 'left', '#059669');
+    drawText(`-${formatMoney(tx.discountTotal)}`, width - padding, y, 20, '700', 'right', '#059669');
+    y += 32;
   }
 
   drawText(`Base Imponible (${taxRate}%)`, padding, y, 20, '600', 'left', '#666666');

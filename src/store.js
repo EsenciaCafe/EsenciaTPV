@@ -1850,6 +1850,7 @@ class Store {
       const existingIdx = newItems.findIndex(i => 
         i.id === itemId && 
         (i.deferUntilLater === true) === false &&
+        Number(i.discountPercent || 0) === 0 &&
         JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions) &&
         String(i.note || '').trim() === itemNote
       );
@@ -1870,6 +1871,7 @@ class Store {
       const existingIdx = newItems.findIndex(i => 
         i.id === itemId && 
         (i.deferUntilLater === true) === false &&
+        Number(i.discountPercent || 0) === 0 &&
         JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions) &&
         String(i.note || '').trim() === itemNote
       );
@@ -1900,6 +1902,8 @@ class Store {
         i !== idx &&
         item.id === target.id &&
         (item.deferUntilLater === true) === (target.deferUntilLater === true) &&
+        Number(item.discountPercent || 0) === Number(target.discountPercent || 0) &&
+        String(item.discountReason || '') === String(target.discountReason || '') &&
         JSON.stringify(item.selectedOptions || []) === JSON.stringify(target.selectedOptions || []) &&
         String(item.note || '').trim() === cleanNote
       );
@@ -2058,6 +2062,8 @@ class Store {
         const currentQty = newItems[idx].qty;
         const identicalIdx = newItems.findIndex((item, i) => 
           i !== idx && item.id === targetId &&
+          Number(item.discountPercent || 0) === Number(newItems[idx].discountPercent || 0) &&
+          String(item.discountReason || '') === String(newItems[idx].discountReason || '') &&
           JSON.stringify(item.selectedOptions || []) === JSON.stringify(sortedOptions) &&
           String(item.note || '').trim() === String(newItems[idx].note || '').trim()
         );
@@ -2079,6 +2085,8 @@ class Store {
         const currentQty = newItems[idx].qty;
         const identicalIdx = newItems.findIndex((item, i) => 
           i !== idx && item.id === targetId &&
+          Number(item.discountPercent || 0) === Number(newItems[idx].discountPercent || 0) &&
+          String(item.discountReason || '') === String(newItems[idx].discountReason || '') &&
           JSON.stringify(item.selectedOptions || []) === JSON.stringify(sortedOptions) &&
           String(item.note || '').trim() === String(newItems[idx].note || '').trim()
         );
@@ -2218,6 +2226,8 @@ class Store {
       const sortedOptions = [...(sourceItem.selectedOptions || [])].sort((a, b) => a.id.localeCompare(b.id));
       const existingIdx = tableItems.findIndex(i => 
         i.id === sourceItem.id && 
+        Number(i.discountPercent || 0) === Number(sourceItem.discountPercent || 0) &&
+        String(i.discountReason || '') === String(sourceItem.discountReason || '') &&
         JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions) &&
         String(i.note || '').trim() === String(sourceItem.note || '').trim()
       );
@@ -2276,6 +2286,8 @@ class Store {
       const sortedOptions = [...(sourceItem.selectedOptions || [])].sort((a, b) => a.id.localeCompare(b.id));
       const existingIdx = tableItems.findIndex(i => 
         i.id === sourceItem.id && 
+        Number(i.discountPercent || 0) === Number(sourceItem.discountPercent || 0) &&
+        String(i.discountReason || '') === String(sourceItem.discountReason || '') &&
         JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions) &&
         String(i.note || '').trim() === String(sourceItem.note || '').trim()
       );
@@ -2342,6 +2354,8 @@ class Store {
     if (items.length === 0) return;
 
     const total = this.getActiveTicketTotal();
+    const grossTotal = this.getActiveTicketGrossTotal();
+    const discountTotal = this.getActiveTicketDiscountTotal();
     const itemsCount = items.reduce((sum, i) => sum + i.qty, 0);
     const selectedTable = this.getSelectedTable();
     const tableName = selectedTable ? selectedTable.name : 'Venta Directa';
@@ -2354,6 +2368,10 @@ class Store {
       note: item.note || '',
       deferUntilLater: item.deferUntilLater === true,
       selectedOptions: (item.selectedOptions || []).map(opt => ({ ...opt })),
+      grossTotal: parseFloat(this.getItemGrossTotal(item).toFixed(2)),
+      discountPercent: Number(item.discountPercent || 0),
+      discountReason: item.discountReason || '',
+      discountAmount: parseFloat(this.getItemDiscountAmount(item).toFixed(2)),
       total: parseFloat(this.getItemTotal(item).toFixed(2))
     }));
 
@@ -2367,6 +2385,8 @@ class Store {
       date: `${dateStr}, ${timeStr}`,
       table: tableName,
       total: parseFloat(total.toFixed(2)),
+      grossTotal: parseFloat(grossTotal.toFixed(2)),
+      discountTotal: parseFloat(discountTotal.toFixed(2)),
       paymentMethod: paymentMethod,
       itemsCount: itemsCount,
       items: transactionItems,
@@ -2434,11 +2454,67 @@ class Store {
     if (this.state.selectedTableId === null) return null;
     return this.state.tables.find(t => t.id === this.state.selectedTableId) || null;
   }
+
+  applyDiscountToItems(ticketItemIds = [], percent = 0, reason = 'Descuento') {
+    const selectedIds = new Set((ticketItemIds || []).filter(Boolean));
+    if (selectedIds.size === 0) return false;
+
+    const cleanPercent = Math.min(100, Math.max(0, Number(percent) || 0));
+    const cleanReason = cleanPercent === 100 ? 'Invitación' : String(reason || 'Descuento').trim();
+    const updateItems = (items = []) => items.map(item => {
+      if (!selectedIds.has(item.ticketItemId)) return item;
+      if (cleanPercent <= 0) {
+        const { discountPercent, discountReason, ...rest } = item;
+        return rest;
+      }
+      return {
+        ...item,
+        discountPercent: cleanPercent,
+        discountReason: cleanReason || 'Descuento'
+      };
+    });
+
+    if (this.state.selectedTableId !== null) {
+      const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
+      if (tableIndex === -1) return false;
+      this.state.tables[tableIndex] = {
+        ...this.state.tables[tableIndex],
+        items: updateItems(this.state.tables[tableIndex].items)
+      };
+    } else {
+      this.state.directSaleTicket = {
+        ...this.state.directSaleTicket,
+        items: updateItems(this.state.directSaleTicket.items)
+      };
+    }
+
+    this.notify({ renderScope: 'ticket', flushRemote: this.state.selectedTableId !== null });
+    return true;
+  }
+
+  getItemGrossTotal(ticketItem) {
+    const basePrice = Number(ticketItem.price || 0);
+    const optionsPrice = (ticketItem.selectedOptions || []).reduce((sum, opt) => (
+      sum + (Number(opt.price || 0) * Number(opt.qty || 0))
+    ), 0);
+    return (basePrice + optionsPrice) * Number(ticketItem.qty || 0);
+  }
+
+  getItemDiscountAmount(ticketItem) {
+    const percent = Math.min(100, Math.max(0, Number(ticketItem.discountPercent || 0)));
+    return this.getItemGrossTotal(ticketItem) * (percent / 100);
+  }
   
   getItemTotal(ticketItem) {
-    const basePrice = ticketItem.price;
-    const optionsPrice = (ticketItem.selectedOptions || []).reduce((sum, opt) => sum + (opt.price * opt.qty), 0);
-    return (basePrice + optionsPrice) * ticketItem.qty;
+    return this.getItemGrossTotal(ticketItem) - this.getItemDiscountAmount(ticketItem);
+  }
+
+  getActiveTicketGrossTotal() {
+    return this.getActiveItems().reduce((sum, item) => sum + this.getItemGrossTotal(item), 0);
+  }
+
+  getActiveTicketDiscountTotal() {
+    return this.getActiveItems().reduce((sum, item) => sum + this.getItemDiscountAmount(item), 0);
   }
   
   getActiveTicketTotal() {
