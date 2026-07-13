@@ -3827,12 +3827,16 @@ function renderDrawerOverlay() {
   return `
     <div class="drawer-overlay" id="drawer-backdrop">
       <div class="drawer-content">
-        <div class="drawer-close-indicator" id="drawer-pull-bar"></div>
         <div class="drawer-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
           <span class="drawer-title">Pedido Actual</span>
           <div style="display: flex; align-items: center; gap: 6px;">
             <span class="drawer-table-sel">${tableName}</span>
             ${reassignButton}
+            <button class="modal-close-btn drawer-close-btn" id="drawer-close-btn" type="button" aria-label="Cerrar carrito">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                <path d="M6 6l12 12M18 6 6 18" />
+              </svg>
+            </button>
           </div>
         </div>
         
@@ -3937,9 +3941,9 @@ function setupTicketOnlyEventListeners(container) {
     });
   });
 
-  const drawerPull = container.querySelector('#drawer-pull-bar');
-  if (drawerPull) {
-    drawerPull.addEventListener('click', () => {
+  const drawerClose = container.querySelector('#drawer-close-btn');
+  if (drawerClose) {
+    drawerClose.addEventListener('click', () => {
       isDrawerOpen = false;
       store.notify();
     });
@@ -7627,10 +7631,10 @@ function setupEventListeners(container) {
     });
   }
 
-  // Drawer pull indicator close
-  const drawerPull = container.querySelector('#drawer-pull-bar');
-  if (drawerPull) {
-    drawerPull.addEventListener('click', () => {
+  // Close full-screen cart
+  const drawerClose = container.querySelector('#drawer-close-btn');
+  if (drawerClose) {
+    drawerClose.addEventListener('click', () => {
       isDrawerOpen = false;
       store.notify();
     });

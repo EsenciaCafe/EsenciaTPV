@@ -1860,25 +1860,35 @@ body.light-theme .btn-quick-pay {
 .drawer-overlay {
   position: fixed;
   inset: 0;
-  background-color: rgba(0, 0, 0, 0.7);
+  background-color: var(--bg-panel);
   z-index: 100;
   display: flex;
-  justify-content: flex-end;
-  align-items: flex-end; /* Mobile drawer pulls from bottom */
-  animation: fadeInModal 0.2s forwards;
+  justify-content: stretch;
+  align-items: stretch;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  animation: fadeInModal 0.15s forwards;
 }
 
 .drawer-content {
-  width: 100%;
-  max-height: 85%;
+  width: 100vw;
+  max-width: none;
+  height: 100dvh;
+  max-height: 100dvh;
   background-color: var(--bg-panel);
-  border-top-left-radius: var(--border-radius-xl);
-  border-top-right-radius: var(--border-radius-xl);
+  border-radius: 0;
   display: flex;
   flex-direction: column;
-  padding: 20px 20px calc(20px + var(--safe-area-bottom)) 20px;
+  padding: calc(env(safe-area-inset-top, 0px) + 20px) max(20px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 20px) max(20px, env(safe-area-inset-left, 0px));
   box-sizing: border-box;
-  animation: slideUpDrawer 0.2s cubic-bezier(0.1, 0.76, 0.55, 0.94) forwards;
+  overflow: hidden;
+  animation: none;
+}
+
+.drawer-content > * {
+  width: min(100%, 760px);
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .drawer-close-indicator {
@@ -1895,6 +1905,7 @@ body.light-theme .btn-quick-pay {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
+  flex-shrink: 0;
 }
 
 .drawer-title {
@@ -1923,9 +1934,18 @@ body.light-theme .btn-quick-pay {
 }
 
 .drawer-content .ticket-list {
-  flex-grow: 1;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   margin-bottom: 16px;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.drawer-close-btn {
+  width: 42px;
+  height: 42px;
+  flex-basis: 42px;
 }
 
 /* Checkout payment selection grid */
@@ -2100,16 +2120,17 @@ body.light-theme .btn-quick-pay {
     display: none; /* Hidden on tablet split view since ticket is open on the right */
   }
 
-  /* Drawer is centered on tablet */
+  /* The cart remains a full-screen work surface on tablet. */
   .drawer-overlay {
-    align-items: center;
-    justify-content: center;
+    align-items: stretch;
+    justify-content: stretch;
   }
 
   .drawer-content {
-    width: 460px;
-    max-height: 80%;
-    border-radius: var(--border-radius-lg);
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
   }
 }
 
