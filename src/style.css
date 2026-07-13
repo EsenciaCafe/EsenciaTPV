@@ -2864,6 +2864,23 @@ body.modal-open {
   font-size: 0.76rem;
 }
 
+.ticket-discount-item-copy .ticket-discount-item-modifiers {
+  color: var(--text-main);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.ticket-discount-item-copy .ticket-discount-item-note {
+  color: var(--warning);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.ticket-discount-item-copy .ticket-discount-item-price {
+  margin-top: 2px;
+  font-weight: 700;
+}
+
 .ticket-discount-current {
   color: var(--secondary);
   font-size: 0.76rem;

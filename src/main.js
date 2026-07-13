@@ -4898,12 +4898,20 @@ function showDiscountModal(preselectedTicketItemId = '') {
             const currentLabel = currentPercent >= 100
               ? 'Invitado'
               : currentPercent > 0 ? `-${currentPercent}%` : '';
+            const modifierSummary = (item.selectedOptions || []).length > 0
+              ? item.selectedOptions.map(option => {
+                  const optionQty = Math.max(1, Number(option.qty) || 1);
+                  return `${escapeHtml(option.name)}${optionQty > 1 ? ` x${optionQty}` : ''}`;
+                }).join(' · ')
+              : 'Sin modificadores';
             return `
               <label class="ticket-discount-item">
                 <input type="checkbox" value="${item.ticketItemId}" ${item.ticketItemId === preselectedTicketItemId ? 'checked' : ''}>
                 <span class="ticket-discount-item-copy">
                   <strong>${escapeHtml(item.name)} <small>x${item.qty}</small></strong>
-                  <span>${store.getItemGrossTotal(item).toFixed(2)}&euro;</span>
+                  <span class="ticket-discount-item-modifiers">${modifierSummary}</span>
+                  ${item.note ? `<span class="ticket-discount-item-note">Nota: ${escapeHtml(item.note)}</span>` : ''}
+                  <span class="ticket-discount-item-price">${store.getItemGrossTotal(item).toFixed(2)}&euro;</span>
                 </span>
                 ${currentLabel ? `<span class="ticket-discount-current">${escapeHtml(currentLabel)}</span>` : ''}
               </label>
