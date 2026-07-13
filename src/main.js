@@ -4615,8 +4615,12 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
         ? (optionQuantities[opt.id] || 0)
         : Math.min(optionQuantities[opt.id] || 0, 1);
       optionQuantities[opt.id] = currentQty;
+      const rowTag = allowMultiple ? 'div' : 'button';
+      const singleSelectionAttributes = allowMultiple
+        ? ''
+        : `type="button" aria-pressed="${currentQty === 1}"`;
       optionsHTML += `
-        <div class="modifier-option-row" data-opt-id="${opt.id}" data-opt-name="${opt.name}" data-opt-price="${opt.price}" data-allow-multiple="${allowMultiple}">
+        <${rowTag} ${singleSelectionAttributes} class="modifier-option-row ${allowMultiple ? 'modifier-option-multiple' : 'modifier-option-single'} ${!allowMultiple && currentQty === 1 ? 'is-selected' : ''}" data-opt-id="${opt.id}" data-opt-name="${opt.name}" data-opt-price="${opt.price}" data-allow-multiple="${allowMultiple}">
           <div class="modifier-option-info">
             <span class="modifier-option-name">${opt.name}</span>
             <span class="modifier-option-price">
@@ -4624,12 +4628,14 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
               ${allowMultiple ? ' · admite varias' : ''}
             </span>
           </div>
-          <div class="modifier-qty-controls">
-            <button class="modifier-qty-btn opt-minus">-</button>
-            <span class="modifier-qty-val">${currentQty}</span>
-            <button class="modifier-qty-btn opt-plus" ${!allowMultiple && currentQty >= 1 ? 'disabled' : ''}>+</button>
-          </div>
-        </div>
+          ${allowMultiple ? `
+            <div class="modifier-qty-controls">
+              <button class="modifier-qty-btn opt-minus" type="button" aria-label="Restar ${opt.name}">-</button>
+              <span class="modifier-qty-val">${currentQty}</span>
+              <button class="modifier-qty-btn opt-plus" type="button" aria-label="Sumar ${opt.name}">+</button>
+            </div>
+          ` : '<span class="modifier-single-check" aria-hidden="true">✓</span>'}
+        </${rowTag}>
       `;
     });
 
@@ -4727,13 +4733,24 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
   modal.querySelectorAll('.modifier-option-row').forEach(row => {
     const optId = row.dataset.optId;
     const allowMultiple = row.dataset.allowMultiple === 'true';
+
+    if (!allowMultiple) {
+      row.addEventListener('click', () => {
+        const qty = (optionQuantities[optId] || 0) === 1 ? 0 : 1;
+        optionQuantities[optId] = qty;
+        row.classList.toggle('is-selected', qty === 1);
+        row.setAttribute('aria-pressed', String(qty === 1));
+        updateModalTotal();
+      });
+      return;
+    }
+
     const minusBtn = row.querySelector('.opt-minus');
     const plusBtn = row.querySelector('.opt-plus');
     const valSpan = row.querySelector('.modifier-qty-val');
 
     const renderOptionQuantity = qty => {
       valSpan.innerText = qty;
-      plusBtn.disabled = !allowMultiple && qty >= 1;
     };
 
     minusBtn.addEventListener('click', () => {
@@ -4748,7 +4765,6 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
 
     plusBtn.addEventListener('click', () => {
       let qty = optionQuantities[optId] || 0;
-      if (!allowMultiple && qty >= 1) return;
       qty++;
       optionQuantities[optId] = qty;
       renderOptionQuantity(qty);

@@ -3128,6 +3128,58 @@ body.modal-open {
   border-bottom: none;
 }
 
+button.modifier-option-row {
+  width: 100%;
+  font: inherit;
+  text-align: left;
+}
+
+.modifier-option-single {
+  margin-bottom: 7px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  background: var(--bg-item);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.modifier-option-single:last-child {
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.modifier-option-single.is-selected {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: var(--secondary);
+}
+
+.modifier-option-single:focus-visible {
+  outline: 3px solid rgba(16, 185, 129, 0.28);
+  outline-offset: 2px;
+}
+
+.modifier-single-check {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  color: transparent;
+  font-size: 1rem;
+  font-weight: 900;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.modifier-option-single.is-selected .modifier-single-check {
+  background: var(--secondary);
+  border-color: var(--secondary);
+  color: #fff;
+}
+
 .modifier-option-info {
   display: flex;
   flex-direction: column;
