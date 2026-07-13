@@ -3518,6 +3518,9 @@ function renderAjustesView(state) {
         <div class="mod-option-info">
           <strong class="mod-option-name">${opt.name}</strong>
           <span class="mod-option-price">+${opt.price.toFixed(2)}€</span>
+          <span class="mod-option-selection-badge ${opt.allowMultiple ? 'multiple' : 'single'}">
+            ${opt.allowMultiple ? 'Varias unidades' : 'Solo una'}
+          </span>
         </div>
         <div class="mod-option-actions">
           <button class="mod-option-btn btn-move-up-option" data-option-index="${idx}" title="Subir" ${idx === 0 ? 'disabled' : ''}>↑</button>
@@ -3564,9 +3567,16 @@ function renderAjustesView(state) {
             <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:var(--border-radius-sm); padding:10px; margin-top:4px;">
               <div style="font-size:0.78rem; font-weight:600; text-transform:uppercase; color:var(--text-muted); margin-bottom:8px;" id="option-form-label">Nueva opción</div>
               <input type="hidden" id="edit-opt-index" value="">
-              <div style="display:grid; grid-template-columns: 2fr 1fr auto auto; gap:8px;">
+              <div class="modifier-option-editor-grid">
                 <input type="text" class="editor-form-input" id="new-opt-name" placeholder="Nombre opción" style="height:38px; padding:8px; font-size:0.9rem;">
                 <input type="number" step="0.01" class="editor-form-input" id="new-opt-price" placeholder="0.00" style="height:38px; padding:8px; font-size:0.9rem;">
+                <label class="modifier-option-multiple-toggle" for="new-opt-allow-multiple">
+                  <input type="checkbox" id="new-opt-allow-multiple">
+                  <span>
+                    <strong>Permitir varias unidades</strong>
+                    <small>Ej. doble queso o varios extras</small>
+                  </span>
+                </label>
                 <button class="btn btn-primary" id="btn-add-mod-option" style="height:38px; background-color:var(--secondary); border-color:var(--secondary); font-size:0.85rem; padding:0 12px; white-space:nowrap;">
                   Guardar
                 </button>
@@ -4600,17 +4610,24 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
   itemModifiers.forEach(mod => {
     let optionsHTML = '';
     (mod.options || []).forEach(opt => {
-      const currentQty = optionQuantities[opt.id] || 0;
+      const allowMultiple = opt.allowMultiple === true;
+      const currentQty = allowMultiple
+        ? (optionQuantities[opt.id] || 0)
+        : Math.min(optionQuantities[opt.id] || 0, 1);
+      optionQuantities[opt.id] = currentQty;
       optionsHTML += `
-        <div class="modifier-option-row" data-opt-id="${opt.id}" data-opt-name="${opt.name}" data-opt-price="${opt.price}">
+        <div class="modifier-option-row" data-opt-id="${opt.id}" data-opt-name="${opt.name}" data-opt-price="${opt.price}" data-allow-multiple="${allowMultiple}">
           <div class="modifier-option-info">
             <span class="modifier-option-name">${opt.name}</span>
-            <span class="modifier-option-price">${opt.price > 0 ? '+' + opt.price.toFixed(2) + '€' : 'Gratis'}</span>
+            <span class="modifier-option-price">
+              ${opt.price > 0 ? '+' + opt.price.toFixed(2) + '€' : 'Gratis'}
+              ${allowMultiple ? ' · admite varias' : ''}
+            </span>
           </div>
           <div class="modifier-qty-controls">
             <button class="modifier-qty-btn opt-minus">-</button>
             <span class="modifier-qty-val">${currentQty}</span>
-            <button class="modifier-qty-btn opt-plus">+</button>
+            <button class="modifier-qty-btn opt-plus" ${!allowMultiple && currentQty >= 1 ? 'disabled' : ''}>+</button>
           </div>
         </div>
       `;
@@ -4709,25 +4726,32 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
   // Attach button events
   modal.querySelectorAll('.modifier-option-row').forEach(row => {
     const optId = row.dataset.optId;
+    const allowMultiple = row.dataset.allowMultiple === 'true';
     const minusBtn = row.querySelector('.opt-minus');
     const plusBtn = row.querySelector('.opt-plus');
     const valSpan = row.querySelector('.modifier-qty-val');
+
+    const renderOptionQuantity = qty => {
+      valSpan.innerText = qty;
+      plusBtn.disabled = !allowMultiple && qty >= 1;
+    };
 
     minusBtn.addEventListener('click', () => {
       let qty = optionQuantities[optId] || 0;
       if (qty > 0) {
         qty--;
         optionQuantities[optId] = qty;
-        valSpan.innerText = qty;
+        renderOptionQuantity(qty);
         updateModalTotal();
       }
     });
 
     plusBtn.addEventListener('click', () => {
       let qty = optionQuantities[optId] || 0;
+      if (!allowMultiple && qty >= 1) return;
       qty++;
       optionQuantities[optId] = qty;
-      valSpan.innerText = qty;
+      renderOptionQuantity(qty);
       updateModalTotal();
     });
   });
@@ -9180,12 +9204,14 @@ function setupEventListeners(container) {
       const modId = store.state.settingsPath[2];
       const optNameInput = container.querySelector('#new-opt-name');
       const optPriceInput = container.querySelector('#new-opt-price');
+      const optAllowMultipleInput = container.querySelector('#new-opt-allow-multiple');
       const editOptIndexInput = container.querySelector('#edit-opt-index');
       const optionFormLabel = container.querySelector('#option-form-label');
       const cancelBtn = container.querySelector('#btn-cancel-edit-option');
       
       const name = optNameInput ? optNameInput.value.trim() : '';
       const price = optPriceInput ? parseFloat(optPriceInput.value) : 0;
+      const allowMultiple = optAllowMultipleInput?.checked === true;
       const editIndexRaw = editOptIndexInput ? editOptIndexInput.value : '';
 
       if (!name) {
@@ -9207,7 +9233,8 @@ function setupEventListeners(container) {
             newOptions[idx] = {
               ...newOptions[idx],
               name,
-              price
+              price,
+              allowMultiple
             };
             showToast('Opción actualizada correctamente.', 'success');
           }
@@ -9216,7 +9243,8 @@ function setupEventListeners(container) {
           const newOption = {
             id: 'opt-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') + '-' + Date.now(),
             name,
-            price
+            price,
+            allowMultiple
           };
           newOptions.push(newOption);
           showToast('Opción añadida correctamente.', 'success');
@@ -9227,6 +9255,7 @@ function setupEventListeners(container) {
         // Reset form
         if (optNameInput) optNameInput.value = '';
         if (optPriceInput) optPriceInput.value = '';
+        if (optAllowMultipleInput) optAllowMultipleInput.checked = false;
         if (editOptIndexInput) editOptIndexInput.value = '';
         if (optionFormLabel) optionFormLabel.innerText = 'Nueva opción';
         if (cancelBtn) cancelBtn.style.display = 'none';
@@ -9240,11 +9269,13 @@ function setupEventListeners(container) {
     btnCancelEditOption.addEventListener('click', () => {
       const optNameInput = container.querySelector('#new-opt-name');
       const optPriceInput = container.querySelector('#new-opt-price');
+      const optAllowMultipleInput = container.querySelector('#new-opt-allow-multiple');
       const editOptIndexInput = container.querySelector('#edit-opt-index');
       const optionFormLabel = container.querySelector('#option-form-label');
 
       if (optNameInput) optNameInput.value = '';
       if (optPriceInput) optPriceInput.value = '';
+      if (optAllowMultipleInput) optAllowMultipleInput.checked = false;
       if (editOptIndexInput) editOptIndexInput.value = '';
       if (optionFormLabel) optionFormLabel.innerText = 'Nueva opción';
       btnCancelEditOption.style.display = 'none';
@@ -9261,12 +9292,14 @@ function setupEventListeners(container) {
         const opt = mod.options[optIndex];
         const optNameInput = container.querySelector('#new-opt-name');
         const optPriceInput = container.querySelector('#new-opt-price');
+        const optAllowMultipleInput = container.querySelector('#new-opt-allow-multiple');
         const editOptIndexInput = container.querySelector('#edit-opt-index');
         const optionFormLabel = container.querySelector('#option-form-label');
         const cancelBtn = container.querySelector('#btn-cancel-edit-option');
 
         if (optNameInput) optNameInput.value = opt.name;
         if (optPriceInput) optPriceInput.value = opt.price.toFixed(2);
+        if (optAllowMultipleInput) optAllowMultipleInput.checked = opt.allowMultiple === true;
         if (editOptIndexInput) editOptIndexInput.value = optIndex;
         if (optionFormLabel) optionFormLabel.innerText = 'Editar opción';
         if (cancelBtn) cancelBtn.style.display = 'inline-block';

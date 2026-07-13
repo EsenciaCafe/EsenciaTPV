@@ -96,7 +96,10 @@ export async function loadCatalog() {
       .map(opt => ({
         id: opt.id,
         name: opt.name,
-        price: parseFloat(opt.price)
+        price: parseFloat(opt.price),
+        // Una base todavía sin migrar no devuelve esta columna. En ese caso
+        // conservamos el comportamiento histórico: cantidades múltiples.
+        allowMultiple: opt.allow_multiple !== false
       }))
   }));
 
@@ -192,18 +195,37 @@ export async function upsertModifier(modifier) {
   }, { onConflict: 'id' });
   if (modErr) { notifyDbError('upsertModifier', modErr.message); return; }
 
-  // 2. Replace all options: delete existing, insert new
-  await supabase.from('modifier_options').delete().eq('modifier_id', modifier.id);
-
+  // 2. Guardar primero y limpiar después evita perder todas las opciones si
+  // una escritura falla por conexión o por una migración pendiente.
   if (modifier.options && modifier.options.length > 0) {
     const optRows = modifier.options.map(opt => ({
       id: opt.id,
       modifier_id: modifier.id,
       name: opt.name,
-      price: opt.price ?? 0
+      price: opt.price ?? 0,
+      allow_multiple: opt.allowMultiple === true
     }));
-    const { error: optErr } = await supabase.from('modifier_options').insert(optRows);
-    if (optErr) notifyDbError('upsertModifierOptions', optErr.message);
+    const { error: optErr } = await supabase
+      .from('modifier_options')
+      .upsert(optRows, { onConflict: 'id' });
+    if (optErr) {
+      notifyDbError('upsertModifierOptions', optErr.message);
+      return;
+    }
+
+    const activeOptionIds = optRows.map(opt => opt.id);
+    const { error: cleanupErr } = await supabase
+      .from('modifier_options')
+      .delete()
+      .eq('modifier_id', modifier.id)
+      .not('id', 'in', `(${activeOptionIds.map(id => `"${id.replace(/"/g, '\\"')}"`).join(',')})`);
+    if (cleanupErr) notifyDbError('cleanupModifierOptions', cleanupErr.message);
+  } else {
+    const { error: deleteErr } = await supabase
+      .from('modifier_options')
+      .delete()
+      .eq('modifier_id', modifier.id);
+    if (deleteErr) notifyDbError('deleteModifierOptions', deleteErr.message);
   }
 }
 

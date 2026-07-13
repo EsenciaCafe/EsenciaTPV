@@ -33,7 +33,8 @@ create table if not exists modifier_options (
   id          text primary key,
   modifier_id text not null references modifiers(id) on delete cascade,
   name        text not null,
-  price       numeric(10,2) not null default 0.00
+  price       numeric(10,2) not null default 0.00,
+  allow_multiple boolean not null default false
 );
 
 -- Grid de atajos rápidos (un registro por nivel: 'root', 'drinks', etc.)
