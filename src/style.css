@@ -2342,17 +2342,16 @@ body.light-theme .btn-quick-pay {
 /* Modal Backdrop & Dialog */
 .modal-backdrop {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(4px);
+  inset: 0;
+  background: var(--bg-card);
   display: flex;
-  justify-content: center;
-  align-items: center;
+  justify-content: stretch;
+  align-items: stretch;
+  padding: 0;
+  overflow: hidden;
+  overscroll-behavior: contain;
   z-index: 1000;
-  animation: fadeIn 0.2s ease;
+  animation: fadeIn 0.15s ease;
 }
 
 body.modal-open {
@@ -2361,23 +2360,120 @@ body.modal-open {
 
 .modal-dialog {
   background: var(--bg-card);
+  border: 0;
+  border-radius: 0 !important;
+  width: 100vw !important;
+  max-width: none !important;
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+  padding: calc(env(safe-area-inset-top, 0px) + 20px) max(20px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 20px) max(20px, env(safe-area-inset-left, 0px)) !important;
+  box-shadow: none;
+  animation: none;
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.modal-backdrop > .modal-dialog > * {
+  width: min(100%, 760px);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.modal-dialog > .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-shrink: 0;
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.modal-dialog > .modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.modal-dialog > .modal-footer {
+  flex-shrink: 0;
+}
+
+.modal-dialog > form {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.modal-dialog .modal-footer .btn {
+  min-height: 50px !important;
+}
+
+#confirm-dialog-modal .modal-dialog,
+#admin-pin-modal .modal-dialog {
+  justify-content: center;
+}
+
+#confirm-dialog-modal .modal-dialog > *,
+#admin-pin-modal .modal-dialog > * {
+  width: min(100%, 480px);
+}
+
+#generic-keypad-modal .modal-dialog > *,
+#price-edit-modal .modal-dialog > * {
+  width: min(100%, 440px);
+}
+
+.receipt-qr-dialog > * {
+  width: min(100%, 560px) !important;
+}
+
+.receipt-qr-dialog .receipt-qr-body {
+  flex: 1;
+  justify-content: center;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.modal-dialog .modal-table-grid {
+  max-height: none;
+}
+
+.modal-close-btn {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   border: 1px solid var(--border-color);
-  border-radius: var(--border-radius-lg);
-  width: 90%;
-  max-width: 450px;
-  padding: 24px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-  animation: slideUp 0.2s ease;
+  border-radius: 50%;
+  background: var(--bg-item);
+  color: var(--text-main);
+  font: 700 1.35rem/1 var(--font-family);
+  cursor: pointer;
+}
+
+.modal-close-btn svg {
+  width: 20px;
+  height: 20px;
 }
 
 .modal-header h3 {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: 1.45rem;
   color: var(--text-main);
-  font-weight: 700;
-  border-bottom: 1px solid var(--border-color);
-  padding-bottom: 12px;
-  margin-bottom: 20px;
+  font-weight: 900;
+  border-bottom: 0;
+  padding-bottom: 0;
+  margin-bottom: 0;
 }
 
 @keyframes fadeIn {
@@ -2659,17 +2755,17 @@ body.modal-open {
 }
 
 .ticket-discount-dialog {
-  width: min(560px, calc(100vw - 24px));
-  max-height: min(860px, calc(100dvh - 24px));
-  padding: 0;
+  padding: 0 !important;
   display: flex;
   flex-direction: column;
+  align-items: center;
   overflow: hidden;
 }
 
 .ticket-discount-header {
-  padding: 18px;
+  padding: calc(env(safe-area-inset-top, 0px) + 18px) 18px 18px;
   border-bottom: 1px solid var(--border-color);
+  margin-bottom: 0 !important;
 }
 
 .ticket-discount-header h3,
@@ -2684,6 +2780,7 @@ body.modal-open {
 }
 
 .ticket-discount-body {
+  flex: 1;
   min-height: 0;
   padding: 16px 18px;
   overflow-y: auto;
@@ -2822,14 +2919,6 @@ body.modal-open {
 }
 
 @media (max-width: 520px) {
-  .ticket-discount-dialog {
-    width: 100vw;
-    height: 100dvh;
-    max-width: none;
-    max-height: none;
-    border-radius: 0;
-  }
-
   .ticket-discount-footer {
     grid-template-columns: 1fr 1fr;
   }
@@ -2879,9 +2968,10 @@ body.modal-open {
   height: 100dvh;
   max-height: 100dvh;
   border-radius: 0;
-  padding: 0;
+  padding: 0 !important;
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   overflow: hidden;
   animation: none;
 }
@@ -2890,6 +2980,7 @@ body.modal-open {
   flex-shrink: 0;
   padding: calc(env(safe-area-inset-top, 0px) + 22px) 22px 16px;
   border-bottom: 1px solid var(--border-color);
+  margin-bottom: 0;
 }
 
 #modifier-selection-modal .modal-header h3.modifier-selection-title {
@@ -3013,25 +3104,6 @@ body.modal-open {
 #modifier-selection-modal .modifier-note-input {
   min-height: 108px;
   font-size: 1rem;
-}
-
-@media (min-width: 768px) {
-  #modifier-selection-modal {
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-  }
-
-  #modifier-selection-modal .modifier-selection-dialog {
-    width: min(620px, 100%);
-    height: min(760px, 94dvh);
-    max-height: 94dvh;
-    border-radius: var(--border-radius-lg);
-  }
-
-  #modifier-selection-modal .modal-header {
-    padding-top: 22px;
-  }
 }
 
 .modifier-item-quantity {
