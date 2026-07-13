@@ -447,7 +447,12 @@ function markTableReady(tableId) {
 function reopenTable(tableId) {
   const kds = getTableKds(tableId);
   resetTableStartTime(tableId);
-  state.tableKdsState[tableId] = { ...kds, status: 'waiting', readyAt: null };
+  state.tableKdsState[tableId] = {
+    ...kds,
+    status: 'waiting',
+    readyAt: null,
+    deliveredItems: []
+  };
   persistTableKdsState();
   render();
 }
@@ -693,6 +698,9 @@ function renderSettingsPanel() {
 
   const diningTables   = state.allTableDefs.filter(t => (t.type || 'table') === 'table');
   const takeawayTables = state.allTableDefs.filter(t => t.type === 'takeaway');
+  const readyTables    = state.tables.filter(t =>
+    (t.items || []).length > 0 && getTableKds(t.id).status === 'ready'
+  );
   const isVisible      = (id) => visibleTableIds === null || visibleTableIds.includes(id);
 
   const tableCheckboxes = (list) => list.map(t => {
@@ -720,6 +728,17 @@ function renderSettingsPanel() {
     <button class="kds-theme-btn ${theme === t ? 'active' : ''}" data-theme="${t}">
       ${{ light: 'Claro', dark: 'Oscuro', system: 'Sistema' }[t]}
     </button>`).join('');
+
+  const readyTableRows = readyTables.length > 0
+    ? readyTables.map(table => `
+        <div class="kds-ready-table-row">
+          <div class="kds-ready-table-info">
+            <strong>${escapeHtml(table.name)}</strong>
+            <span>${(table.items || []).reduce((total, item) => total + item.qty, 0)} artículos · marcada como lista</span>
+          </div>
+          <button class="kds-restore-ready-btn" data-table-id="${table.id}">Volver a cocina</button>
+        </div>`).join('')
+    : '<p class="kds-ready-table-empty">No hay mesas marcadas como listas.</p>';
 
   return `
     <div class="kds-settings-overlay" id="kds-settings-overlay">
@@ -763,6 +782,12 @@ function renderSettingsPanel() {
             ${renderToggleRow('kds-toggle-prices', 'Mostrar precios por artículo', '', showPrices)}
             ${renderToggleRow('kds-toggle-sound', 'Sonido al recibir comanda', 'Pitido al llegar un pedido nuevo', soundOnNew)}
             ${renderToggleRow('kds-toggle-autoreset', 'Limpiar "Listo" al cerrar comanda', 'Cuando el TPV cierra la mesa', autoResetReady)}
+          </div>
+
+          <div class="kds-settings-section">
+            <h3>Mesas listas</h3>
+            <p class="kds-settings-section-hint">Restaura una mesa marcada por error para que todos sus artículos vuelvan a aparecer en cocina.</p>
+            <div class="kds-ready-table-list">${readyTableRows}</div>
           </div>
 
           <div class="kds-settings-section">
@@ -978,6 +1003,13 @@ function setupGlobalEventListeners() {
       e.stopPropagation();
       const tableId = parseInt(readyBtn.dataset.tableId, 10);
       readyBtn.classList.contains('reopen') ? reopenTable(tableId) : markTableReady(tableId);
+      return;
+    }
+
+    const restoreReadyBtn = e.target.closest('.kds-restore-ready-btn');
+    if (restoreReadyBtn) {
+      e.stopPropagation();
+      reopenTable(parseInt(restoreReadyBtn.dataset.tableId, 10));
       return;
     }
 
