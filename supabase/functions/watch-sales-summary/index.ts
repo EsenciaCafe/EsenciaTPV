@@ -142,22 +142,29 @@ Deno.serve(async (request: Request) => {
       minimumFractionDigits: 2
     });
 
+    if (url.searchParams.get('details') === '1') {
+      return jsonResponse({
+        title: 'Ventas hoy',
+        value: formatter.format(net),
+        subtitle: `${summary.tickets} ${summary.tickets === 1 ? 'ticket' : 'tickets'}`,
+        date: today,
+        amount: net,
+        tickets: summary.tickets,
+        grossSales: roundMoney(summary.gross),
+        refunds: roundMoney(summary.refunds),
+        payments: {
+          cash: roundMoney(summary.payments.cash),
+          card: roundMoney(summary.payments.card),
+          gift: roundMoney(summary.payments.gift)
+        },
+        updatedAt: new Date().toISOString()
+      });
+    }
+
+    // ComplicaJSON turns each top-level primitive into a selectable complication.
     return jsonResponse({
-      title: 'Ventas hoy',
-      value: formatter.format(net),
-      shortValue: `${Math.round(net)} EUR`,
-      subtitle: `${summary.tickets} ${summary.tickets === 1 ? 'ticket' : 'tickets'}`,
-      date: today,
-      amount: net,
-      tickets: summary.tickets,
-      grossSales: roundMoney(summary.gross),
-      refunds: roundMoney(summary.refunds),
-      payments: {
-        cash: roundMoney(summary.payments.cash),
-        card: roundMoney(summary.payments.card),
-        gift: roundMoney(summary.payments.gift)
-      },
-      updatedAt: new Date().toISOString()
+      Ventas: formatter.format(net),
+      Tickets: summary.tickets
     });
   } catch (error) {
     console.error('[watch-sales-summary] Unexpected error', error);

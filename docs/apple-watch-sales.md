@@ -8,15 +8,12 @@ en la URL.
 
 1. Instala ComplicaJSON en el iPhone y en el Apple Watch.
 2. Crea una fuente JSON y pega la URL privada proporcionada por el administrador.
-3. Crea una complicacion rectangular con estos campos:
-   - Titulo: `title`
-   - Valor: `value`
-   - Subtitulo: `subtitle`
-4. Desde la app Watch del iPhone, edita la esfera y selecciona la complicacion de
+3. Comprueba que la fuente detecta exactamente dos valores: `Ventas` y `Tickets`.
+4. Crea una complicacion rectangular y selecciona `Ventas` como dato visible.
+5. Desde la app Watch del iPhone, edita la esfera y selecciona la complicacion de
    ComplicaJSON en uno de sus espacios.
 
-La respuesta incluye tambien `amount`, `tickets`, `grossSales`, `refunds` y el
-desglose `payments.cash`, `payments.card` y `payments.gift` para futuras variantes.
+La respuesta detallada para diagnostico se obtiene anadiendo `&details=1` a la URL.
 
 La frecuencia real de actualizacion depende de watchOS. La fuente gratuita de
 ComplicaJSON solicita actualizaciones periodicas, pero Apple puede retrasarlas para
