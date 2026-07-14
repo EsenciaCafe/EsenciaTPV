@@ -5364,6 +5364,7 @@ function showPaymentModal(totalAmount) {
   let giftCardScannerControls = null;
   let giftCardScannerReader = null;
   let cardTipAmount = 0;
+  let cardChargeTotalInput = null;
 
   const getEstimatedLoyaltyPoints = () => {
     if (!loyaltyCustomer) return 0;
@@ -5672,6 +5673,10 @@ function showPaymentModal(totalAmount) {
   };
 
   const completePaidTicket = async (paymentMethod, successMessage, paymentBreakdown = null) => {
+    if (cardChargeTotalInput !== null && cardChargeTotalInput < totalAmount - 0.009) {
+      showToast('El total cobrado no puede ser inferior al total del ticket.', 'warning');
+      return null;
+    }
     const finalPayments = preparePaymentsWithCardTip(paymentMethod, paymentBreakdown);
     if (!finalPayments) {
       showToast('La propina debe asociarse al menos a un pago con tarjeta.', 'warning');
@@ -5799,7 +5804,13 @@ function showPaymentModal(totalAmount) {
     const isDividir = selectedMethod === 'Dividir';
     const isGiftCard = selectedMethod === 'Tarjeta Regalo';
     const showsCardTip = selectedMethod === 'Tarjeta' || isDividir;
-    const cardChargeTotal = Number((totalAmount + cardTipAmount).toFixed(2));
+    const cardChargeTotal = cardChargeTotalInput === null
+      ? Number(totalAmount.toFixed(2))
+      : Number(cardChargeTotalInput.toFixed(2));
+    const cardChargeIsValid = cardChargeTotalInput === null || cardChargeTotal >= totalAmount - 0.009;
+    cardTipAmount = cardChargeIsValid
+      ? Number(Math.max(0, cardChargeTotal - totalAmount).toFixed(2))
+      : 0;
     const existingLoyaltyAward = store.getActiveLoyaltyAward();
     const loyaltyPoints = getEstimatedLoyaltyPoints();
     const giftCardBalance = Number(giftCardLookup?.balance || 0);
@@ -5842,27 +5853,36 @@ function showPaymentModal(totalAmount) {
       <div class="payment-card-tip">
         <div class="payment-card-tip-header">
           <div>
-            <strong>Propina en tarjeta</strong>
-            <span>Se cobra por BBVA y se retira el mismo importe del cajón.</span>
+            <strong>Total cobrado al cliente</strong>
+            <span>Deja el campo vacío para cobrar exactamente el total del ticket.</span>
           </div>
-          <strong class="payment-card-tip-value">${cardTipAmount.toFixed(2)}&euro;</strong>
+          <strong class="payment-card-tip-value" id="card-tip-calculated">+${cardTipAmount.toFixed(2)}&euro;</strong>
         </div>
-        <div class="payment-card-tip-actions">
-          ${[0, 1, 2, 5].map(value => `
-            <button type="button" class="card-tip-quick-btn ${cardTipAmount === value ? 'active' : ''}" data-card-tip="${value}">
-              ${value === 0 ? 'Sin propina' : `${value}&euro;`}
-            </button>
-          `).join('')}
-          <button type="button" class="card-tip-quick-btn ${![0, 1, 2, 5].includes(cardTipAmount) ? 'active' : ''}" id="card-tip-custom-btn">
-            Otro
-          </button>
-        </div>
-        ${selectedMethod === 'Tarjeta' && cardTipAmount > 0 ? `
-          <div class="payment-card-tip-total">
-            <span>Total a introducir en el datáfono</span>
-            <strong>${cardChargeTotal.toFixed(2)}&euro;</strong>
+        <label class="payment-card-charge-field">
+          <span>Total final cobrado</span>
+          <div>
+            <input id="card-charge-total-input" type="number" min="${totalAmount.toFixed(2)}" step="0.01" inputmode="decimal" value="${cardChargeTotalInput ?? ''}" placeholder="${totalAmount.toFixed(2)}">
+            <strong>&euro;</strong>
           </div>
-        ` : ''}
+        </label>
+        <div class="payment-card-tip-breakdown">
+          <div>
+            <span>Total del ticket</span>
+            <strong>${totalAmount.toFixed(2)}&euro;</strong>
+          </div>
+          <div>
+            <span>Propina calculada</span>
+            <strong id="card-tip-breakdown-value">${cardTipAmount.toFixed(2)}&euro;</strong>
+          </div>
+          <div>
+            <span>${isDividir ? 'Total conjunto cobrado' : 'Total a introducir en el datáfono'}</span>
+            <strong id="card-charge-total-display">${cardChargeTotal.toFixed(2)}&euro;</strong>
+          </div>
+        </div>
+        <p class="payment-card-charge-error" id="card-charge-error" ${cardChargeIsValid ? 'hidden' : ''}>
+          El total cobrado no puede ser inferior al total del ticket.
+        </p>
+        ${isDividir ? '<p class="payment-card-charge-note">En un pago dividido, introduce la suma final de todos los pagos, incluida la propina.</p>' : ''}
       </div>
     ` : '';
 
@@ -5899,7 +5919,7 @@ function showPaymentModal(totalAmount) {
       methodSpecificHTML = `
         <div class="payment-card-section" style="margin-top: 24px; text-align:center; padding: 16px 0; animation: fadeIn 0.2s ease;">
           <div class="loading-spinner" style="margin: 0 auto; width: 44px; height: 44px;"></div>
-          <p style="margin-top:16px; font-weight:700; color:var(--text-main); font-size:1rem;">Cobrar ${cardChargeTotal.toFixed(2)}&euro; en el datáfono</p>
+          <p style="margin-top:16px; font-weight:700; color:var(--text-main); font-size:1rem;">Cobrar <span id="card-terminal-total">${cardChargeTotal.toFixed(2)}&euro;</span> en el datáfono</p>
           <span style="font-size:0.75rem; color:var(--text-muted); display:block; margin-top:4px;">(Puedes pulsar "Confirmar Pago" para simular cobro exitoso)</span>
         </div>
       `;
@@ -6181,7 +6201,7 @@ function showPaymentModal(totalAmount) {
         </div>
         <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px; border-top: 1px solid var(--border-color); padding-top: 12px; flex-shrink:0;">
           <button class="btn btn-secondary" id="payment-cancel-btn" style="height:40px; padding:0 16px; font-weight:600; border-radius:var(--border-radius-md); background:var(--bg-item); border:1px solid var(--border-color); color:var(--text-main); cursor:pointer; font-size:0.85rem;">Cancelar</button>
-          ${!isDividir ? `<button class="btn btn-primary" id="payment-confirm-btn" ${giftCardBusy ? 'disabled' : ''} style="height:40px; padding:0 20px; font-weight:600; border-radius:var(--border-radius-md); background:var(--secondary); border:none; color:white; cursor:pointer; font-size:0.85rem; ${giftCardBusy ? 'opacity:0.65;' : ''}">${giftCardBusy ? 'Procesando...' : selectedMethod === 'Tarjeta' && cardTipAmount > 0 ? `Confirmar ${cardChargeTotal.toFixed(2)}&euro;` : 'Confirmar Pago'}</button>` : ''}
+          ${!isDividir ? `<button class="btn btn-primary" id="payment-confirm-btn" ${giftCardBusy || !cardChargeIsValid ? 'disabled' : ''} style="height:40px; padding:0 20px; font-weight:600; border-radius:var(--border-radius-md); background:var(--secondary); border:none; color:white; cursor:pointer; font-size:0.85rem; ${giftCardBusy || !cardChargeIsValid ? 'opacity:0.65;' : ''}">${giftCardBusy ? 'Procesando...' : selectedMethod === 'Tarjeta' ? `Confirmar ${cardChargeTotal.toFixed(2)}&euro;` : 'Confirmar Pago'}</button>` : ''}
         </div>
       </div>
     `;
@@ -6196,6 +6216,7 @@ function showPaymentModal(totalAmount) {
         selectedMethod = card.dataset.method;
         if (selectedMethod !== 'Tarjeta' && selectedMethod !== 'Dividir') {
           cardTipAmount = 0;
+          cardChargeTotalInput = null;
         }
         if (selectedMethod === 'Efectivo') {
           cashReceived = totalAmount;
@@ -6276,24 +6297,41 @@ function showPaymentModal(totalAmount) {
       });
     });
 
-    modal.querySelectorAll('.card-tip-quick-btn[data-card-tip]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        cardTipAmount = Math.max(0, Number(btn.dataset.cardTip || 0));
-        renderPaymentContent();
-      });
-    });
+    const cardChargeInput = modal.querySelector('#card-charge-total-input');
+    if (cardChargeInput) {
+      cardChargeInput.addEventListener('input', () => {
+        const rawValue = cardChargeInput.value.trim();
+        const parsedValue = Number(rawValue);
+        cardChargeTotalInput = rawValue === '' || !Number.isFinite(parsedValue)
+          ? null
+          : Number(parsedValue.toFixed(2));
 
-    const customCardTipBtn = modal.querySelector('#card-tip-custom-btn');
-    if (customCardTipBtn) {
-      customCardTipBtn.addEventListener('click', () => {
-        showNumericKeypadModal({
-          title: 'Propina en tarjeta',
-          placeholder: cardTipAmount || 0,
-          onSave: (value) => {
-            cardTipAmount = Number(Math.max(0, Number(value || 0)).toFixed(2));
-            renderPaymentContent();
+        const effectiveChargeTotal = cardChargeTotalInput === null ? totalAmount : cardChargeTotalInput;
+        const isValid = cardChargeTotalInput === null || effectiveChargeTotal >= totalAmount - 0.009;
+        cardTipAmount = isValid
+          ? Number(Math.max(0, effectiveChargeTotal - totalAmount).toFixed(2))
+          : 0;
+
+        const tipHeader = modal.querySelector('#card-tip-calculated');
+        const tipBreakdown = modal.querySelector('#card-tip-breakdown-value');
+        const chargeDisplay = modal.querySelector('#card-charge-total-display');
+        const terminalTotal = modal.querySelector('#card-terminal-total');
+        const chargeError = modal.querySelector('#card-charge-error');
+        const paymentConfirmBtn = modal.querySelector('#payment-confirm-btn');
+        const formattedCharge = `${Number(effectiveChargeTotal || 0).toFixed(2)}€`;
+
+        if (tipHeader) tipHeader.textContent = `+${cardTipAmount.toFixed(2)}€`;
+        if (tipBreakdown) tipBreakdown.textContent = `${cardTipAmount.toFixed(2)}€`;
+        if (chargeDisplay) chargeDisplay.textContent = formattedCharge;
+        if (terminalTotal) terminalTotal.textContent = formattedCharge;
+        if (chargeError) chargeError.hidden = isValid;
+        if (paymentConfirmBtn) {
+          paymentConfirmBtn.disabled = giftCardBusy || !isValid;
+          paymentConfirmBtn.style.opacity = giftCardBusy || !isValid ? '0.65' : '1';
+          if (!giftCardBusy && selectedMethod === 'Tarjeta') {
+            paymentConfirmBtn.textContent = `Confirmar ${formattedCharge}`;
           }
-        });
+        }
       });
     }
 

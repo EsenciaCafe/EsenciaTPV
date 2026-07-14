@@ -3703,54 +3703,95 @@ button.modifier-option-row {
   font-size: 1.05rem;
 }
 
-.payment-card-tip-actions {
+.payment-card-charge-field {
   display: grid;
-  gap: 7px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
 }
 
-.card-tip-quick-btn {
+.payment-card-charge-field > span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.payment-card-charge-field > div {
+  align-items: center;
   background: var(--bg-main);
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius-sm);
-  color: var(--text-main);
-  cursor: pointer;
-  font-family: var(--font-family);
-  font-size: 0.76rem;
-  font-weight: 800;
-  min-height: 40px;
-  padding: 6px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  min-height: 48px;
+  padding: 0 14px;
 }
 
-.card-tip-quick-btn.active {
-  background: rgba(16, 185, 129, 0.12);
+.payment-card-charge-field:focus-within > div {
   border-color: var(--secondary);
-  color: var(--secondary);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.2);
 }
 
-.payment-card-tip-total {
-  align-items: center;
-  border-top: 1px dashed var(--border-color);
-  display: flex;
-  font-size: 0.82rem;
-  gap: 12px;
-  justify-content: space-between;
-  padding-top: 10px;
+.payment-card-charge-field input {
+  background: transparent;
+  border: 0;
+  color: var(--text-main);
+  font-family: var(--font-family);
+  font-size: 1.12rem;
+  font-weight: 800;
+  min-width: 0;
+  outline: 0;
+  width: 100%;
 }
 
-.payment-card-tip-total span {
+.payment-card-charge-field input::placeholder {
   color: var(--text-muted);
+  opacity: 0.65;
 }
 
-.payment-card-tip-total strong {
-  color: var(--secondary);
+.payment-card-charge-field > div > strong {
+  color: var(--text-muted);
   font-size: 1rem;
 }
 
-@media (max-width: 520px) {
-  .payment-card-tip-actions {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
+.payment-card-tip-breakdown {
+  border-top: 1px dashed var(--border-color);
+  display: grid;
+  gap: 7px;
+  padding-top: 10px;
+}
+
+.payment-card-tip-breakdown > div {
+  align-items: center;
+  display: flex;
+  font-size: 0.78rem;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.payment-card-tip-breakdown span,
+.payment-card-charge-note {
+  color: var(--text-muted);
+}
+
+.payment-card-tip-breakdown strong {
+  color: var(--text-main);
+}
+
+.payment-card-tip-breakdown > div:last-child strong {
+  color: var(--secondary);
+  font-size: 0.95rem;
+}
+
+.payment-card-charge-error,
+.payment-card-charge-note {
+  font-size: 0.72rem;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.payment-card-charge-error {
+  color: var(--danger);
+  font-weight: 700;
 }
 
 .payment-loyalty-box {
