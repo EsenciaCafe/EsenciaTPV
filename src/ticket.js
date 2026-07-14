@@ -12,6 +12,8 @@ function getPaymentBreakdown(tx = {}) {
       .map(payment => ({
         method: payment.method || tx.paymentMethod || 'Pago',
         amount: Number(payment.amount || 0),
+        saleAmount: Number(payment.saleAmount ?? payment.amount ?? 0),
+        tipAmount: Number(payment.tipAmount || 0),
         provider: payment.provider || ''
       }))
       .filter(payment => payment.amount > 0 || payment.method);
@@ -19,7 +21,9 @@ function getPaymentBreakdown(tx = {}) {
 
   return [{
     method: tx.paymentMethod || 'Pago',
-    amount: Number(tx.total || 0),
+    amount: Number(tx.totalCharged ?? (Number(tx.total || 0) + Math.max(0, Number(tx.tipAmount || 0)))),
+    saleAmount: Number(tx.total || 0),
+    tipAmount: Math.max(0, Number(tx.tipAmount || 0)),
     provider: String(tx.paymentMethod || '').toLowerCase().includes('tarjeta') ? 'BBVA' : ''
   }];
 }
@@ -48,6 +52,8 @@ function summarizePayments(tx = {}) {
 function renderTicket(tx) {
   const items = Array.isArray(tx.items) ? tx.items : [];
   const total = Number(tx.total || 0);
+  const tipAmount = Math.max(0, Number(tx.tipAmount || 0));
+  const totalCharged = Number(tx.totalCharged ?? (total + tipAmount));
   const fiscal = tx.fiscalData || null;
   const displayNumber = fiscal?.fiscalNumber || tx.id;
   const legal = tx.legalData || {
@@ -157,11 +163,17 @@ function renderTicket(tx) {
           <span>${taxName} (${taxRate}% Incluido)</span>
           <span>${formatMoney(cuotaImpuesto)}</span>
         </div>
+        ${tipAmount > 0 ? `
+          <div style="display:flex; justify-content:space-between; color:var(--text); padding-top:6px; border-top:1px dashed var(--border);">
+            <span>Propina en tarjeta (no incluida en la venta)</span>
+            <span>${formatMoney(tipAmount)}</span>
+          </div>
+        ` : ''}
       </div>
 
       <footer class="receipt-total">
-        <span>Total a Pagar</span>
-        <strong>${formatMoney(total)}</strong>
+        <span>${tipAmount > 0 ? 'Total cobrado' : 'Total a Pagar'}</span>
+        <strong>${formatMoney(totalCharged)}</strong>
       </footer>
     </section>
 
@@ -179,6 +191,8 @@ function buildReceiptImageCanvas(tx) {
   const fiscal = tx.fiscalData || null;
   const displayNumber = fiscal?.fiscalNumber || tx.id;
   const paymentSummary = summarizePayments(tx);
+  const tipAmount = Math.max(0, Number(tx.tipAmount || 0));
+  const totalCharged = Number(tx.totalCharged ?? (Number(tx.total || 0) + tipAmount));
   const detailRows = [];
 
   items.forEach(item => {
@@ -207,7 +221,8 @@ function buildReceiptImageCanvas(tx) {
   const padding = 48;
   const rowHeight = 42;
   const paymentExtraHeight = paymentSummary.count > 1 ? 42 + (paymentSummary.rows.length * 32) : 0;
-  const height = Math.max(920, 560 + detailRows.length * rowHeight + paymentExtraHeight);
+  const tipExtraHeight = tipAmount > 0 ? 40 : 0;
+  const height = Math.max(920, 560 + detailRows.length * rowHeight + paymentExtraHeight + tipExtraHeight);
   const scale = Math.max(2, Math.floor(window.devicePixelRatio || 1));
   const canvas = document.createElement('canvas');
   canvas.width = width * scale;
@@ -321,10 +336,16 @@ function buildReceiptImageCanvas(tx) {
   drawText(formatMoney(cuotaImpuesto), width - padding, y, 20, '600', 'right', '#666666');
   y += 32;
 
+  if (tipAmount > 0) {
+    drawText('Propina en tarjeta (no incluida en la venta)', padding, y, 20, '600', 'left', '#666666');
+    drawText(formatMoney(tipAmount), width - padding, y, 20, '700', 'right', '#111111');
+    y += 36;
+  }
+
   drawRule(y);
   y += 32;
-  drawText('Total a Pagar', padding, y, 34, '800');
-  drawText(formatMoney(tx.total), width - padding, y, 34, '800', 'right');
+  drawText(tipAmount > 0 ? 'Total cobrado' : 'Total a Pagar', padding, y, 34, '800');
+  drawText(formatMoney(totalCharged), width - padding, y, 34, '800', 'right');
   y += 72;
   drawText('Gracias por tu visita.', width / 2, y, 24, '600', 'center', '#333333');
 

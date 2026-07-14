@@ -3663,6 +3663,96 @@ button.modifier-option-row {
   background-color: rgba(255, 255, 255, 0.02) !important;
 }
 
+.payment-card-tip {
+  background: var(--bg-item);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 14px;
+}
+
+.payment-card-tip-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.payment-card-tip-header strong,
+.payment-card-tip-header span {
+  display: block;
+}
+
+.payment-card-tip-header > div > strong {
+  color: var(--text-main);
+  font-size: 0.9rem;
+}
+
+.payment-card-tip-header span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  margin-top: 3px;
+}
+
+.payment-card-tip-value {
+  color: var(--secondary);
+  flex-shrink: 0;
+  font-size: 1.05rem;
+}
+
+.payment-card-tip-actions {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.card-tip-quick-btn {
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  color: var(--text-main);
+  cursor: pointer;
+  font-family: var(--font-family);
+  font-size: 0.76rem;
+  font-weight: 800;
+  min-height: 40px;
+  padding: 6px;
+}
+
+.card-tip-quick-btn.active {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: var(--secondary);
+  color: var(--secondary);
+}
+
+.payment-card-tip-total {
+  align-items: center;
+  border-top: 1px dashed var(--border-color);
+  display: flex;
+  font-size: 0.82rem;
+  gap: 12px;
+  justify-content: space-between;
+  padding-top: 10px;
+}
+
+.payment-card-tip-total span {
+  color: var(--text-muted);
+}
+
+.payment-card-tip-total strong {
+  color: var(--secondary);
+  font-size: 1rem;
+}
+
+@media (max-width: 520px) {
+  .payment-card-tip-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 .payment-loyalty-box {
   background: var(--bg-item);
   border: 1px solid var(--border-color);

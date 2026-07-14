@@ -226,6 +226,8 @@ function getPaymentBreakdown(tx = {}) {
       .map(payment => ({
         method: payment.method || tx.paymentMethod || 'Pago',
         amount: Number(payment.amount || 0),
+        saleAmount: Number(payment.saleAmount ?? payment.amount ?? 0),
+        tipAmount: Number(payment.tipAmount || 0),
         provider: payment.provider || ''
       }))
       .filter(payment => payment.amount > 0 || payment.method);
@@ -233,7 +235,9 @@ function getPaymentBreakdown(tx = {}) {
 
   return [{
     method: tx.paymentMethod || 'Pago',
-    amount: Number(tx.total || 0),
+    amount: Number(tx.totalCharged ?? (Number(tx.total || 0) + Math.max(0, Number(tx.tipAmount || 0)))),
+    saleAmount: Number(tx.total || 0),
+    tipAmount: Math.max(0, Number(tx.tipAmount || 0)),
     provider: String(tx.paymentMethod || '').toLowerCase().includes('tarjeta') ? 'BBVA' : ''
   }];
 }
@@ -272,7 +276,7 @@ function applyTransactionPaymentsToBuckets(tx = {}, buckets = {}) {
   getPaymentBreakdown(tx).forEach(payment => {
     const bucket = normalizePaymentBucket(payment.method);
     if (!(bucket in buckets)) buckets[bucket] = 0;
-    buckets[bucket] += Number(payment.amount || 0) * sign;
+    buckets[bucket] += Number(payment.saleAmount ?? payment.amount ?? 0) * sign;
   });
   return buckets;
 }
@@ -1176,6 +1180,8 @@ function showTransactionDetailModal(transactionId) {
   if (!tx) return;
 
   const total = Number(tx.total || 0);
+  const tipAmount = tx.type === 'refund' ? 0 : Math.max(0, Number(tx.tipAmount || 0));
+  const totalCharged = Number(tx.totalCharged ?? (total + tipAmount));
   const fiscal = tx.fiscalData || null;
   const txDisplayNumber = fiscal?.fiscalNumber || tx.id;
   const legal = tx.legalData || {
@@ -1326,11 +1332,17 @@ function showTransactionDetailModal(transactionId) {
             <span>${taxName} (${taxRate}% Incluido)</span>
             <strong>${cuotaImpuesto.toFixed(2)}€</strong>
           </div>
+          ${tipAmount > 0 ? `
+            <div style="display:flex; justify-content:space-between; padding-top:6px; border-top:1px dashed var(--border-color); color:var(--text-main);">
+              <span>Propina en tarjeta</span>
+              <strong>${tipAmount.toFixed(2)}€</strong>
+            </div>
+          ` : ''}
         </div>
 
         <div class="tx-detail-total">
           <span>${tx.type === 'refund' ? 'Total devuelto' : 'Total cobrado'}</span>
-          <strong class="${tx.type === 'refund' ? 'text-danger' : ''}">${total.toFixed(2)}€</strong>
+          <strong class="${tx.type === 'refund' ? 'text-danger' : ''}">${(tx.type === 'refund' ? total : totalCharged).toFixed(2)}€</strong>
         </div>
         <div style="display:flex; flex-direction:column; gap:8px;">
           <button class="pay-btn-opt primary tx-detail-share-btn" id="tx-detail-share-btn" style="height: 40px; font-size: 0.9rem;">
@@ -2000,8 +2012,10 @@ function renderAjustesView(state) {
             </div>
             <div class="accounting-summary-grid">
               <div><span>Ventas netas</span><strong>${summary.netTotal.toFixed(2)}€</strong></div>
-              <div><span>Efectivo app</span><strong>${summary.expectedCash.toFixed(2)}€</strong></div>
-              <div><span>Tarjeta app</span><strong>${summary.expectedCard.toFixed(2)}€</strong></div>
+              <div><span>Ventas en efectivo</span><strong>${summary.cashPayments.toFixed(2)}€</strong></div>
+              <div><span>Propinas tarjeta</span><strong>${summary.totalTips.toFixed(2)}€</strong></div>
+              <div><span>Efectivo neto cajón</span><strong>${summary.expectedCash.toFixed(2)}€</strong></div>
+              <div><span>Total esperado BBVA</span><strong>${summary.expectedCard.toFixed(2)}€</strong></div>
               <div><span>Regalo online Square</span><strong>${summary.squareGiftCardOnlineSales.toFixed(2)}€</strong></div>
               <div><span>Devoluciones</span><strong>${summary.totalRefunds.toFixed(2)}€</strong></div>
               <div><span>Tickets</span><strong>${summary.transactionsCount}</strong></div>
@@ -2025,7 +2039,7 @@ function renderAjustesView(state) {
               <div class="${Math.abs(cashDifference) > 0.009 ? 'needs-review' : ''}"><span>Diferencia efectivo</span><strong>${cashDifference.toFixed(2)}€</strong></div>
               <div class="${Math.abs(cardDifference) > 0.009 ? 'needs-review' : ''}"><span>Diferencia BBVA</span><strong>${cardDifference.toFixed(2)}€</strong></div>
             </div>
-            <div id="closure-live-preview" class="gemini-muted" data-expected-cash="${summary.expectedCash}" data-expected-card="${summary.expectedCard}" data-square-online="${summary.squareGiftCardOnlineSales}" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
+            <div id="closure-live-preview" class="gemini-muted" data-expected-cash="${summary.expectedCash}" data-cash-payments="${summary.cashPayments}" data-total-tips="${summary.totalTips}" data-expected-card="${summary.expectedCard}" data-square-online="${summary.squareGiftCardOnlineSales}" style="padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius-md); background:var(--bg-item);">
               Introduce el efectivo contado y pulsa Calcular descuadre antes de cerrar el turno.
             </div>
             <button type="button" class="btn btn-secondary" id="closure-calc-btn" style="height:44px;">
@@ -2489,6 +2503,7 @@ function renderAjustesView(state) {
     let totalGross = 0;
     let totalRefunds = 0;
     let totalDiscounts = 0;
+    let totalTips = 0;
     const paymentMethods = {
       'Efectivo': 0,
       'Tarjeta': 0,
@@ -2504,6 +2519,7 @@ function renderAjustesView(state) {
         const discount = Number(tx.discountTotal || 0);
         totalDiscounts += discount;
         totalGross += Number(tx.grossTotal ?? (val + discount));
+        totalTips += Math.max(0, Number(tx.tipAmount || 0));
       }
       applyTransactionPaymentsToBuckets(tx, paymentMethods);
     });
@@ -2709,6 +2725,11 @@ function renderAjustesView(state) {
               <span class="reports-kpi-val" style="color:#f59e0b;">${totalDiscounts.toFixed(2)}€</span>
               <span style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">Aplicados</span>
             </div>
+            <div class="reports-kpi-card">
+              <span class="reports-kpi-label">Propinas tarjeta</span>
+              <span class="reports-kpi-val" style="color:var(--secondary);">${totalTips.toFixed(2)}€</span>
+              <span style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">Retiradas del cajón</span>
+            </div>
           </div>
 
           <!-- Payment Methods Breakdown Section -->
@@ -2727,6 +2748,12 @@ function renderAjustesView(state) {
                 <span style="font-weight: 600;">Tarjeta Regalo</span>
                 <strong style="color: var(--secondary);">${paymentMethods['Tarjeta Regalo'].toFixed(2)}€</strong>
               </div>
+              ${totalTips > 0 ? `
+                <div style="display:flex; justify-content:space-between; align-items:center; padding-top:6px; border-top:1px dashed var(--border-color);">
+                  <span style="font-weight:600;">Propina cargada por BBVA</span>
+                  <strong style="color:var(--secondary);">+${totalTips.toFixed(2)}€</strong>
+                </div>
+              ` : ''}
             </div>
           </div>
 
@@ -2783,6 +2810,7 @@ function renderAjustesView(state) {
     let totalGross = 0;
     let totalRefunds = 0;
     let totalDiscounts = 0;
+    let totalTips = 0;
     let cashSales = 0;
     let cardSales = 0;
     const txCount = monthTx.filter(t => t.type !== 'refund').length;
@@ -2803,7 +2831,8 @@ function renderAjustesView(state) {
           refunds: 0,
           net: 0,
           cash: 0,
-          card: 0
+          card: 0,
+          tips: 0
         };
       }
 
@@ -2822,6 +2851,9 @@ function renderAjustesView(state) {
         dailyAgg[day].gross += Number(tx.grossTotal ?? (val + discount));
         dailyAgg[day].discounts += discount;
         dailyAgg[day].net += val; // positive
+        const tipAmount = Math.max(0, Number(tx.tipAmount || 0));
+        totalTips += tipAmount;
+        dailyAgg[day].tips += tipAmount;
       }
       cashSales += paymentTotals.Efectivo;
       cardSales += paymentTotals.Tarjeta;
@@ -2846,6 +2878,7 @@ function renderAjustesView(state) {
         <td style="text-align: right;">${day.count}</td>
         <td style="text-align: right; color: #f59e0b;">${day.cash.toFixed(2)}€</td>
         <td style="text-align: right; color: #3b82f6;">${day.card.toFixed(2)}€</td>
+        <td style="text-align: right; color: var(--secondary);">${day.tips.toFixed(2)}€</td>
         <td style="text-align: right; color: var(--danger); font-size: 0.85rem;">${day.refunds > 0 ? `-${day.refunds.toFixed(2)}€` : '0.00€'}</td>
         <td style="text-align: right; color: var(--secondary); font-size: 0.85rem;">${day.discounts > 0 ? `-${day.discounts.toFixed(2)}€` : '0.00€'}</td>
         <td style="text-align: right; font-weight: 700; color: ${day.net >= 0 ? 'var(--secondary)' : 'var(--danger)'};">${day.net.toFixed(2)}€</td>
@@ -2893,6 +2926,10 @@ function renderAjustesView(state) {
               <span class="reports-kpi-label">Descuentos / Invitaciones</span>
               <span class="reports-kpi-val" style="color:var(--secondary);">${totalDiscounts.toFixed(2)}€</span>
             </div>
+            <div class="reports-kpi-card">
+              <span class="reports-kpi-label">Propinas tarjeta</span>
+              <span class="reports-kpi-val" style="color:var(--secondary);">${totalTips.toFixed(2)}€</span>
+            </div>
           </div>
 
           <!-- Export Action -->
@@ -2916,13 +2953,14 @@ function renderAjustesView(state) {
                     <th style="padding: 10px 8px; text-align: right;">Pedidos</th>
                     <th style="padding: 10px 8px; text-align: right;">Efectivo</th>
                     <th style="padding: 10px 8px; text-align: right;">Tarjeta</th>
+                    <th style="padding: 10px 8px; text-align: right;">Propinas</th>
                     <th style="padding: 10px 8px; text-align: right;">Devoluciones</th>
                     <th style="padding: 10px 8px; text-align: right;">Descuentos</th>
                     <th style="padding: 10px 8px; text-align: right;">Total Neto</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${tableRowsHTML ? tableRowsHTML : `<tr><td colspan="7" style="text-align: center; padding: 20px; color: var(--text-muted);">No hay ventas este mes</td></tr>`}
+                  ${tableRowsHTML ? tableRowsHTML : `<tr><td colspan="8" style="text-align: center; padding: 20px; color: var(--text-muted);">No hay ventas este mes</td></tr>`}
                 </tbody>
                 ${sortedDays.length > 0 ? `
                   <tfoot>
@@ -2931,6 +2969,7 @@ function renderAjustesView(state) {
                       <td style="padding: 10px 8px; text-align: right;">${txCount}</td>
                       <td style="padding: 10px 8px; text-align: right; color: #f59e0b;">${cashSales.toFixed(2)}€</td>
                       <td style="padding: 10px 8px; text-align: right; color: #3b82f6;">${cardSales.toFixed(2)}€</td>
+                      <td style="padding: 10px 8px; text-align: right; color: var(--secondary);">${totalTips.toFixed(2)}€</td>
                       <td style="padding: 10px 8px; text-align: right; color: var(--danger); font-size: 0.85rem;">-${totalRefunds.toFixed(2)}€</td>
                       <td style="padding: 10px 8px; text-align: right; color: var(--secondary); font-size: 0.85rem;">-${totalDiscounts.toFixed(2)}€</td>
                       <td style="padding: 10px 8px; text-align: right; color: var(--secondary); font-size: 1.05rem;">${totalNet.toFixed(2)}€</td>
@@ -5324,6 +5363,7 @@ function showPaymentModal(totalAmount) {
   let giftCardScannerActive = false;
   let giftCardScannerControls = null;
   let giftCardScannerReader = null;
+  let cardTipAmount = 0;
 
   const getEstimatedLoyaltyPoints = () => {
     if (!loyaltyCustomer) return 0;
@@ -5599,7 +5639,45 @@ function showPaymentModal(totalAmount) {
     }
   };
 
+  const preparePaymentsWithCardTip = (paymentMethod, paymentBreakdown = null) => {
+    const payments = (paymentBreakdown || [{
+      method: paymentMethod,
+      amount: totalAmount,
+      provider: paymentMethod.toLowerCase().includes('regalo')
+        ? 'Square'
+        : paymentMethod.toLowerCase().includes('tarjeta') ? 'BBVA' : ''
+    }]).map(payment => ({
+      ...payment,
+      amount: Number(payment.amount || 0),
+      saleAmount: Number(payment.saleAmount ?? payment.amount ?? 0),
+      tipAmount: Number(payment.tipAmount || 0)
+    }));
+
+    if (cardTipAmount <= 0) return payments;
+
+    const cardPaymentIndex = payments.findIndex(payment => {
+      const method = String(payment.method || '').toLowerCase();
+      return (method.includes('tarjeta') || method.includes('card') || method.includes('bbva'))
+        && !method.includes('regalo')
+        && !method.includes('gift');
+    });
+    if (cardPaymentIndex === -1) return null;
+
+    payments[cardPaymentIndex] = {
+      ...payments[cardPaymentIndex],
+      amount: Number((payments[cardPaymentIndex].amount + cardTipAmount).toFixed(2)),
+      tipAmount: Number((payments[cardPaymentIndex].tipAmount + cardTipAmount).toFixed(2))
+    };
+    return payments;
+  };
+
   const completePaidTicket = async (paymentMethod, successMessage, paymentBreakdown = null) => {
+    const finalPayments = preparePaymentsWithCardTip(paymentMethod, paymentBreakdown);
+    if (!finalPayments) {
+      showToast('La propina debe asociarse al menos a un pago con tarjeta.', 'warning');
+      return null;
+    }
+    const totalCharged = finalPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
     const loyaltySnapshot = loyaltyCustomer ? { ...loyaltyCustomer } : null;
     const existingLoyaltyAward = store.getActiveLoyaltyAward();
     const transaction = store.payActiveTicket(paymentMethod, loyaltySnapshot ? {
@@ -5609,8 +5687,14 @@ function showPaymentModal(totalAmount) {
         rfidUid: loyaltySnapshot.rfidUid,
         tier: loyaltySnapshot.tier
       },
-      ...(paymentBreakdown ? { payments: paymentBreakdown } : {})
-    } : (paymentBreakdown ? { payments: paymentBreakdown } : {}));
+      payments: finalPayments,
+      tipAmount: cardTipAmount,
+      totalCharged
+    } : {
+      payments: finalPayments,
+      tipAmount: cardTipAmount,
+      totalCharged
+    });
 
     if (transaction && loyaltySnapshot && !existingLoyaltyAward) {
       try {
@@ -5634,6 +5718,7 @@ function showPaymentModal(totalAmount) {
     isDrawerOpen = false;
     stopGiftCardScanner();
     modal.remove();
+    return transaction;
   };
 
   // ── 1. Estado Partes Iguales
@@ -5713,6 +5798,8 @@ function showPaymentModal(totalAmount) {
     const isEfectivo = selectedMethod === 'Efectivo';
     const isDividir = selectedMethod === 'Dividir';
     const isGiftCard = selectedMethod === 'Tarjeta Regalo';
+    const showsCardTip = selectedMethod === 'Tarjeta' || isDividir;
+    const cardChargeTotal = Number((totalAmount + cardTipAmount).toFixed(2));
     const existingLoyaltyAward = store.getActiveLoyaltyAward();
     const loyaltyPoints = getEstimatedLoyaltyPoints();
     const giftCardBalance = Number(giftCardLookup?.balance || 0);
@@ -5751,6 +5838,33 @@ function showPaymentModal(totalAmount) {
         </button>
       </div>
     `;
+    const cardTipHTML = showsCardTip ? `
+      <div class="payment-card-tip">
+        <div class="payment-card-tip-header">
+          <div>
+            <strong>Propina en tarjeta</strong>
+            <span>Se cobra por BBVA y se retira el mismo importe del cajón.</span>
+          </div>
+          <strong class="payment-card-tip-value">${cardTipAmount.toFixed(2)}&euro;</strong>
+        </div>
+        <div class="payment-card-tip-actions">
+          ${[0, 1, 2, 5].map(value => `
+            <button type="button" class="card-tip-quick-btn ${cardTipAmount === value ? 'active' : ''}" data-card-tip="${value}">
+              ${value === 0 ? 'Sin propina' : `${value}&euro;`}
+            </button>
+          `).join('')}
+          <button type="button" class="card-tip-quick-btn ${![0, 1, 2, 5].includes(cardTipAmount) ? 'active' : ''}" id="card-tip-custom-btn">
+            Otro
+          </button>
+        </div>
+        ${selectedMethod === 'Tarjeta' && cardTipAmount > 0 ? `
+          <div class="payment-card-tip-total">
+            <span>Total a introducir en el datáfono</span>
+            <strong>${cardChargeTotal.toFixed(2)}&euro;</strong>
+          </div>
+        ` : ''}
+      </div>
+    ` : '';
 
     let methodSpecificHTML = '';
     if (isEfectivo) {
@@ -5785,7 +5899,7 @@ function showPaymentModal(totalAmount) {
       methodSpecificHTML = `
         <div class="payment-card-section" style="margin-top: 24px; text-align:center; padding: 16px 0; animation: fadeIn 0.2s ease;">
           <div class="loading-spinner" style="margin: 0 auto; width: 44px; height: 44px;"></div>
-          <p style="margin-top:16px; font-weight:600; color:var(--text-muted); font-size:0.9rem;">Esperando respuesta del datáfono...</p>
+          <p style="margin-top:16px; font-weight:700; color:var(--text-main); font-size:1rem;">Cobrar ${cardChargeTotal.toFixed(2)}&euro; en el datáfono</p>
           <span style="font-size:0.75rem; color:var(--text-muted); display:block; margin-top:4px;">(Puedes pulsar "Confirmar Pago" para simular cobro exitoso)</span>
         </div>
       `;
@@ -6062,11 +6176,12 @@ function showPaymentModal(totalAmount) {
             </button>
           </div>
 
+          ${cardTipHTML}
           ${methodSpecificHTML}
         </div>
         <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px; border-top: 1px solid var(--border-color); padding-top: 12px; flex-shrink:0;">
           <button class="btn btn-secondary" id="payment-cancel-btn" style="height:40px; padding:0 16px; font-weight:600; border-radius:var(--border-radius-md); background:var(--bg-item); border:1px solid var(--border-color); color:var(--text-main); cursor:pointer; font-size:0.85rem;">Cancelar</button>
-          ${!isDividir ? `<button class="btn btn-primary" id="payment-confirm-btn" ${giftCardBusy ? 'disabled' : ''} style="height:40px; padding:0 20px; font-weight:600; border-radius:var(--border-radius-md); background:var(--secondary); border:none; color:white; cursor:pointer; font-size:0.85rem; ${giftCardBusy ? 'opacity:0.65;' : ''}">${giftCardBusy ? 'Procesando...' : 'Confirmar Pago'}</button>` : ''}
+          ${!isDividir ? `<button class="btn btn-primary" id="payment-confirm-btn" ${giftCardBusy ? 'disabled' : ''} style="height:40px; padding:0 20px; font-weight:600; border-radius:var(--border-radius-md); background:var(--secondary); border:none; color:white; cursor:pointer; font-size:0.85rem; ${giftCardBusy ? 'opacity:0.65;' : ''}">${giftCardBusy ? 'Procesando...' : selectedMethod === 'Tarjeta' && cardTipAmount > 0 ? `Confirmar ${cardChargeTotal.toFixed(2)}&euro;` : 'Confirmar Pago'}</button>` : ''}
         </div>
       </div>
     `;
@@ -6079,6 +6194,9 @@ function showPaymentModal(totalAmount) {
           stopGiftCardScanner();
         }
         selectedMethod = card.dataset.method;
+        if (selectedMethod !== 'Tarjeta' && selectedMethod !== 'Dividir') {
+          cardTipAmount = 0;
+        }
         if (selectedMethod === 'Efectivo') {
           cashReceived = totalAmount;
         }
@@ -6158,6 +6276,27 @@ function showPaymentModal(totalAmount) {
       });
     });
 
+    modal.querySelectorAll('.card-tip-quick-btn[data-card-tip]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        cardTipAmount = Math.max(0, Number(btn.dataset.cardTip || 0));
+        renderPaymentContent();
+      });
+    });
+
+    const customCardTipBtn = modal.querySelector('#card-tip-custom-btn');
+    if (customCardTipBtn) {
+      customCardTipBtn.addEventListener('click', () => {
+        showNumericKeypadModal({
+          title: 'Propina en tarjeta',
+          placeholder: cardTipAmount || 0,
+          onSave: (value) => {
+            cardTipAmount = Number(Math.max(0, Number(value || 0)).toFixed(2));
+            renderPaymentContent();
+          }
+        });
+      });
+    }
+
     // Botón Confirmar Pago Directo (no dividido)
     const confirmBtn = modal.querySelector('#payment-confirm-btn');
     if (confirmBtn) {
@@ -6166,7 +6305,12 @@ function showPaymentModal(totalAmount) {
           const change = getChangeAmount();
           await completePaidTicket('Efectivo', `Pago en efectivo registrado. Cambio: ${change.toFixed(2)} euros.`);
         } else if (selectedMethod === 'Tarjeta') {
-          await completePaidTicket('Tarjeta', 'Pago con tarjeta procesado correctamente.');
+          await completePaidTicket(
+            'Tarjeta',
+            cardTipAmount > 0
+              ? `Pago registrado. Retira ${cardTipAmount.toFixed(2)} euros en efectivo del cajón para entregar la propina.`
+              : 'Pago con tarjeta procesado correctamente.'
+          );
         } else if (selectedMethod === 'Tarjeta Regalo') {
           await payWithGiftCard();
         }
@@ -6225,6 +6369,16 @@ function showPaymentModal(totalAmount) {
             const partIndex = parts.findIndex(p => p.id === partId);
             if (partIndex > -1) {
               parts[partIndex].status = method === 'Tarjeta' ? 'paid-card' : 'paid-cash';
+              if (
+                cardTipAmount > 0 &&
+                parts.every(part => part.status !== 'pending') &&
+                !parts.some(part => part.status === 'paid-card')
+              ) {
+                parts[partIndex].status = 'pending';
+                showToast('Para registrar la propina, al menos una parte debe cobrarse con tarjeta.', 'warning');
+                renderPaymentContent();
+                return;
+              }
               
               // Verificar si ya se cobraron todas
               const complete = checkPartsComplete();
@@ -6331,6 +6485,15 @@ function showPaymentModal(totalAmount) {
       showToast('Importe inválido o superior al restante.', 'error');
       return;
     }
+    if (
+      cardTipAmount > 0 &&
+      amount >= remaining - 0.009 &&
+      method !== 'Tarjeta' &&
+      !freePayments.some(payment => payment.method === 'Tarjeta')
+    ) {
+      showToast('Para registrar la propina, al menos un pago debe hacerse con tarjeta.', 'warning');
+      return;
+    }
     
     freePayments.push({
       id: Date.now(),
@@ -6360,6 +6523,18 @@ function showPaymentModal(totalAmount) {
   const paySelectedArticles = (method) => {
     const selectedTotal = getSelectedArticlesTotal();
     if (selectedTotal <= 0) return;
+
+    const remainingCountBeforePayment = articleStocks.reduce((sum, stock) => sum + stock.qtyRemaining, 0);
+    const selectedCount = Object.values(articleSelections).reduce((sum, qty) => sum + Number(qty || 0), 0);
+    if (
+      cardTipAmount > 0 &&
+      selectedCount >= remainingCountBeforePayment &&
+      method !== 'Tarjeta' &&
+      !articlePayments.some(payment => payment.method === 'Tarjeta')
+    ) {
+      showToast('Para registrar la propina, al menos un pago debe hacerse con tarjeta.', 'warning');
+      return;
+    }
 
     const paidItems = [];
     articleStocks.forEach(stock => {
@@ -6508,6 +6683,8 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
   const totals = sortedClosures.reduce((acc, closure) => {
     acc.totalSales += Number(closure.totalSales || 0);
     acc.totalRefunds += Number(closure.totalRefunds || 0);
+    acc.cashPayments += Number(closure.cashPayments || closure.payload?.cashPayments || 0);
+    acc.totalTips += Number(closure.totalTips || closure.payload?.totalTips || 0);
     acc.expectedCash += Number(closure.expectedCash || 0);
     acc.countedCash += Number(closure.countedCash || 0);
     acc.cashDifference += Number(closure.cashDifference || 0);
@@ -6520,6 +6697,8 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
   }, {
     totalSales: 0,
     totalRefunds: 0,
+    cashPayments: 0,
+    totalTips: 0,
     expectedCash: 0,
     countedCash: 0,
     cashDifference: 0,
@@ -6539,6 +6718,8 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
       <td>${moneyCell(closure.totalSales)}</td>
       <td>${moneyCell(closure.totalRefunds)}</td>
       <td>${moneyCell(closure.openingCash)}</td>
+      <td>${moneyCell(closure.cashPayments || closure.payload?.cashPayments || 0)}</td>
+      <td>${moneyCell(closure.totalTips || closure.payload?.totalTips || 0)}</td>
       <td>${moneyCell(closure.expectedCash)}</td>
       <td>${moneyCell(closure.countedCash)}</td>
       <td>${moneyCell(closure.cashDifference)}</td>
@@ -6576,7 +6757,9 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
         <th>Ventas brutas</th>
         <th>Devoluciones</th>
         <th>Fondo inicial</th>
-        <th>Efectivo app</th>
+        <th>Ventas efectivo</th>
+        <th>Propinas tarjeta retiradas</th>
+        <th>Efectivo neto app</th>
         <th>Efectivo contado</th>
         <th>Diferencia efectivo</th>
         <th>Tarjeta app</th>
@@ -6597,6 +6780,8 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
         <td>${moneyCell(totals.totalSales)}</td>
         <td>${moneyCell(totals.totalRefunds)}</td>
         <td></td>
+        <td>${moneyCell(totals.cashPayments)}</td>
+        <td>${moneyCell(totals.totalTips)}</td>
         <td>${moneyCell(totals.expectedCash)}</td>
         <td>${moneyCell(totals.countedCash)}</td>
         <td>${moneyCell(totals.cashDifference)}</td>
@@ -6649,12 +6834,16 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
       return tx.payments.map(payment => ({
         method: payment.method || tx.paymentMethod || '',
         amount: Number(payment.amount || 0),
+        saleAmount: Number(payment.saleAmount ?? payment.amount ?? 0),
+        tipAmount: Number(payment.tipAmount || 0),
         provider: payment.provider || ''
       }));
     }
     return [{
       method: tx.paymentMethod || '',
-      amount: Number(tx.total || 0),
+      amount: Number(tx.totalCharged ?? (Number(tx.total || 0) + Math.max(0, Number(tx.tipAmount || 0)))),
+      saleAmount: Number(tx.total || 0),
+      tipAmount: Math.max(0, Number(tx.tipAmount || 0)),
       provider: String(tx.paymentMethod || '').toLowerCase().includes('tarjeta') ? 'BBVA' : ''
     }];
   };
@@ -6667,12 +6856,13 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
   let discountSales = 0;
   let refunds = 0;
   let ticketCount = 0;
+  let totalTips = 0;
 
   sortedTx.forEach(tx => {
     const d = getTxDate(tx);
     const dayKey = getLocalDateKey(d);
     if (!daily[dayKey]) {
-      daily[dayKey] = { date: dayKey, tickets: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cash: 0, card: 0, other: 0 };
+      daily[dayKey] = { date: dayKey, tickets: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cash: 0, card: 0, other: 0, tips: 0 };
     }
 
     const total = Number(tx.total || 0);
@@ -6689,12 +6879,15 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
       daily[dayKey].tickets += 1;
       daily[dayKey].gross += gross;
       daily[dayKey].discounts += discount;
+      const tipAmount = Math.max(0, Number(tx.tipAmount || 0));
+      totalTips += tipAmount;
+      daily[dayKey].tips += tipAmount;
     }
     daily[dayKey].net += total;
 
     paymentBreakdown(tx).forEach(payment => {
       const method = payment.method || 'Sin metodo';
-      const amount = Number(payment.amount || 0);
+      const amount = Number(payment.saleAmount ?? payment.amount ?? 0);
       paymentTotals[method] = (paymentTotals[method] || 0) + amount;
       const methodKey = method.toLowerCase();
       if (methodKey.includes('efectivo')) daily[dayKey].cash += amount;
@@ -6719,6 +6912,7 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
       <td>${moneyCell(day.refunds)}</td>
       <td>${moneyCell(day.cash)}</td>
       <td>${moneyCell(day.card)}</td>
+      <td>${moneyCell(day.tips)}</td>
       <td>${moneyCell(day.other)}</td>
       <td>${moneyCell(day.net)}</td>
     </tr>
@@ -6740,6 +6934,8 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
         <td>${moneyCell(tx.grossTotal ?? (Number(tx.total || 0) + Number(tx.discountTotal || 0)))}</td>
         <td>${moneyCell(tx.discountTotal)}</td>
         <td>${moneyCell(tx.total)}</td>
+        <td>${moneyCell(tx.tipAmount)}</td>
+        <td>${moneyCell(tx.totalCharged ?? (Number(tx.total || 0) + Math.max(0, Number(tx.tipAmount || 0))))}</td>
         <td>${escapeCell(tx.staff?.name || tx.staffName || '')}</td>
       </tr>
     `;
@@ -6784,14 +6980,14 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
 
   <h2>Resumen</h2>
   <table>
-    <tr><th>Tickets</th><th>Ventas brutas</th><th>Descuentos</th><th>Devoluciones</th><th>Ventas netas</th></tr>
-    <tr><td>${ticketCount}</td><td>${moneyCell(grossSales)}</td><td>${moneyCell(discountSales)}</td><td>${moneyCell(refunds)}</td><td>${moneyCell(netSales)}</td></tr>
+    <tr><th>Tickets</th><th>Ventas brutas</th><th>Descuentos</th><th>Devoluciones</th><th>Ventas netas</th><th>Propinas tarjeta</th></tr>
+    <tr><td>${ticketCount}</td><td>${moneyCell(grossSales)}</td><td>${moneyCell(discountSales)}</td><td>${moneyCell(refunds)}</td><td>${moneyCell(netSales)}</td><td>${moneyCell(totalTips)}</td></tr>
   </table>
 
   <h2>Resumen por dia</h2>
   <table>
-    <thead><tr><th>Fecha</th><th>Tickets</th><th>Ventas brutas</th><th>Descuentos</th><th>Devoluciones</th><th>Efectivo</th><th>Tarjeta</th><th>Otros</th><th>Neto</th></tr></thead>
-    <tbody>${dailyRows || '<tr><td colspan="9">Sin ventas</td></tr>'}</tbody>
+    <thead><tr><th>Fecha</th><th>Tickets</th><th>Ventas brutas</th><th>Descuentos</th><th>Devoluciones</th><th>Efectivo</th><th>Tarjeta</th><th>Propinas</th><th>Otros</th><th>Neto</th></tr></thead>
+    <tbody>${dailyRows || '<tr><td colspan="10">Sin ventas</td></tr>'}</tbody>
   </table>
 
   <h2>Metodos de pago</h2>
@@ -6808,8 +7004,8 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
 
   <h2>Detalle de tickets</h2>
   <table>
-    <thead><tr><th>Fecha</th><th>Hora</th><th>Ticket</th><th>Mesa</th><th>Tipo</th><th>Metodo</th><th>Proveedor pago</th><th>Articulos</th><th>Bruto</th><th>Descuento</th><th>Total</th><th>Usuario</th></tr></thead>
-    <tbody>${txRows || '<tr><td colspan="12">Sin tickets</td></tr>'}</tbody>
+    <thead><tr><th>Fecha</th><th>Hora</th><th>Ticket</th><th>Mesa</th><th>Tipo</th><th>Metodo</th><th>Proveedor pago</th><th>Articulos</th><th>Bruto</th><th>Descuento</th><th>Venta</th><th>Propina</th><th>Total cobrado</th><th>Usuario</th></tr></thead>
+    <tbody>${txRows || '<tr><td colspan="14">Sin tickets</td></tr>'}</tbody>
   </table>
 </body>
 </html>`;
@@ -6864,6 +7060,7 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
     let totalGross = 0;
     let totalRefunds = 0;
     let totalDiscounts = 0;
+    let totalTips = 0;
     const paymentMethods = { 'Efectivo': 0, 'Tarjeta': 0, 'Tarjeta Regalo': 0 };
 
     dayTx.forEach(tx => {
@@ -6875,6 +7072,7 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
         const discount = Number(tx.discountTotal || 0);
         totalDiscounts += discount;
         totalGross += Number(tx.grossTotal ?? (val + discount));
+        totalTips += Math.max(0, Number(tx.tipAmount || 0));
       }
       applyTransactionPaymentsToBuckets(tx, paymentMethods);
     });
@@ -6912,6 +7110,7 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
     doc.text(`Efectivo: ${paymentMethods['Efectivo'].toFixed(2)} €`, margin + 95 + 5, 55);
     doc.text(`Tarjeta Bancaria: ${paymentMethods['Tarjeta'].toFixed(2)} €`, margin + 95 + 5, 60);
     doc.text(`Tarjeta Regalo: ${paymentMethods['Tarjeta Regalo'].toFixed(2)} €`, margin + 95 + 5, 65);
+    doc.text(`Propinas BBVA: +${totalTips.toFixed(2)} €`, margin + 95 + 5, 70);
 
     // Draw transaction table
     const headers = ['Ticket ID', 'Hora', 'Mesa / Concepto', 'Método Pago', 'Artículos', 'Importe'];
@@ -7036,6 +7235,7 @@ function downloadMonthlyReportPDF(selectedMonth, sortedDays, legal, filename) {
     let totalDiscounts = 0;
     let totalCash = 0;
     let totalCard = 0;
+    let totalTips = 0;
     let totalOrders = 0;
 
     sortedDays.forEach(day => {
@@ -7044,6 +7244,7 @@ function downloadMonthlyReportPDF(selectedMonth, sortedDays, legal, filename) {
       totalDiscounts += day.discounts || 0;
       totalCash += day.cash;
       totalCard += day.card;
+      totalTips += day.tips || 0;
       totalOrders += day.count;
     });
     const totalNet = totalGross - totalDiscounts - totalRefunds;
@@ -7080,6 +7281,7 @@ function downloadMonthlyReportPDF(selectedMonth, sortedDays, legal, filename) {
     doc.setFontSize(8);
     doc.text(`Efectivo: ${totalCash.toFixed(2)} €`, margin + 95 + 5, 55);
     doc.text(`Tarjeta Bancaria: ${totalCard.toFixed(2)} €`, margin + 95 + 5, 60);
+    doc.text(`Propinas BBVA: +${totalTips.toFixed(2)} €`, margin + 95 + 5, 65);
 
     // Draw breakdown table
     const headers = ['Día', 'Pedidos', 'Efectivo', 'Tarjeta', 'Devoluciones', 'Descuentos', 'Total Neto'];
@@ -8163,6 +8365,8 @@ function setupEventListeners(container) {
       const preview = container.querySelector('#closure-live-preview');
       if (!preview) return;
       const expectedCash = parseFloat(preview.dataset.expectedCash || '0');
+      const cashPayments = parseFloat(preview.dataset.cashPayments || '0');
+      const totalTips = parseFloat(preview.dataset.totalTips || '0');
       const expectedCard = parseFloat(preview.dataset.expectedCard || '0');
       const squareOnline = parseFloat(preview.dataset.squareOnline || '0');
       const openingCash = parseFloat(container.querySelector('#closure-opening-cash')?.value || '0');
@@ -8175,7 +8379,7 @@ function setupEventListeners(container) {
       const cardColor = Math.abs(cardDifference) > 0.009 ? 'var(--danger)' : 'var(--secondary)';
       preview.innerHTML = `
         <div style="display:grid; gap:6px;">
-          <span>Cajón esperado: <strong>${expectedDrawer.toFixed(2)}€</strong> = fondo ${openingCash.toFixed(2)}€ + efectivo app ${expectedCash.toFixed(2)}€</span>
+          <span>Cajón esperado: <strong>${expectedDrawer.toFixed(2)}€</strong> = fondo ${openingCash.toFixed(2)}€ + ventas efectivo ${cashPayments.toFixed(2)}€ - propinas retiradas ${totalTips.toFixed(2)}€</span>
           <span>Diferencia efectivo: <strong style="color:${cashColor};">${cashDifference.toFixed(2)}€</strong></span>
           <span>Diferencia BBVA: <strong style="color:${cardColor};">${cardDifference.toFixed(2)}€</strong></span>
           ${squareOnline > 0 ? `<span>Square online tarjetas regalo: <strong>${squareOnline.toFixed(2)}€</strong> aparte del cajon y del BBVA.</span>` : ''}
@@ -8661,7 +8865,8 @@ function setupEventListeners(container) {
             refunds: 0,
             net: 0,
             cash: 0,
-            card: 0
+            card: 0,
+            tips: 0
           };
         }
 
@@ -8675,6 +8880,7 @@ function setupEventListeners(container) {
           dailyAgg[day].count += 1;
           dailyAgg[day].gross += val;
           dailyAgg[day].net += val;
+          dailyAgg[day].tips += Math.max(0, Number(tx.tipAmount || 0));
         }
         dailyAgg[day].cash += paymentTotals.Efectivo;
         dailyAgg[day].card += paymentTotals.Tarjeta;

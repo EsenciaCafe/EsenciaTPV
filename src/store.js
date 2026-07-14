@@ -1221,12 +1221,16 @@ class Store {
     if (Array.isArray(tx.payments) && tx.payments.length > 0) {
       return tx.payments.map(payment => ({
         method: payment.method || tx.paymentMethod || '',
-        amount: Number(payment.amount || 0)
+        amount: Number(payment.amount || 0),
+        saleAmount: Number(payment.saleAmount ?? payment.amount ?? 0),
+        tipAmount: Number(payment.tipAmount || 0)
       }));
     }
     return [{
       method: tx.paymentMethod || '',
-      amount: Number(tx.total || 0)
+      amount: Number(tx.totalCharged ?? (Number(tx.total || 0) + Math.max(0, Number(tx.tipAmount || 0)))),
+      saleAmount: Number(tx.total || 0),
+      tipAmount: Math.max(0, Number(tx.tipAmount || 0))
     }];
   }
 
@@ -1254,10 +1258,12 @@ class Store {
     );
     const summary = dayTx.reduce((acc, tx) => {
       const total = Number(tx.total || 0);
+      const tipAmount = tx.type === 'refund' ? 0 : Math.max(0, Number(tx.tipAmount || 0));
       if (tx.type === 'refund') {
         acc.totalRefunds += Math.abs(total);
       } else {
         acc.totalSales += total;
+        acc.totalTips += tipAmount;
       }
       acc.netTotal += total;
       acc.transactionsCount += tx.type === 'refund' ? 0 : 1;
@@ -1268,6 +1274,7 @@ class Store {
         if (method.includes('regalo') || method.includes('gift')) {
           acc.otherPayments += amount;
         } else if (method.includes('efectivo')) {
+          acc.cashPayments += amount;
           acc.expectedCash += amount;
         } else if (method.includes('tarjeta')) {
           acc.expectedCard += amount;
@@ -1275,6 +1282,7 @@ class Store {
           acc.otherPayments += amount;
         }
       });
+      acc.expectedCash -= tipAmount;
       return acc;
     }, {
       businessDate: date,
@@ -1282,6 +1290,8 @@ class Store {
       totalSales: 0,
       totalRefunds: 0,
       netTotal: 0,
+      totalTips: 0,
+      cashPayments: 0,
       expectedCash: 0,
       expectedCard: 0,
       otherPayments: 0
@@ -2376,6 +2386,7 @@ class Store {
     }));
 
     const dateNow = new Date();
+    const tipAmount = Math.max(0, Number(options.tipAmount || 0));
     const txId = `TX-${dateNow.getTime()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
     const dateStr = `${String(dateNow.getDate()).padStart(2, '0')}/${String(dateNow.getMonth() + 1).padStart(2, '0')}/${dateNow.getFullYear()}`;
     const timeStr = `${String(dateNow.getHours()).padStart(2, '0')}:${String(dateNow.getMinutes()).padStart(2, '0')}`;
@@ -2387,6 +2398,8 @@ class Store {
       total: parseFloat(total.toFixed(2)),
       grossTotal: parseFloat(grossTotal.toFixed(2)),
       discountTotal: parseFloat(discountTotal.toFixed(2)),
+      tipAmount: parseFloat(tipAmount.toFixed(2)),
+      totalCharged: parseFloat(Number(options.totalCharged ?? (total + tipAmount)).toFixed(2)),
       paymentMethod: paymentMethod,
       itemsCount: itemsCount,
       items: transactionItems,
