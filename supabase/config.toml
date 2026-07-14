@@ -1,2 +1,5 @@
 [functions.square-gift-cards]
 verify_jwt = false
+
+[functions.watch-sales-summary]
+verify_jwt = false
