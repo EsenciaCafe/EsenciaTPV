@@ -1223,15 +1223,89 @@ class Store {
         method: payment.method || tx.paymentMethod || '',
         amount: Number(payment.amount || 0),
         saleAmount: Number(payment.saleAmount ?? payment.amount ?? 0),
-        tipAmount: Number(payment.tipAmount || 0)
+        tipAmount: Number(payment.tipAmount || 0),
+        provider: payment.provider || ''
       }));
     }
     return [{
       method: tx.paymentMethod || '',
       amount: Number(tx.totalCharged ?? (Number(tx.total || 0) + Math.max(0, Number(tx.tipAmount || 0)))),
       saleAmount: Number(tx.total || 0),
-      tipAmount: Math.max(0, Number(tx.tipAmount || 0))
+      tipAmount: Math.max(0, Number(tx.tipAmount || 0)),
+      provider: String(tx.paymentMethod || '').toLowerCase().includes('tarjeta') ? 'BBVA' : ''
     }];
+  }
+
+  isTransactionPaymentCorrectionLocked(transaction) {
+    if (!transaction) return true;
+    const businessDate = this.getTransactionDateKey(transaction);
+    const transactionTime = this.getTransactionDate(transaction).getTime();
+    return this.state.cashClosures.some(closure => {
+      if (closure.businessDate !== businessDate) return false;
+      const closureTime = new Date(closure.closedAt || `${businessDate}T23:59:59`).getTime();
+      return closureTime >= transactionTime;
+    });
+  }
+
+  canCorrectTransactionPayment(transaction) {
+    if (!transaction || transaction.type === 'refund' || transaction.hasRefund) return false;
+    const payments = this.getPaymentBreakdownForTransaction(transaction);
+    const hasExternalGiftCardPayment = payments.some(payment => {
+      const method = String(payment.method || '').toLowerCase();
+      const provider = String(payment.provider || '').toLowerCase();
+      return method.includes('regalo') || method.includes('gift') || provider.includes('square');
+    });
+    return this.salesPersistenceReady &&
+      payments.length > 0 &&
+      !hasExternalGiftCardPayment &&
+      !this.isTransactionPaymentCorrectionLocked(transaction);
+  }
+
+  async correctTransactionPayments(transactionId, correctedPayments = []) {
+    const transactionIndex = this.state.transactions.findIndex(tx => tx.id === transactionId);
+    if (transactionIndex === -1) return null;
+
+    const currentTransaction = this.state.transactions[transactionIndex];
+    if (!this.canCorrectTransactionPayment(currentTransaction) || correctedPayments.length === 0) return null;
+
+    const payments = correctedPayments.map((payment, index) => {
+      const method = String(payment.method || '').toLowerCase().includes('efectivo')
+        ? 'Efectivo'
+        : 'Tarjeta';
+      const saleAmount = Number(payment.saleAmount ?? payment.amount ?? 0);
+      const tipAmount = method === 'Tarjeta' ? Math.max(0, Number(payment.tipAmount || 0)) : 0;
+      return {
+        ...payment,
+        id: payment.id || `${transactionId}-payment-${String(index + 1).padStart(3, '0')}`,
+        method,
+        saleAmount: Number(saleAmount.toFixed(2)),
+        tipAmount: Number(tipAmount.toFixed(2)),
+        amount: Number((saleAmount + tipAmount).toFixed(2)),
+        provider: method === 'Tarjeta' ? 'BBVA' : '',
+        externalRef: method === 'Tarjeta' ? (payment.externalRef || '') : ''
+      };
+    });
+
+    const methods = [...new Set(payments.map(payment => payment.method))];
+    const tipAmount = payments.reduce((sum, payment) => sum + Number(payment.tipAmount || 0), 0);
+    const totalCharged = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    const updatedTransaction = {
+      ...currentTransaction,
+      paymentMethod: methods.length === 1 ? methods[0] : `Mixto (${payments.length} pagos)`,
+      payments,
+      tipAmount: Number(tipAmount.toFixed(2)),
+      totalCharged: Number(totalCharged.toFixed(2))
+    };
+
+    this.state.transactions[transactionIndex] = updatedTransaction;
+    const persistedId = await this.persistSaleRecord(updatedTransaction);
+    if (!persistedId) {
+      this.state.transactions[transactionIndex] = currentTransaction;
+      return null;
+    }
+    if (updatedTransaction.receiptToken) this.publishReceiptTicket(updatedTransaction);
+    this.notify({ flushRemote: true });
+    return updatedTransaction;
   }
 
   getSquareGiftCardOnlineSalesSummary(date = new Date().toISOString().slice(0, 10), options = {}) {
