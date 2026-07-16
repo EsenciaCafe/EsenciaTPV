@@ -487,6 +487,15 @@ class Store {
     this.state.supplierSenderRules = await loadSupplierSenderRules();
   }
 
+  async refreshSupplierAccountingData({ notify = true } = {}) {
+    await Promise.all([
+      this.loadSupplierInvoices(),
+      this.loadSupplierInvoiceLines(),
+      this.loadSupplierSenderRules()
+    ]);
+    if (notify) this.notify();
+  }
+
   async loadCashClosures() {
     const closures = await loadCashClosures();
     this.cashClosurePersistenceReady = Array.isArray(closures);

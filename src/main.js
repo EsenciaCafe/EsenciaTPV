@@ -1788,6 +1788,9 @@ function renderAjustesView(state) {
           <button class="settings-back-arrow-btn" id="settings-back-btn">
             ${backArrow} Ajustes
           </button>
+          <button class="btn btn-secondary" id="settings-refresh-invoices-btn" title="Actualizar facturas" aria-label="Actualizar facturas" style="width:36px; height:36px; padding:0; flex:0 0 36px;">
+            <i data-lucide="refresh-cw" style="width:17px; height:17px;"></i>
+          </button>
           <button class="btn btn-primary" id="settings-create-invoice-btn" style="height:36px; padding:0 12px; font-size:0.85rem; background-color:var(--secondary);">
             Nueva
           </button>
@@ -8367,7 +8370,8 @@ function setupEventListeners(container) {
 
   const toComprasBtn = container.querySelector('#settings-to-compras');
   if (toComprasBtn) {
-    toComprasBtn.addEventListener('click', () => {
+    toComprasBtn.addEventListener('click', async () => {
+      await store.refreshSupplierAccountingData({ notify: false });
       store.navigateSettings(['compras']);
     });
   }
@@ -8598,6 +8602,16 @@ function setupEventListeners(container) {
   if (createInvoiceBtn) {
     createInvoiceBtn.addEventListener('click', () => {
       store.navigateSettings(['compras', 'nueva']);
+    });
+  }
+
+  const refreshInvoicesBtn = container.querySelector('#settings-refresh-invoices-btn');
+  if (refreshInvoicesBtn) {
+    refreshInvoicesBtn.addEventListener('click', async () => {
+      refreshInvoicesBtn.disabled = true;
+      await store.refreshSupplierAccountingData({ notify: false });
+      store.notify();
+      showToast('Facturas actualizadas.', 'success');
     });
   }
 
