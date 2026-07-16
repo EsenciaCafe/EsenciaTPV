@@ -138,8 +138,15 @@ async function main() {
   if (existingError) throw existingError;
 
   if (listExisting) {
+    const { data: senderRules, error: senderRulesError } = await supabase
+      .from('supplier_sender_rules')
+      .select('email')
+      .eq('ignored', true);
+    if (senderRulesError) throw senderRulesError;
+
     console.log(JSON.stringify({
       sourceIds: (existing || []).map(row => row.source_id).filter(Boolean),
+      ignoredSenders: (senderRules || []).map(row => row.email).filter(Boolean),
       invoices: (existing || []).map(row => ({
         supplierName: row.supplier_name,
         invoiceNumber: row.invoice_number,

@@ -80,3 +80,4 @@ npm run invoices:import -- list-existing
 ```
 
 Asi evita volver a analizar archivos conocidos y reduce tiempo de ejecucion.
+La misma consulta devuelve `ignoredSenders`, que Gmail debe excluir.
