@@ -4,8 +4,186 @@ const SCRIPT_CONFIG = {
   invoicesFolderName: 'FACTURAS',
   cashCloseFolderName: 'CIERRE',
   defaultGmailQuery: 'newer_than:45d has:attachment (factura OR invoice OR recibo OR ticket)',
-  maxGmailThreads: 50
+  maxGmailThreads: 50,
+  queuePendingFolderId: '1s1n2kmt7bDfgSoSiVAlN0RD81tFK7-_g',
+  queueProcessedFolderId: '1mqmHreoUCREnvUj6dOWo2P0k_-XPw3VE',
+  queueErrorsFolderId: '1Xf5tiZwMg9tPTNFh_2BEgI6iaDSXhZ0I',
+  maxQueueFilesPerRun: 20
 };
+
+function runInvoiceQueueImport() {
+  const pendingFolder = getQueueFolder_('INVOICE_QUEUE_PENDING_FOLDER_ID', SCRIPT_CONFIG.queuePendingFolderId);
+  const processedFolder = getQueueFolder_('INVOICE_QUEUE_PROCESSED_FOLDER_ID', SCRIPT_CONFIG.queueProcessedFolderId);
+  const errorsFolder = getQueueFolder_('INVOICE_QUEUE_ERRORS_FOLDER_ID', SCRIPT_CONFIG.queueErrorsFolderId);
+  const dedup = getInvoiceDedupState_();
+  const files = pendingFolder.getFiles();
+  const results = {
+    queueFiles: 0,
+    imported: 0,
+    duplicates: 0,
+    errors: []
+  };
+
+  while (files.hasNext() && results.queueFiles < SCRIPT_CONFIG.maxQueueFilesPerRun) {
+    const file = files.next();
+    results.queueFiles += 1;
+
+    try {
+      if (!/\.json$/i.test(file.getName())) {
+        throw new Error('La cola solo admite archivos JSON.');
+      }
+
+      const payload = JSON.parse(file.getBlob().getDataAsString('UTF-8'));
+      const rawInvoices = Array.isArray(payload) ? payload : payload.invoices;
+      if (!Array.isArray(rawInvoices)) {
+        throw new Error('El JSON debe contener un array invoices.');
+      }
+
+      rawInvoices.forEach((rawInvoice, index) => {
+        const invoice = normalizeQueuedInvoice_(rawInvoice, index);
+        const invoiceKey = getInvoiceDedupKey_(invoice.supplierName, invoice.invoiceNumber);
+
+        if (dedup.sourceIds[invoice.sourceId] || (invoiceKey && dedup.invoiceKeys[invoiceKey])) {
+          results.duplicates += 1;
+          return;
+        }
+
+        upsertInvoice_(invoice, { strictLines: true });
+        dedup.sourceIds[invoice.sourceId] = true;
+        if (invoiceKey) dedup.invoiceKeys[invoiceKey] = true;
+        results.imported += 1;
+      });
+
+      file.moveTo(processedFolder);
+    } catch (error) {
+      results.errors.push(`${file.getName()}: ${error.message}`);
+      try {
+        file.moveTo(errorsFolder);
+      } catch (moveError) {
+        results.errors.push(`${file.getName()}: no se pudo mover a ERRORES (${moveError.message})`);
+      }
+    }
+  }
+
+  Logger.log(JSON.stringify(results, null, 2));
+  return results;
+}
+
+function configureCloudInvoiceQueue() {
+  const handlers = ['runDailyInvoiceImport', 'runInvoiceQueueImport'];
+  ScriptApp.getProjectTriggers()
+    .filter(trigger => handlers.indexOf(trigger.getHandlerFunction()) !== -1)
+    .forEach(trigger => ScriptApp.deleteTrigger(trigger));
+
+  ScriptApp.newTrigger('runInvoiceQueueImport')
+    .timeBased()
+    .everyMinutes(15)
+    .create();
+
+  const result = testInvoiceQueueConnection();
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testInvoiceQueueConnection() {
+  const pendingFolder = getQueueFolder_('INVOICE_QUEUE_PENDING_FOLDER_ID', SCRIPT_CONFIG.queuePendingFolderId);
+  const processedFolder = getQueueFolder_('INVOICE_QUEUE_PROCESSED_FOLDER_ID', SCRIPT_CONFIG.queueProcessedFolderId);
+  const errorsFolder = getQueueFolder_('INVOICE_QUEUE_ERRORS_FOLDER_ID', SCRIPT_CONFIG.queueErrorsFolderId);
+  const rows = supabaseFetch_('/rest/v1/supplier_invoices?select=id&limit=1') || [];
+
+  return {
+    ok: true,
+    pendingFolder: pendingFolder.getName(),
+    processedFolder: processedFolder.getName(),
+    errorsFolder: errorsFolder.getName(),
+    supabaseReachable: Array.isArray(rows)
+  };
+}
+
+function getQueueFolder_(propertyName, fallbackId) {
+  const folderId = getProperty_(propertyName) || fallbackId;
+  if (!folderId) throw new Error(`Falta configurar ${propertyName}.`);
+  return DriveApp.getFolderById(folderId);
+}
+
+function getInvoiceDedupState_() {
+  const rows = supabaseFetch_('/rest/v1/supplier_invoices?select=source_id,supplier_name,invoice_number&limit=10000') || [];
+  return rows.reduce((state, row) => {
+    if (row.source_id) state.sourceIds[row.source_id] = true;
+    const invoiceKey = getInvoiceDedupKey_(row.supplier_name, row.invoice_number);
+    if (invoiceKey) state.invoiceKeys[invoiceKey] = true;
+    return state;
+  }, { sourceIds: {}, invoiceKeys: {} });
+}
+
+function getInvoiceDedupKey_(supplierName, invoiceNumber) {
+  const normalizedNumber = normalizeName_(invoiceNumber).replace(/[^A-Z0-9]/g, '');
+  if (!normalizedNumber) return '';
+  return `${normalizeName_(supplierName)}:${normalizedNumber}`;
+}
+
+function normalizeQueuedInvoice_(rawInvoice, index) {
+  const source = rawInvoice.source === 'gmail' ? 'gmail' : 'drive';
+  const sourceId = String(rawInvoice.sourceId || rawInvoice.source_id || '').trim();
+  const supplierName = String(rawInvoice.supplierName || rawInvoice.proveedor || '').trim();
+  const invoiceDate = String(rawInvoice.invoiceDate || rawInvoice.fecha || '').slice(0, 10);
+
+  if (!sourceId) throw new Error(`Factura ${index + 1}: falta sourceId.`);
+  if (!supplierName) throw new Error(`Factura ${index + 1}: falta supplierName.`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate)) {
+    throw new Error(`Factura ${index + 1}: invoiceDate debe usar YYYY-MM-DD.`);
+  }
+
+  const lines = Array.isArray(rawInvoice.lines) ? rawInvoice.lines : [];
+  return {
+    id: makeInvoiceId_(sourceId),
+    source,
+    sourceId,
+    supplierName,
+    invoiceNumber: String(rawInvoice.invoiceNumber || rawInvoice.factura || '').trim(),
+    invoiceDate,
+    category: String(rawInvoice.category || rawInvoice.categoria || '').trim(),
+    baseAmount: parseQueueNumber_(rawInvoice.baseAmount ?? rawInvoice.base_amount) || 0,
+    taxRate: parseQueueNumber_(rawInvoice.taxRate ?? rawInvoice.tax_rate) || 0,
+    taxAmount: parseQueueNumber_(rawInvoice.taxAmount ?? rawInvoice.tax_amount) || 0,
+    totalAmount: parseQueueNumber_(rawInvoice.totalAmount ?? rawInvoice.total_amount) || 0,
+    deductible: rawInvoice.deductible !== false,
+    status: 'pending_review',
+    senderEmail: String(rawInvoice.senderEmail || rawInvoice.sender_email || '').trim().toLowerCase(),
+    fileName: String(rawInvoice.fileName || rawInvoice.file_name || '').trim(),
+    fileUrl: String(rawInvoice.fileUrl || rawInvoice.file_url || '').trim(),
+    notes: String(rawInvoice.notes || 'Importada por ChatGPT. Pendiente de revision.').trim(),
+    lines: lines.map(line => ({
+      description: String(line.description || line.articulo_normalizado || line.articulo_original || '').trim(),
+      quantity: parseQueueNumber_(line.quantity ?? line.cantidad),
+      unit: String(line.unit || line.unidad || '').trim(),
+      unitPrice: parseQueueNumber_(line.unitPrice ?? line.precio_unitario),
+      unitPriceUnit: String(line.unitPriceUnit || line.unidad_precio || '').trim(),
+      totalAmount: parseQueueNumber_(line.totalAmount ?? line.importe),
+      taxRate: parseQueueNumber_(line.taxRate ?? line.tax_rate),
+      rawPayload: line
+    })).filter(line => line.description)
+  };
+}
+
+function parseQueueNumber_(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number') return isFinite(value) ? value : null;
+
+  let normalized = String(value).replace(/\s/g, '').replace(/[^0-9,.-]/g, '');
+  if (normalized.indexOf(',') !== -1 && normalized.indexOf('.') !== -1) {
+    if (normalized.lastIndexOf(',') > normalized.lastIndexOf('.')) {
+      normalized = normalized.replace(/\./g, '').replace(',', '.');
+    } else {
+      normalized = normalized.replace(/,/g, '');
+    }
+  } else {
+    normalized = normalized.replace(',', '.');
+  }
+
+  const number = Number(normalized);
+  return isFinite(number) ? number : null;
+}
 
 function runDailyInvoiceImport() {
   const ignoredSenders = getIgnoredSenders_();
@@ -33,15 +211,7 @@ function runDailyInvoiceImport() {
 }
 
 function createDailyTrigger() {
-  ScriptApp.getProjectTriggers()
-    .filter(trigger => trigger.getHandlerFunction() === 'runDailyInvoiceImport')
-    .forEach(trigger => ScriptApp.deleteTrigger(trigger));
-
-  ScriptApp.newTrigger('runDailyInvoiceImport')
-    .timeBased()
-    .everyDays(1)
-    .atHour(6)
-    .create();
+  return configureCloudInvoiceQueue();
 }
 
 function scanDriveInvoices_(results) {
@@ -533,7 +703,7 @@ function invoiceExists_(sourceId) {
   return rows.length > 0;
 }
 
-function upsertInvoice_(invoice) {
+function upsertInvoice_(invoice, options) {
   const payload = {
     id: invoice.id,
     supplier_name: invoice.supplierName || 'Proveedor pendiente',
@@ -567,6 +737,17 @@ function upsertInvoice_(invoice) {
     upsertInvoiceLines_(payload.id, invoice);
   } catch (error) {
     Logger.log(`No se pudieron guardar las lineas de ${payload.id}: ${error.message}`);
+    if (options?.strictLines) {
+      try {
+        supabaseFetch_(`/rest/v1/supplier_invoices?id=eq.${encodeURIComponent(payload.id)}`, {
+          method: 'delete',
+          headers: { Prefer: 'return=minimal' }
+        });
+      } catch (rollbackError) {
+        Logger.log(`No se pudo revertir la factura ${payload.id}: ${rollbackError.message}`);
+      }
+      throw error;
+    }
   }
 }
 

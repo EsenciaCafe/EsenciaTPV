@@ -1,62 +1,58 @@
-# Automatizacion de facturas con Google Apps Script
+# Cola de facturas ChatGPT -> TPV
 
-Este script revisa a diario Drive y Gmail, lee facturas con Google Document AI Invoice Parser, crea facturas en Supabase como `pending_review` y evita duplicados por `source_id`.
+Este Apps Script no interpreta facturas ni utiliza una API de IA. ChatGPT lee
+los documentos y crea lotes JSON en Drive; Apps Script valida esos lotes y los
+guarda en Supabase como `pending_review`.
 
-## Cuentas
-
-- Ejecutar el Apps Script con `esenciacafe.galletas@gmail.com`.
-- Compartir la carpeta `Mi unidad > Esencia Cafe` desde `joelb8743@gmail.com` con `esenciacafe.galletas@gmail.com`.
-- Si Google no encuentra la carpeta por nombre, copia el ID de la carpeta `Esencia Cafe` y usa `DRIVE_ROOT_FOLDER_ID`.
-
-## Estructura esperada de Drive
+## Carpetas de Drive
 
 ```text
-Esencia Cafe
-  2026
-    PENDIENTE DE CONTABILIZAR
-      Enero
-        FACTURAS
-        CIERRE
-        facturas sueltas permitidas
+Esencia Cafe/TPV_IMPORT_QUEUE
+  PENDIENTES
+  PROCESADOS
+  ERRORES
 ```
 
-El script ignora `CIERRE`, revisa `FACTURAS` y tambien los archivos sueltos dentro del mes.
-
-## Configuracion
-
-1. Ejecuta en Supabase `sql/invoice_automation_migration.sql`.
-2. Crea un proyecto en [Google Apps Script](https://script.google.com/).
-3. En Google Cloud, activa billing y la API `Document AI API`.
-4. Crea un procesador `Invoice Parser` en Document AI, preferiblemente en region `eu`.
-5. Copia el nombre completo del procesador. Tiene este formato:
+Los IDs creados para estas carpetas ya estan incluidos como valores por defecto
+en `Code.gs`. Se pueden sustituir mediante Script Properties:
 
 ```text
-projects/PROJECT_ID/locations/eu/processors/PROCESSOR_ID
+INVOICE_QUEUE_PENDING_FOLDER_ID
+INVOICE_QUEUE_PROCESSED_FOLDER_ID
+INVOICE_QUEUE_ERRORS_FOLDER_ID
 ```
 
-6. Copia `Code.gs` y `appsscript.json`.
-7. En Servicios avanzados de Google, activa `Drive API`.
-8. En Google Cloud del proyecto, activa tambien la API de Drive si Google lo solicita.
-9. En `Project Settings > Script Properties`, anade:
+## Script Properties obligatorias
 
 ```text
 SUPABASE_URL=https://tbqvypdxcgeofsmiqmuo.supabase.co
-SUPABASE_ANON_KEY=la_clave_anon_de_.env.local
-DRIVE_ROOT_FOLDER_NAME=Esencia Cafe
-GMAIL_QUERY=newer_than:45d has:attachment (factura OR invoice OR recibo OR ticket)
-DOCUMENT_AI_PROCESSOR_NAME=projects/PROJECT_ID/locations/eu/processors/PROCESSOR_ID
+SUPABASE_ANON_KEY=la_clave_anon_del_TPV
 ```
 
-`DRIVE_ROOT_FOLDER_ID` es opcional, pero mas fiable que el nombre si la carpeta esta compartida.
+## Activacion
 
-Si `DOCUMENT_AI_PROCESSOR_NAME` no esta configurado, el script vuelve al OCR basico anterior.
+1. Copia `Code.gs` en el proyecto de Google Apps Script que ya utilizabas.
+2. Guarda el proyecto.
+3. Ejecuta manualmente `configureCloudInvoiceQueue` una sola vez.
+4. Acepta los permisos para Drive y la conexion externa a Supabase.
+5. Comprueba que el registro devuelve `ok: true`.
 
-## Primer uso
+La configuracion elimina el trigger OCR anterior y crea uno nuevo que procesa
+la cola cada 15 minutos. Los JSON correctos pasan a `PROCESADOS`; los que tengan
+errores pasan a `ERRORES`. Supabase vuelve a comprobar duplicados por sourceId y
+por proveedor + numero de factura.
 
-1. Ejecuta `runDailyInvoiceImport`.
-2. Autoriza Drive, Gmail y la conexion externa a Supabase.
-3. Revisa en la app `Ajustes > Compras y Facturas`.
-4. Marca como `Ignorar` los remitentes que no sean proveedores.
-5. Ejecuta `createDailyTrigger` para dejar la revision diaria activada.
+La funcion `testInvoiceQueueConnection` permite comprobar Drive y Supabase sin
+procesar ningun lote.
 
-Las facturas importadas quedan pendientes de revisar. Document AI tambien guarda lineas de factura en `supplier_invoice_lines`, que serviran para detectar cambios de precio por proveedor mas adelante.
+## Tarea de ChatGPT
+
+El prompt completo para crear la tarea desde ChatGPT movil esta en:
+
+`docs/chatgpt-mobile-invoice-task.md`
+
+## Flujo antiguo
+
+`runDailyInvoiceImport` y el codigo de OCR/Document AI se conservan solamente
+como respaldo. No tienen ningun trigger despues de ejecutar
+`configureCloudInvoiceQueue`.
