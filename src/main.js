@@ -3161,17 +3161,15 @@ function renderAjustesView(state) {
   // 3. Todos los artículos Product Manager list
   if (path.length === 2 && path[0] === 'articulos' && path[1] === 'todos') {
     const query = (state.articleSearchQuery || '').toLowerCase().trim();
-    const filteredItems = query
-      ? state.menuItems.filter(item => {
-          const catName = (state.categories.find(c => c.id === item.category)?.name || '').toLowerCase();
-          return item.name.toLowerCase().includes(query) || catName.includes(query);
-        })
-      : state.menuItems;
-
-    const rows = filteredItems.map(item => {
+    let visibleItemsCount = 0;
+    const rows = state.menuItems.map(item => {
       const categoryName = state.categories.find(c => c.id === item.category)?.name || item.category;
+      const matchesQuery = !query ||
+        item.name.toLowerCase().includes(query) ||
+        String(categoryName || '').toLowerCase().includes(query);
+      if (matchesQuery) visibleItemsCount += 1;
       return `
-        <button class="product-manager-row" data-edit-item-id="${item.id}">
+        <button class="product-manager-row" data-edit-item-id="${item.id}" ${matchesQuery ? '' : 'hidden'}>
           <div>
             <div class="product-manager-name">${item.name}</div>
             <div class="product-manager-meta">${categoryName}</div>
@@ -3211,10 +3209,10 @@ function renderAjustesView(state) {
           >
         </div>
         <div class="settings-tree-list" style="padding-bottom: 24px;">
-          ${rows.length > 0
-            ? rows
-            : `<p style="text-align:center; padding:20px; color:var(--text-muted); font-size:0.85rem;">${query ? 'No se encontraron resultados.' : 'No hay artículos creados.'}</p>`
-          }
+          ${rows}
+          <p id="article-search-empty" ${visibleItemsCount > 0 ? 'hidden' : ''} style="text-align:center; padding:20px; color:var(--text-muted); font-size:0.85rem;">
+            ${state.menuItems.length === 0 ? 'No hay artículos creados.' : 'No se encontraron resultados.'}
+          </p>
         </div>
       </div>
     `;
@@ -4398,14 +4396,22 @@ function isCashClosureViewActive(state = store.state) {
     state.settingsPath[0] === 'cierre';
 }
 
+function isArticleManagerViewActive(state = store.state) {
+  return state.activeTab === 'ajustes' &&
+    Array.isArray(state.settingsPath) &&
+    state.settingsPath.length === 2 &&
+    state.settingsPath[0] === 'articulos' &&
+    state.settingsPath[1] === 'todos';
+}
+
 function isExternalRenderMeta(meta = {}) {
   return ['realtime', 'remote-refresh', 'square-gift-card-event', 'sales-realtime'].includes(meta.source);
 }
 
 function shouldDeferExternalRender(meta = {}) {
-  return cashClosureEditLocked &&
-    isExternalRenderMeta(meta) &&
-    isCashClosureViewActive(store.state);
+  if (!isExternalRenderMeta(meta)) return false;
+  if (isArticleManagerViewActive(store.state)) return true;
+  return cashClosureEditLocked && isCashClosureViewActive(store.state);
 }
 
 // Master Shell Render Engine
@@ -9120,14 +9126,21 @@ function setupEventListeners(container) {
   // Article live search
   const articleSearchInput = container.querySelector('#article-search-input');
   if (articleSearchInput) {
-    // Focus at end of current text (preserves typed query on re-render)
-    articleSearchInput.focus();
-    const len = articleSearchInput.value.length;
-    articleSearchInput.setSelectionRange(len, len);
-
     articleSearchInput.addEventListener('input', (e) => {
       store.state.articleSearchQuery = e.target.value;
-      store.notify();
+      const query = e.target.value.toLowerCase().trim();
+      let visibleItemsCount = 0;
+
+      container.querySelectorAll('[data-edit-item-id]').forEach(row => {
+        const name = row.querySelector('.product-manager-name')?.textContent || '';
+        const category = row.querySelector('.product-manager-meta')?.textContent || '';
+        const matchesQuery = !query || `${name} ${category}`.toLowerCase().includes(query);
+        row.hidden = !matchesQuery;
+        if (matchesQuery) visibleItemsCount += 1;
+      });
+
+      const emptyState = container.querySelector('#article-search-empty');
+      if (emptyState) emptyState.hidden = visibleItemsCount > 0;
     });
   }
 

@@ -2329,6 +2329,7 @@ body.light-theme .btn-quick-pay {
   padding: 0 16px;
   overflow-y: auto;
   flex-grow: 1;
+  min-height: 0;
 }
 
 .settings-tree-item {
@@ -2376,6 +2377,10 @@ body.light-theme .btn-quick-pay {
   align-items: center;
   width: 100%;
   cursor: pointer;
+}
+
+.product-manager-row[hidden] {
+  display: none;
 }
 
 .product-manager-row:active {
