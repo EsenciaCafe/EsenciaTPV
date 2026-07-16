@@ -21,9 +21,14 @@ CONTROL DE PROCESADOS:
   PENDIENTES: https://drive.google.com/drive/folders/1s1n2kmt7bDfgSoSiVAlN0RD81tFK7-_g
   PROCESADOS: https://drive.google.com/drive/folders/1mqmHreoUCREnvUj6dOWo2P0k_-XPw3VE
 - Reune tanto los `sourceId` de `invoices` como los valores de cualquier array
-  `sourceIds`, y no vuelvas a analizar esos archivos o adjuntos.
-- Procesa como maximo 10 documentos nuevos por ejecucion, de los mas antiguos
-  a los mas recientes.
+  `sourceIds`. Reune tambien cada pareja normalizada `supplierName` +
+  `invoiceNumber` de los manifiestos y lotes ya procesados.
+- No vuelvas a incluir un archivo o adjunto cuyo `sourceId` ya exista. Si el
+  identificador no estaba disponible anteriormente, no incluyas la factura si
+  coincide proveedor + numero de factura con una ya registrada.
+- Procesa como maximo 10 documentos nuevos por ejecucion, empezando siempre por
+  los mas recientes. Prioriza los documentos cuya fecha sea posterior a la
+  ultima factura registrada.
 
 LECTURA:
 - Analiza cada factura por separado.
