@@ -1,6 +1,5 @@
 import { store } from './store.js';
 import QRCode from 'qrcode';
-import { parseGeminiInvoiceText } from './geminiInvoiceParser.js';
 import {
   addLoyaltyPurchase,
   addManualLoyaltyPointsWithoutPurchase,
@@ -92,8 +91,6 @@ let isDrawerOpen = false;
 let dbStatus = 'loading'; // 'loading' | 'connected' | 'fallback' | 'error'
 let cashClosureEditLocked = false;
 let selectedReportsTab = 'horas'; // 'horas' | 'diaria' | 'semanal' | 'mensual' | 'anual'
-let geminiInvoiceRawText = '';
-let geminiInvoicePreview = null;
 let loyaltyAdminQuery = '';
 let loyaltyAdminTab = 'resumen';
 let loyaltyAdminCustomers = [];
@@ -107,70 +104,6 @@ let loyaltyAdminLoading = false;
 let loyaltyAdminError = '';
 let transactionsFiltersOpen = false;
 let transactionsPaymentFilter = 'all';
-const GEMINI_SINGLE_INVOICE_PROMPT = `Analiza únicamente esta factura.
-
-Devuélveme solo una tabla Markdown con estas columnas exactas:
-
-Proveedor | Fecha | Factura | Artículo | Cant. | Precio Unit. | Importe
-
-No añadas resumen, explicación ni texto adicional.
-Usa una fila por cada artículo.
-Conserva los códigos de producto que identifiquen variantes, por ejemplo "B13", "AL26" o combinaciones letra+número. Si la factura dice "Smoothie B13 - 20 x 150g", el artículo debe ser "Smoothie B13", no solo "Smoothie".
-En facturas de Europastry, la columna "Precio" puede no ser el precio unitario real de compra. Usa la columna "Importe" como importe de la línea y calcula "Precio Unit." como Importe / Cantidad. Conserva descripciones completas como "Croissant Masa Madre (40u)" o "Rebanada Pan Payes (18px5u)".
-Mantén el número de factura exacto.
-Usa fecha en formato dd/mm/aaaa si aparece.
-Si aparece un total final de factura distinto a la suma de líneas por IGIC u otros ajustes, añade debajo de la tabla una línea de texto: Total factura: X.
-Si un dato no aparece claro, escribe "REVISAR".`;
-
-const GEMINI_FOLDER_INVOICE_PROMPT = `Quiero que analices todas las facturas visibles en esta carpeta, una por una, sin saltarte ninguna.
-
-Objetivo:
-Extraer todos y cada uno de los articulos comprados, con proveedor, fecha, numero de factura, cantidad, precio unitario e importe.
-
-Reglas obligatorias:
-1. Primero lista cuantas facturas/archivos detectas y sus nombres o numeros.
-2. Procesa las facturas una por una.
-3. No resumas articulos.
-4. No agrupes articulos parecidos.
-5. No cambies nombres importantes.
-6. Conserva codigos de producto o variantes, por ejemplo B13, AL26, 62306, 67850.
-7. Si un articulo dice "Smoothie B13 - 20 x 150g", el articulo debe ser "Smoothie B13".
-8. Si un articulo dice "Croissant Masa Madre (40u)", conserva esa descripcion.
-9. Si un articulo dice "Rebanada Pan Payes (18px5u)", conserva esa descripcion.
-10. En facturas de Europastry, la columna "Precio" puede no ser el precio unitario real de compra. Usa "Importe" como importe de linea y calcula "Precio Unit." como Importe / Cantidad.
-11. Si una factura tiene total final, base imponible o IGIC, indicalo en los campos de la seccion de esa factura.
-12. Si tienes dudas con una linea, no la inventes: escribe REVISAR.
-13. Si la respuesta es demasiado larga, divide automaticamente la salida en varias partes consecutivas: PARTE 1, PARTE 2, PARTE 3, etc.
-14. No me preguntes si quiero continuar. Continua directamente con la siguiente parte siempre que la plataforma te lo permita.
-15. No repitas facturas ya procesadas entre partes.
-16. Si por limite tecnico no puedes continuar, termina exactamente con: CONTINUAR DESDE: [nombre de la ultima factura pendiente].
-
-Formato obligatorio para cada factura:
-
-### Factura detectada
-
-**Proveedor:** 
-**Fecha:** 
-**Factura:** 
-**Archivo:** 
-**Total factura:** 
-**Base imponible:** 
-**IGIC:** 
-
-| Proveedor | Fecha | Factura | Articulo | Cant. | Precio Unit. | Importe |
-| :-------- | :---- | :------ | :------- | :---- | :----------- | :------ |
-| ... | ... | ... | ... | ... | ... | ... |
-
-Despues de procesar todas las facturas, anade esta seccion final:
-
-### Control final
-Facturas detectadas:
-Facturas procesadas:
-Facturas con dudas:
-Facturas posiblemente duplicadas:
-Total general:
-Observaciones:`;
-
 function escapeHtml(value = '') {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -1596,7 +1529,6 @@ function renderAjustesView(state) {
   const restrictedSettingsPath =
     (firstPath === 'articulos' && !store.canManageCatalog()) ||
     (firstPath === 'legal' && !store.canManageAccounting()) ||
-    (firstPath === 'compras' && !store.canManageAccounting()) ||
     (firstPath === 'fidelidad' && !store.canManageLoyalty()) ||
     (firstPath === 'informes' && !store.canViewReports()) ||
     (firstPath === 'cierre' && !store.canCloseCash()) ||
@@ -1650,11 +1582,6 @@ function renderAjustesView(state) {
             <span>Cierre de Caja</span>
             ${chevron}
           </button>` : '',
-      store.canManageAccounting() ? `
-          <button class="settings-tree-item" id="settings-to-compras">
-            <span>Compras y Facturas</span>
-            ${chevron}
-          </button>` : '',
       store.canManageLoyalty() ? `
           <button class="settings-tree-item" id="settings-to-fidelidad">
             <span>Fidelidad</span>
@@ -1687,10 +1614,6 @@ function renderAjustesView(state) {
           </button>
           <button class="settings-tree-item" id="settings-to-cierre">
             <span>Cierre de Caja</span>
-            ${chevron}
-          </button>
-          <button class="settings-tree-item" id="settings-to-compras">
-            <span>Compras y Facturas</span>
             ${chevron}
           </button>
           <button class="settings-tree-item" id="settings-to-fidelidad">
@@ -1757,64 +1680,6 @@ function renderAjustesView(state) {
               </button>
             </div>
           </div>
-        </div>
-      </div>
-    `;
-  }
-
-  if (path.length === 1 && path[0] === 'compras') {
-    const selectedMonth = state.selectedReportMonth || new Date().toISOString().slice(0, 7);
-    const summary = store.getAccountingSummary(selectedMonth);
-    const monthInvoices = state.supplierInvoices
-      .filter(invoice => (invoice.invoiceDate || '').slice(0, 7) === selectedMonth)
-      .sort((a, b) => (b.invoiceDate || '').localeCompare(a.invoiceDate || ''));
-
-    const rows = monthInvoices.map(invoice => `
-      <button class="purchase-row" data-edit-invoice-id="${invoice.id}">
-        <div>
-          <strong>${invoice.supplierName}</strong>
-          <span>${invoice.invoiceDate || ''} · ${invoice.invoiceNumber || 'Sin numero'} · ${invoice.deductible === false ? 'No deducible' : 'Deducible'}</span>
-        </div>
-        <div class="purchase-row-amount">
-          <strong>${Number(invoice.totalAmount || 0).toFixed(2)}€</strong>
-          <span>IGIC ${Number(invoice.taxAmount || 0).toFixed(2)}€</span>
-        </div>
-      </button>
-    `).join('');
-
-    return `
-      <div class="view-container">
-        <div class="settings-nav-header">
-          <button class="settings-back-arrow-btn" id="settings-back-btn">
-            ${backArrow} Ajustes
-          </button>
-          <button class="btn btn-secondary" id="settings-refresh-invoices-btn" title="Actualizar facturas" aria-label="Actualizar facturas" style="width:36px; height:36px; padding:0; flex:0 0 36px;">
-            <i data-lucide="refresh-cw" style="width:17px; height:17px;"></i>
-          </button>
-          <button class="btn btn-primary" id="settings-create-invoice-btn" style="height:36px; padding:0 12px; font-size:0.85rem; background-color:var(--secondary);">
-            Nueva
-          </button>
-          <button class="btn btn-secondary" id="settings-import-gemini-btn" style="height:36px; padding:0 12px; font-size:0.85rem;">
-            Importar Gemini
-          </button>
-        </div>
-        <h2 class="settings-nav-title">Compras y Facturas</h2>
-        <div class="accounting-month-bar">
-          <label>Mes</label>
-          <input type="month" id="accounting-month-input" value="${selectedMonth}">
-        </div>
-        <div class="accounting-summary-grid">
-          <div><span>Facturado</span><strong>${summary.sales.total.toFixed(2)}€</strong></div>
-          <div><span>IGIC ventas</span><strong>${summary.sales.tax.toFixed(2)}€</strong></div>
-          <div><span>Compras</span><strong>${summary.purchases.total.toFixed(2)}€</strong></div>
-          <div><span>IGIC compras</span><strong>${summary.purchases.deductibleTax.toFixed(2)}€</strong></div>
-          <div class="${summary.estimatedIgicDue < 0 ? 'is-credit' : 'is-due'}">
-            <span>${summary.estimatedIgicDue < 0 ? 'A compensar' : 'IGIC estimado'}</span>
-            <strong>${summary.estimatedIgicDue.toFixed(2)}€</strong>
-          </div>
-        </div>
-        <div class="purchase-list">
-          ${rows || '<p style="padding:24px; text-align:center; color:var(--text-muted);">No hay facturas registradas en este mes.</p>'}
         </div>
       </div>
     `;
@@ -2192,217 +2057,6 @@ function renderAjustesView(state) {
     `;
   }
 
-  if (path.length >= 2 && path[0] === 'compras' && path[1] === 'importar-gemini') {
-    const preview = geminiInvoicePreview;
-    const rows = preview?.rows || [];
-    const invoices = preview?.invoices || [];
-    const importableInvoices = invoices.filter(invoice => invoice.importable !== false);
-    const providerRows = (preview?.summaries?.gasto_por_proveedor || []).map(item => `
-      <div class="gemini-summary-row">
-        <span>${escapeHtml(item.proveedor)}</span>
-        <strong>${Number(item.total || 0).toFixed(2)}€</strong>
-      </div>
-    `).join('');
-    const invoiceRows = invoices.map(invoice => `
-      <div class="gemini-summary-row ${invoice.duplicate ? 'needs-review' : ''}">
-        <span>
-          ${escapeHtml(invoice.supplierName)} · ${escapeHtml(invoice.invoiceDate)} · ${escapeHtml(invoice.invoiceNumber || 'Sin numero')}
-          ${invoice.duplicate ? `<em>${escapeHtml(invoice.duplicateReasons?.join(' ') || 'Factura duplicada')}</em>` : ''}
-        </span>
-        <strong>${Number(invoice.totalAmount || 0).toFixed(2)}€</strong>
-      </div>
-    `).join('');
-    const lineRows = rows.slice(0, 80).map(row => `
-      <div class="gemini-preview-row ${row.revision_necesaria ? 'needs-review' : ''}">
-        <div>
-          <strong>${escapeHtml(row.articulo_normalizado)}</strong>
-          <span>${escapeHtml(row.proveedor)} · ${escapeHtml(row.fecha)} · ${escapeHtml(row.factura)}</span>
-          ${row.revision_necesaria ? `<em>${escapeHtml(row.motivo_revision || 'Revisar linea')}</em>` : ''}
-        </div>
-        <div>
-          <strong>${Number(row.importe || 0).toFixed(2)}€</strong>
-          <span>${row.cantidad ?? '-'} ${escapeHtml(row.unidad || '')} · ${row.precio_unitario !== null ? Number(row.precio_unitario).toFixed(4) : '-'}€/${escapeHtml(row.unidad_precio || 'ud')}</span>
-        </div>
-      </div>
-    `).join('');
-
-    return `
-      <div class="view-container">
-        <div class="settings-nav-header">
-          <button class="settings-back-arrow-btn" id="settings-back-btn">
-            ${backArrow} Compras
-          </button>
-        </div>
-        <h2 class="settings-nav-title">Importar factura desde Gemini</h2>
-        <div class="settings-editor-container gemini-import-panel">
-          <div class="gemini-prompt-panel">
-            <div>
-              <h3>Prompt para Gemini</h3>
-              <p>Usa este texto para que Gemini analice una carpeta completa y devuelva las facturas por partes, sin pedir permiso para continuar.</p>
-            </div>
-            <textarea class="editor-form-input" id="gemini-prompt-text" rows="12" readonly>${escapeHtml(GEMINI_FOLDER_INVOICE_PROMPT)}</textarea>
-            <button class="btn btn-secondary" id="gemini-copy-prompt-btn" type="button">Copiar prompt</button>
-          </div>
-          <div class="editor-form-group">
-            <label class="editor-form-label">Respuesta de Gemini</label>
-            <textarea class="editor-form-input" id="gemini-invoice-raw-text" rows="12" placeholder="Pega aqui una o varias partes de la respuesta de Gemini">${escapeHtml(geminiInvoiceRawText)}</textarea>
-          </div>
-          <div class="gemini-import-actions">
-            <button class="btn btn-secondary" id="gemini-clear-btn" type="button">Limpiar</button>
-            <button class="btn btn-primary" id="gemini-preview-btn" type="button" style="background:var(--secondary); border-color:var(--secondary);">Analizar texto</button>
-          </div>
-
-          ${preview ? `
-            <div class="gemini-preview-summary">
-              <div><span>Lineas</span><strong>${preview.totals.rows}</strong></div>
-              <div><span>Facturas</span><strong>${preview.totals.invoices}</strong></div>
-              <div><span>Total</span><strong>${preview.totals.totalAmount.toFixed(2)}€</strong></div>
-              <div class="${preview.totals.reviewRows > 0 ? 'needs-review' : ''}"><span>Dudosas</span><strong>${preview.totals.reviewRows}</strong></div>
-              <div class="${preview.totals.duplicateInvoices > 0 ? 'needs-review' : ''}"><span>Duplicadas</span><strong>${preview.totals.duplicateInvoices || 0}</strong></div>
-              <div><span>Importables</span><strong>${preview.totals.importableInvoices ?? invoices.length}</strong></div>
-            </div>
-
-            <div class="gemini-summary-panel">
-              <h3>Gasto por proveedor</h3>
-              ${providerRows || '<p>No se detectaron proveedores.</p>'}
-            </div>
-
-            <div class="gemini-summary-panel">
-              <h3>Facturas detectadas</h3>
-              ${invoices.map(invoice => `
-                <div class="gemini-summary-row ${invoice.duplicate ? 'needs-review' : ''}">
-                  <span>${escapeHtml(invoice.supplierName)} · ${escapeHtml(invoice.invoiceDate)} · ${escapeHtml(invoice.invoiceNumber || 'Sin numero')}</span>
-                  <strong>${Number(invoice.totalAmount || 0).toFixed(2)}€</strong>
-                </div>
-              `).join('') || '<p>No se detectaron facturas.</p>'}
-            </div>
-
-            <div class="gemini-lines-panel">
-              <h3>Lineas detectadas</h3>
-              ${lineRows || '<p>No hay lineas para revisar.</p>'}
-              ${rows.length > 80 ? `<p class="gemini-muted">Mostrando 80 de ${rows.length} lineas.</p>` : ''}
-            </div>
-
-            <button class="btn btn-primary" id="gemini-import-confirm-btn" type="button" ${importableInvoices.length === 0 ? 'disabled' : ''} style="height:48px; background:var(--secondary); border-color:var(--secondary);">
-              Importar ${importableInvoices.length} factura${importableInvoices.length === 1 ? '' : 's'} nueva${importableInvoices.length === 1 ? '' : 's'}
-            </button>
-          ` : `
-            <p class="gemini-muted">Pega aqui una respuesta completa o varias partes de Gemini. La app separara las facturas por numero, aplicara los totales de cada seccion y marcara duplicados.</p>
-          `}
-        </div>
-      </div>
-    `;
-  }
-
-  if (path.length >= 2 && path[0] === 'compras') {
-    const isNew = path[1] === 'nueva';
-    const invoice = isNew ? null : state.supplierInvoices.find(item => item.id === path[1]);
-    if (!isNew && !invoice) {
-      return '<div class="view-container"><p style="padding:24px;">Factura no encontrada.</p></div>';
-    }
-
-    const invoiceLines = invoice
-      ? state.supplierInvoiceLines.filter(line => line.invoiceId === invoice.id)
-      : [];
-    const invoiceLineRows = invoiceLines.map(line => `
-      <div class="supplier-line-row">
-        <div>
-          <strong>${line.description}</strong>
-          <span>${line.quantity ?? '-'} uds. · ${line.unitPrice !== null ? `${line.unitPrice.toFixed(4)}€` : '-'} / ud.</span>
-        </div>
-        <strong>${line.totalAmount !== null ? `${line.totalAmount.toFixed(2)}€` : '-'}</strong>
-      </div>
-    `).join('');
-
-    const baseAmount = Number(invoice?.baseAmount || 0);
-    const taxRate = Number(invoice?.taxRate ?? state.legal?.taxRate ?? 7);
-    const taxAmount = Number(invoice?.taxAmount || 0);
-    const totalAmount = Number(invoice?.totalAmount || 0);
-
-    return `
-      <div class="view-container">
-        <div class="settings-nav-header">
-          <button class="settings-back-arrow-btn" id="settings-back-btn">
-            ${backArrow} Compras
-          </button>
-        </div>
-        <h2 class="settings-nav-title">${isNew ? 'Nueva factura' : 'Editar factura'}</h2>
-        <div class="settings-editor-container">
-          <form id="supplier-invoice-form" data-invoice-id="${invoice?.id || ''}" style="display:grid; gap:16px;">
-            <div class="editor-form-group">
-              <label class="editor-form-label">Proveedor</label>
-              <input type="text" class="editor-form-input" id="invoice-supplier-name" value="${invoice?.supplierName || ''}" required>
-            </div>
-            <div class="editor-form-group">
-              <label class="editor-form-label">Numero de factura</label>
-              <input type="text" class="editor-form-input" id="invoice-number" value="${invoice?.invoiceNumber || ''}">
-            </div>
-            <div class="editor-form-group">
-              <label class="editor-form-label">Fecha</label>
-              <input type="date" class="editor-form-input" id="invoice-date" value="${invoice?.invoiceDate || new Date().toISOString().slice(0, 10)}" required>
-            </div>
-            <div class="editor-form-group">
-              <label class="editor-form-label">Categoria</label>
-              <input type="text" class="editor-form-input" id="invoice-category" value="${invoice?.category || ''}" placeholder="Mercancia, suministros, alquiler...">
-            </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-              <div class="editor-form-group">
-                <label class="editor-form-label">Base imponible</label>
-                <input type="number" step="0.01" min="0" class="editor-form-input" id="invoice-base-amount" value="${baseAmount || ''}" required>
-              </div>
-              <div class="editor-form-group">
-                <label class="editor-form-label">IGIC %</label>
-                <input type="number" step="0.01" min="0" class="editor-form-input" id="invoice-tax-rate" value="${taxRate}" required>
-              </div>
-            </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-              <div class="editor-form-group">
-                <label class="editor-form-label">IGIC soportado</label>
-                <input type="number" step="0.01" min="0" class="editor-form-input" id="invoice-tax-amount" value="${taxAmount || ''}" required>
-              </div>
-              <div class="editor-form-group">
-                <label class="editor-form-label">Total factura</label>
-                <input type="number" step="0.01" min="0" class="editor-form-input" id="invoice-total-amount" value="${totalAmount || ''}" required>
-              </div>
-            </div>
-            <label class="staff-active-toggle">
-              <input type="checkbox" id="invoice-deductible" ${invoice?.deductible === false ? '' : 'checked'}>
-              <span>IGIC deducible</span>
-            </label>
-            <div class="editor-form-group">
-              <label class="editor-form-label">Origen</label>
-              <select class="editor-form-input" id="invoice-source">
-                <option value="manual" ${invoice?.source === 'manual' ? 'selected' : ''}>Manual</option>
-                <option value="drive" ${invoice?.source === 'drive' ? 'selected' : ''}>Drive</option>
-                <option value="gmail" ${invoice?.source === 'gmail' ? 'selected' : ''}>Gmail</option>
-              </select>
-            </div>
-            <div class="editor-form-group">
-              <label class="editor-form-label">Remitente email</label>
-              <input type="email" class="editor-form-input" id="invoice-sender-email" value="${invoice?.senderEmail || ''}" placeholder="proveedor@ejemplo.com">
-            </div>
-            <div class="editor-form-group">
-              <label class="editor-form-label">Notas</label>
-              <textarea class="editor-form-input" id="invoice-notes" rows="3">${invoice?.notes || ''}</textarea>
-            </div>
-            ${invoiceLines.length > 0 ? `
-              <div class="supplier-lines-panel">
-                <h3>Lineas detectadas</h3>
-                ${invoiceLineRows}
-              </div>
-            ` : ''}
-            <button type="submit" class="btn btn-primary" style="height:48px; background-color:var(--secondary);">Guardar factura</button>
-            ${!isNew ? `
-              <button type="button" class="btn btn-secondary" id="settings-delete-invoice-btn" style="height:44px; color:var(--danger); border-color:rgba(239,68,68,.3); background:rgba(239,68,68,.08);">
-                Eliminar factura
-              </button>
-            ` : ''}
-          </form>
-        </div>
-      </div>
-    `;
-  }
-
   if (path.length === 1 && path[0] === 'staff' && store.canManageStaff()) {
     const permissionsRow = `
       <button class="settings-tree-item" id="settings-to-role-permissions">
@@ -2447,7 +2101,7 @@ function renderAjustesView(state) {
     const permissionLabels = [
       ['accessSettings', 'Entrar en Ajustes'],
       ['manageCatalog', 'Gestionar articulos y cuadricula'],
-      ['manageAccounting', 'Gestionar datos fiscales, compras y facturas'],
+      ['manageAccounting', 'Gestionar datos fiscales del TPV'],
       ['viewReports', 'Ver y exportar informes'],
       ['closeCash', 'Cerrar caja'],
       ['issueRefunds', 'Registrar devoluciones'],
@@ -8368,14 +8022,6 @@ function setupEventListeners(container) {
     });
   }
 
-  const toComprasBtn = container.querySelector('#settings-to-compras');
-  if (toComprasBtn) {
-    toComprasBtn.addEventListener('click', async () => {
-      await store.refreshSupplierAccountingData({ notify: false });
-      store.navigateSettings(['compras']);
-    });
-  }
-
   const toFidelidadBtn = container.querySelector('#settings-to-fidelidad');
   if (toFidelidadBtn) {
     toFidelidadBtn.addEventListener('click', () => {
@@ -8587,201 +8233,6 @@ function setupEventListeners(container) {
         notes: container.querySelector('#closure-notes')?.value || ''
       });
       showToast(saved ? 'Cierre guardado. El nuevo turno empieza automaticamente.' : 'No se pudo guardar el cierre. Puede estar ya cerrado o faltar la migracion de Supabase.', saved ? 'success' : 'warning');
-    });
-  }
-
-  const accountingMonthInput = container.querySelector('#accounting-month-input');
-  if (accountingMonthInput) {
-    accountingMonthInput.addEventListener('change', (e) => {
-      store.state.selectedReportMonth = e.target.value;
-      store.notify();
-    });
-  }
-
-  const createInvoiceBtn = container.querySelector('#settings-create-invoice-btn');
-  if (createInvoiceBtn) {
-    createInvoiceBtn.addEventListener('click', () => {
-      store.navigateSettings(['compras', 'nueva']);
-    });
-  }
-
-  const refreshInvoicesBtn = container.querySelector('#settings-refresh-invoices-btn');
-  if (refreshInvoicesBtn) {
-    refreshInvoicesBtn.addEventListener('click', async () => {
-      refreshInvoicesBtn.disabled = true;
-      await store.refreshSupplierAccountingData({ notify: false });
-      store.notify();
-      showToast('Facturas actualizadas.', 'success');
-    });
-  }
-
-  const importGeminiBtn = container.querySelector('#settings-import-gemini-btn');
-  if (importGeminiBtn) {
-    importGeminiBtn.addEventListener('click', () => {
-      store.navigateSettings(['compras', 'importar-gemini']);
-    });
-  }
-
-  const geminiPreviewBtn = container.querySelector('#gemini-preview-btn');
-  if (geminiPreviewBtn) {
-    geminiPreviewBtn.addEventListener('click', () => {
-      geminiInvoiceRawText = container.querySelector('#gemini-invoice-raw-text')?.value || '';
-      if (!geminiInvoiceRawText.trim()) {
-        showToast('Pega primero el texto de Gemini.', 'warning');
-        return;
-      }
-      geminiInvoicePreview = parseGeminiInvoiceText(geminiInvoiceRawText, {
-        taxRate: store.state.legal?.taxRate ?? 7,
-        existingInvoices: store.state.supplierInvoices || []
-      });
-      if (geminiInvoicePreview.totals.rows === 0) {
-        showToast('No pude detectar lineas de factura en el texto.', 'warning');
-      } else {
-        showToast(`Detectadas ${geminiInvoicePreview.totals.rows} lineas.`, 'success');
-      }
-      render(store.state);
-    });
-  }
-
-  const geminiCopyPromptBtn = container.querySelector('#gemini-copy-prompt-btn');
-  if (geminiCopyPromptBtn) {
-    geminiCopyPromptBtn.addEventListener('click', async () => {
-      try {
-        await navigator.clipboard.writeText(GEMINI_FOLDER_INVOICE_PROMPT);
-        showToast('Prompt copiado.', 'success');
-      } catch (error) {
-        const promptBox = container.querySelector('#gemini-prompt-text');
-        promptBox?.select();
-        showToast('Selecciona y copia el prompt manualmente.', 'warning');
-      }
-    });
-  }
-
-  const geminiClearBtn = container.querySelector('#gemini-clear-btn');
-  if (geminiClearBtn) {
-    geminiClearBtn.addEventListener('click', () => {
-      geminiInvoiceRawText = '';
-      geminiInvoicePreview = null;
-      render(store.state);
-    });
-  }
-
-  const geminiImportConfirmBtn = container.querySelector('#gemini-import-confirm-btn');
-  if (geminiImportConfirmBtn) {
-    geminiImportConfirmBtn.addEventListener('click', async () => {
-      if (!geminiInvoicePreview?.invoices?.length) {
-        showToast('No hay facturas para importar.', 'warning');
-        return;
-      }
-      const invoicesToImport = geminiInvoicePreview.invoices.filter(invoice => invoice.importable !== false);
-      const imported = await store.importGeminiInvoices(invoicesToImport);
-      if (imported) {
-        const importedCount = invoicesToImport.length;
-        const skippedCount = geminiInvoicePreview.invoices.length - invoicesToImport.length;
-        const month = invoicesToImport[0]?.invoiceDate?.slice(0, 7);
-        if (month) store.state.selectedReportMonth = month;
-        geminiInvoicePreview = null;
-        geminiInvoiceRawText = '';
-        render(store.state);
-        showToast(`${importedCount} factura${importedCount === 1 ? '' : 's'} importada${importedCount === 1 ? '' : 's'}${skippedCount ? `, ${skippedCount} duplicada${skippedCount === 1 ? '' : 's'} omitida${skippedCount === 1 ? '' : 's'}` : ''}. Lista para la siguiente.`, 'success');
-      } else {
-        showToast('No tienes permiso para importar facturas.', 'error');
-      }
-    });
-  }
-
-  container.querySelectorAll('[data-edit-invoice-id]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      store.navigateSettings(['compras', btn.dataset.editInvoiceId]);
-    });
-  });
-
-  const invoiceForm = container.querySelector('#supplier-invoice-form');
-  if (invoiceForm) {
-    const baseInput = container.querySelector('#invoice-base-amount');
-    const rateInput = container.querySelector('#invoice-tax-rate');
-    const taxInput = container.querySelector('#invoice-tax-amount');
-    const totalInput = container.querySelector('#invoice-total-amount');
-
-    const recalcInvoiceTotals = () => {
-      const base = parseFloat(baseInput?.value || '0');
-      const rate = parseFloat(rateInput?.value || '0');
-      if (!Number.isFinite(base) || !Number.isFinite(rate)) return;
-      const tax = parseFloat((base * rate / 100).toFixed(2));
-      const total = parseFloat((base + tax).toFixed(2));
-      if (taxInput && document.activeElement !== taxInput) taxInput.value = tax ? tax.toFixed(2) : '';
-      if (totalInput && document.activeElement !== totalInput) totalInput.value = total ? total.toFixed(2) : '';
-    };
-
-    baseInput?.addEventListener('input', recalcInvoiceTotals);
-    rateInput?.addEventListener('input', recalcInvoiceTotals);
-
-    invoiceForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const id = invoiceForm.dataset.invoiceId || undefined;
-      const supplierName = (container.querySelector('#invoice-supplier-name')?.value || '').trim();
-      const invoiceNumber = (container.querySelector('#invoice-number')?.value || '').trim();
-      const invoiceDate = container.querySelector('#invoice-date')?.value || '';
-      const category = (container.querySelector('#invoice-category')?.value || '').trim();
-      const baseAmount = parseFloat(baseInput?.value || '0');
-      const taxRate = parseFloat(rateInput?.value || '0');
-      const taxAmount = parseFloat(taxInput?.value || '0');
-      const totalAmount = parseFloat(totalInput?.value || '0');
-      const deductible = container.querySelector('#invoice-deductible')?.checked !== false;
-      const source = container.querySelector('#invoice-source')?.value || 'manual';
-      const senderEmail = (container.querySelector('#invoice-sender-email')?.value || '').trim().toLowerCase();
-      const notes = (container.querySelector('#invoice-notes')?.value || '').trim();
-
-      if (!supplierName || !invoiceDate || !Number.isFinite(baseAmount) || !Number.isFinite(taxAmount) || !Number.isFinite(totalAmount)) {
-        showToast('Revisa proveedor, fecha e importes.', 'error');
-        return;
-      }
-
-      const saved = await store.saveSupplierInvoice({
-        id,
-        supplierName,
-        invoiceNumber,
-        invoiceDate,
-        category,
-        baseAmount,
-        taxRate,
-        taxAmount,
-        totalAmount,
-        deductible,
-        source,
-        senderEmail,
-        notes,
-        status: 'confirmed'
-      });
-
-      if (saved) {
-        store.state.selectedReportMonth = invoiceDate.slice(0, 7);
-        store.navigateSettings(['compras']);
-        showToast('Factura guardada.', 'success');
-      } else {
-        showToast('No tienes permiso para guardar facturas.', 'error');
-      }
-    });
-  }
-
-  const deleteInvoiceBtn = container.querySelector('#settings-delete-invoice-btn');
-  if (deleteInvoiceBtn) {
-    deleteInvoiceBtn.addEventListener('click', () => {
-      const id = container.querySelector('#supplier-invoice-form')?.dataset.invoiceId;
-      if (!id) return;
-      showConfirm(
-        'Eliminar factura',
-        'La compra dejara de contar en el calculo contable. ¿Quieres continuar?',
-        async () => {
-          const deleted = await store.deleteSupplierInvoice(id);
-          if (deleted) {
-            store.navigateSettings(['compras']);
-            showToast('Factura eliminada.', 'success');
-          }
-        },
-        null,
-        true
-      );
     });
   }
 

@@ -19,14 +19,7 @@ import {
   loadStaffProfiles,
   findStaffByPin,
   upsertStaffProfile,
-  deleteStaffProfile as dbDeleteStaffProfile,
-  loadSupplierInvoices,
-  loadSupplierInvoiceLines,
-  upsertSupplierInvoice,
-  replaceSupplierInvoiceLines,
-  deleteSupplierInvoice as dbDeleteSupplierInvoice,
-  loadSupplierSenderRules,
-  upsertSupplierSenderRule
+  deleteStaffProfile as dbDeleteStaffProfile
 } from './db.js';
 import { supabase } from './supabase.js';
 
@@ -136,9 +129,6 @@ class Store {
       menuItems: [],
       gridItems: {},
       staffProfiles: [],
-      supplierInvoices: [],
-      supplierInvoiceLines: [],
-      supplierSenderRules: [],
       cashClosures: [],
       squareGiftCardEvents: [],
       rolePermissions: JSON.parse(JSON.stringify(DEFAULT_ROLE_PERMISSIONS)),
@@ -475,27 +465,6 @@ class Store {
     this.state.staffProfiles = await loadStaffProfiles();
   }
 
-  async loadSupplierInvoices() {
-    this.state.supplierInvoices = await loadSupplierInvoices();
-  }
-
-  async loadSupplierInvoiceLines() {
-    this.state.supplierInvoiceLines = await loadSupplierInvoiceLines();
-  }
-
-  async loadSupplierSenderRules() {
-    this.state.supplierSenderRules = await loadSupplierSenderRules();
-  }
-
-  async refreshSupplierAccountingData({ notify = true } = {}) {
-    await Promise.all([
-      this.loadSupplierInvoices(),
-      this.loadSupplierInvoiceLines(),
-      this.loadSupplierSenderRules()
-    ]);
-    if (notify) this.notify();
-  }
-
   async loadCashClosures() {
     const closures = await loadCashClosures();
     this.cashClosurePersistenceReady = Array.isArray(closures);
@@ -688,9 +657,6 @@ class Store {
       this.state.modifiers = catalog.modifiers;
       this.state.gridItems = catalog.gridItems;
       await this.loadStaffDirectory();
-      await this.loadSupplierInvoices();
-      await this.loadSupplierInvoiceLines();
-      await this.loadSupplierSenderRules();
       
       console.log('[Store] Catálogo cargado desde Supabase:', {
         categorias: catalog.categories.length,
@@ -997,113 +963,6 @@ class Store {
     }
     this.state.settingsPath = [];
     this.notify();
-  }
-
-  async saveSupplierInvoice(invoiceData) {
-    if (!this.canManageAccounting()) return false;
-    await upsertSupplierInvoice(invoiceData);
-    await this.loadSupplierInvoices();
-    await this.loadSupplierInvoiceLines();
-    this.notify();
-    return true;
-  }
-
-  async importGeminiInvoices(parsedInvoices) {
-    if (!this.canManageAccounting()) return false;
-
-    const invoicesToImport = parsedInvoices.filter(invoice => invoice.importable !== false);
-
-    for (const invoice of invoicesToImport) {
-      const invoiceId = invoice.id || `gemini-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      await upsertSupplierInvoice({
-        id: invoiceId,
-        supplierName: invoice.supplierName,
-        invoiceNumber: invoice.invoiceNumber,
-        invoiceDate: invoice.invoiceDate,
-        category: invoice.category,
-        baseAmount: invoice.baseAmount,
-        taxRate: invoice.taxRate,
-        taxAmount: invoice.taxAmount,
-        totalAmount: invoice.totalAmount,
-        deductible: invoice.deductible,
-        status: invoice.status || 'pending_review',
-        source: 'drive',
-        sourceId: `gemini-${invoiceId}`,
-        notes: invoice.notes || 'Importado desde resumen de Gemini.'
-      });
-      await replaceSupplierInvoiceLines(invoiceId, invoice.lines || []);
-    }
-
-    await this.loadSupplierInvoices();
-    await this.loadSupplierInvoiceLines();
-    this.notify();
-    return true;
-  }
-
-  async toggleSupplierSenderIgnored(email) {
-    if (!this.canManageAccounting()) return false;
-    const normalizedEmail = String(email || '').trim().toLowerCase();
-    if (!normalizedEmail) return false;
-    const existing = this.state.supplierSenderRules.find(rule => rule.email === normalizedEmail);
-    await upsertSupplierSenderRule({
-      email: normalizedEmail,
-      label: existing?.label || '',
-      ignored: !(existing?.ignored === true)
-    });
-    await this.loadSupplierSenderRules();
-    this.notify();
-    return true;
-  }
-
-  async deleteSupplierInvoice(id) {
-    if (!this.canManageAccounting()) return false;
-    await dbDeleteSupplierInvoice(id);
-    await this.loadSupplierInvoices();
-    await this.loadSupplierInvoiceLines();
-    this.notify();
-    return true;
-  }
-
-  getTransactionTaxDetails(tx) {
-    const total = Number(tx.total || 0);
-    const legal = tx.legalData || this.state.legal || {};
-    const taxRate = Number(legal.taxRate ?? this.state.legal.taxRate ?? 0);
-    const base = taxRate > 0 ? total / (1 + taxRate / 100) : total;
-    const tax = total - base;
-    return { base, tax, taxRate };
-  }
-
-  getAccountingSummary(month = this.state.selectedReportMonth) {
-    const monthPrefix = month || new Date().toISOString().slice(0, 7);
-    const sales = this.state.transactions.filter(tx => (tx.createdAt || '').slice(0, 7) === monthPrefix);
-    const purchases = this.state.supplierInvoices.filter(invoice => (invoice.invoiceDate || '').slice(0, 7) === monthPrefix);
-
-    const salesTotals = sales.reduce((acc, tx) => {
-      const { base, tax } = this.getTransactionTaxDetails(tx);
-      acc.total += Number(tx.total || 0);
-      acc.base += base;
-      acc.tax += tax;
-      return acc;
-    }, { total: 0, base: 0, tax: 0 });
-
-    const purchaseTotals = purchases.reduce((acc, invoice) => {
-      acc.total += Number(invoice.totalAmount || 0);
-      acc.base += Number(invoice.baseAmount || 0);
-      if (invoice.deductible !== false) {
-        acc.deductibleTax += Number(invoice.taxAmount || 0);
-      }
-      acc.tax += Number(invoice.taxAmount || 0);
-      return acc;
-    }, { total: 0, base: 0, tax: 0, deductibleTax: 0 });
-
-    return {
-      month: monthPrefix,
-      salesCount: sales.length,
-      purchaseCount: purchases.length,
-      sales: salesTotals,
-      purchases: purchaseTotals,
-      estimatedIgicDue: salesTotals.tax - purchaseTotals.deductibleTax
-    };
   }
 
   getTransactionDateKey(tx) {

@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "vite --host",
     "build": "vite build",
-    "preview": "vite preview",
-    "invoices:import": "node scripts/import-invoice-batch.mjs"
+    "preview": "vite preview"
   },
   "devDependencies": {
     "vite": "^5.2.0"
