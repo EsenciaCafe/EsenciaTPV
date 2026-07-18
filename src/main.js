@@ -4843,7 +4843,7 @@ function showDiscountModal(preselectedTicketItemId = '') {
   });
 }
 
-function showConfirm(title, message, onConfirm, onCancel = null, isDanger = false) {
+function showConfirm(title, message, onConfirm, onCancel = null, isDanger = false, confirmLabel = 'Aceptar') {
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop';
   modal.id = 'confirm-dialog-modal';
@@ -4856,7 +4856,7 @@ function showConfirm(title, message, onConfirm, onCancel = null, isDanger = fals
       <p style="margin: 0 0 24px 0; font-size: 0.9rem; color: var(--text-muted); line-height: 1.45; word-break: break-word; white-space: pre-line;">${message}</p>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
         <button class="btn btn-secondary" id="confirm-cancel-btn" style="height: 44px; font-weight: 600; border-radius: var(--border-radius-md); background: var(--bg-item); border: 1px solid var(--border-color); color: var(--text-main); cursor: pointer; font-size: 0.85rem; transition: background 0.2s;">Cancelar</button>
-        <button class="btn btn-primary" id="confirm-ok-btn" style="height: 44px; font-weight: 600; border-radius: var(--border-radius-md); background: ${confirmBtnBg}; border: none; color: white; cursor: pointer; font-size: 0.85rem; transition: opacity 0.2s;">Aceptar</button>
+        <button class="btn btn-primary" id="confirm-ok-btn" style="height: 44px; font-weight: 600; border-radius: var(--border-radius-md); background: ${confirmBtnBg}; border: none; color: white; cursor: pointer; font-size: 0.85rem; transition: opacity 0.2s;">${escapeHtml(confirmLabel)}</button>
       </div>
     </div>
   `;
@@ -8223,16 +8223,57 @@ function setupEventListeners(container) {
 
     cashClosureForm.addEventListener('submit', async (e) => {
       e.preventDefault();
-      cashClosureEditLocked = false;
+      if (document.querySelector('#confirm-dialog-modal')) return;
+
       const businessDate = container.querySelector('#cash-closure-date-input')?.value || new Date().toISOString().slice(0, 10);
-      const saved = await store.saveCashClosure({
+      const closureData = {
         businessDate,
         openingCash: parseFloat(container.querySelector('#closure-opening-cash')?.value || '0'),
         countedCash: parseFloat(container.querySelector('#closure-counted-cash')?.value || '0'),
         bbvaTotal: parseFloat(container.querySelector('#closure-bbva-total')?.value || '0'),
         notes: container.querySelector('#closure-notes')?.value || ''
-      });
-      showToast(saved ? 'Cierre guardado. El nuevo turno empieza automaticamente.' : 'No se pudo guardar el cierre. Puede estar ya cerrado o faltar la migracion de Supabase.', saved ? 'success' : 'warning');
+      };
+      const latestClosure = store.getLatestCashClosure(businessDate);
+      const sinceTime = latestClosure?.closedAt ? new Date(latestClosure.closedAt).getTime() : 0;
+      const summary = store.getCashClosureSummary(businessDate, { sinceTime });
+      const shiftNumber = store.getNextCashClosureShiftNumber(businessDate);
+      const submitBtn = cashClosureForm.querySelector('button[type="submit"]');
+      const confirmationMessage = [
+        `Se guardara el cierre del turno ${shiftNumber} del ${formatIsoDateEs(businessDate)}.`,
+        '',
+        `Ventas netas: ${summary.netTotal.toFixed(2)}€`,
+        `Efectivo contado: ${closureData.countedCash.toFixed(2)}€`,
+        `Cierre BBVA: ${closureData.bbvaTotal.toFixed(2)}€`,
+        '',
+        'Al confirmar se cerrara este turno y comenzara uno nuevo automaticamente.'
+      ].join('\n');
+
+      showConfirm(
+        'Confirmar cierre de turno',
+        confirmationMessage,
+        async () => {
+          if (submitBtn) submitBtn.disabled = true;
+          cashClosureEditLocked = false;
+          try {
+            const saved = await store.saveCashClosure(closureData);
+            if (!saved) {
+              cashClosureEditLocked = true;
+              if (submitBtn) submitBtn.disabled = false;
+            }
+            showToast(saved ? 'Cierre guardado. El nuevo turno empieza automaticamente.' : 'No se pudo guardar el cierre. Puede estar ya cerrado o faltar la migracion de Supabase.', saved ? 'success' : 'warning');
+          } catch (error) {
+            cashClosureEditLocked = true;
+            if (submitBtn) submitBtn.disabled = false;
+            console.error('[Cierre] No se pudo guardar el cierre.', error);
+            showToast('No se pudo guardar el cierre.', 'error');
+          }
+        },
+        () => {
+          cashClosureEditLocked = true;
+        },
+        false,
+        'Guardar cierre'
+      );
     });
   }
 
