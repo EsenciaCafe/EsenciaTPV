@@ -4062,11 +4062,17 @@ function isArticleManagerViewActive(state = store.state) {
 }
 
 function isExternalRenderMeta(meta = {}) {
-  return ['realtime', 'remote-refresh', 'square-gift-card-event', 'sales-realtime'].includes(meta.source);
+  return ['realtime', 'remote-refresh', 'square-gift-card-event', 'sales-realtime', 'sales-broadcast'].includes(meta.source);
 }
 
 function shouldDeferExternalRender(meta = {}) {
   if (!isExternalRenderMeta(meta)) return false;
+  if (['sales-realtime', 'sales-broadcast'].includes(meta.source)) {
+    const salesViewIsVisible = store.state.activeTab === 'transacciones' ||
+      (store.state.activeTab === 'ajustes' &&
+        ['informes', 'cierre'].includes(store.state.settingsPath?.[0]));
+    if (!salesViewIsVisible) return true;
+  }
   if (isArticleManagerViewActive(store.state)) return true;
   return cashClosureEditLocked && isCashClosureViewActive(store.state);
 }

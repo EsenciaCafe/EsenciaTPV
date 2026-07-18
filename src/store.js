@@ -11,6 +11,7 @@ import {
   saveTPVState,
   upsertReceiptTicket,
   loadSales,
+  loadSaleById,
   upsertSaleRecord,
   createFiscalDocumentForSale,
   loadCashClosures,
@@ -159,6 +160,9 @@ class Store {
     this.resumeSyncTimer = null;
     this.realtimeReconnectTimer = null;
     this.salesRefreshTimer = null;
+    this.saleRefreshTimers = new Map();
+    this.pendingSaleWrites = new Map();
+    this.realtimeStatus = 'CLOSED';
     this.listeners = [];
     this.setupResumeSync();
   }
@@ -471,7 +475,18 @@ class Store {
     if (Array.isArray(closures)) this.state.cashClosures = closures;
   }
 
-  scheduleSalesRefresh(delay = 250) {
+  scheduleSalesRefresh(delay = 250, saleId = null) {
+    if (saleId) {
+      const currentTimer = this.saleRefreshTimers.get(saleId);
+      if (currentTimer) clearTimeout(currentTimer);
+      const timer = setTimeout(async () => {
+        this.saleRefreshTimers.delete(saleId);
+        await this.refreshSaleFromSupabase(saleId);
+      }, delay);
+      this.saleRefreshTimers.set(saleId, timer);
+      return;
+    }
+
     if (this.salesRefreshTimer) clearTimeout(this.salesRefreshTimer);
     this.salesRefreshTimer = setTimeout(async () => {
       this.salesRefreshTimer = null;
@@ -479,13 +494,64 @@ class Store {
     }, delay);
   }
 
+  sortTransactions(transactions = []) {
+    return [...transactions].sort((a, b) => (
+      new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    ));
+  }
+
+  upsertSyncedTransaction(transaction, source = 'sales-realtime') {
+    if (!transaction?.id) return false;
+
+    const currentIndex = this.state.transactions.findIndex(tx => tx.id === transaction.id);
+    const current = currentIndex >= 0 ? this.state.transactions[currentIndex] : null;
+    if (current && JSON.stringify(current) === JSON.stringify(transaction)) return false;
+
+    const nextTransactions = currentIndex >= 0
+      ? this.state.transactions.map(tx => tx.id === transaction.id ? transaction : tx)
+      : [transaction, ...this.state.transactions];
+
+    this.state.transactions = this.sortTransactions(nextTransactions);
+    this.persistDiningState({ remote: false });
+    this.emitChange({ source });
+    return true;
+  }
+
+  async refreshSaleFromSupabase(saleId) {
+    if (!this.salesPersistenceReady || !saleId) return false;
+    if (this.pendingSaleWrites.has(saleId)) {
+      this.scheduleSalesRefresh(300, saleId);
+      return false;
+    }
+
+    try {
+      const transaction = await loadSaleById(saleId);
+      if (!transaction) {
+        this.scheduleSalesRefresh(350);
+        return false;
+      }
+      return this.upsertSyncedTransaction(transaction);
+    } catch (err) {
+      console.warn(`[Store] No se pudo refrescar la venta ${saleId}.`, err);
+      this.scheduleSalesRefresh(500);
+      return false;
+    }
+  }
+
   async refreshSalesFromSupabase() {
     if (!this.salesPersistenceReady) return false;
     try {
       const normalizedSales = await loadSales();
       if (!Array.isArray(normalizedSales)) return false;
-      if (JSON.stringify(this.state.transactions) === JSON.stringify(normalizedSales)) return false;
-      this.state.transactions = normalizedSales;
+      const mergedSales = new Map(normalizedSales.map(transaction => [transaction.id, transaction]));
+      this.state.transactions.forEach(transaction => {
+        if (this.pendingSaleWrites.has(transaction.id)) {
+          mergedSales.set(transaction.id, transaction);
+        }
+      });
+      const nextTransactions = this.sortTransactions([...mergedSales.values()]);
+      if (JSON.stringify(this.state.transactions) === JSON.stringify(nextTransactions)) return false;
+      this.state.transactions = nextTransactions;
       this.persistDiningState({ remote: false });
       this.emitChange({ source: 'sales-realtime' });
       return true;
@@ -593,10 +659,42 @@ class Store {
   }
 
   persistSaleRecord(transaction) {
-    if (!this.salesPersistenceReady) return Promise.resolve(null);
-    return upsertSaleRecord(transaction).catch(err => {
-      console.warn('[Store] No se pudo guardar la venta normalizada.', err);
-      return null;
+    if (!this.salesPersistenceReady || !transaction?.id) return Promise.resolve(null);
+
+    const transactionId = transaction.id;
+    const snapshot = typeof structuredClone === 'function'
+      ? structuredClone(transaction)
+      : JSON.parse(JSON.stringify(transaction));
+    const previousWrite = this.pendingSaleWrites.get(transactionId) || Promise.resolve();
+    const write = previousWrite
+      .catch(() => null)
+      .then(() => upsertSaleRecord(snapshot))
+      .then(result => {
+        if (result) this.broadcastSaleChange(snapshot);
+        return result;
+      })
+      .catch(err => {
+        console.warn('[Store] No se pudo guardar la venta normalizada.', err);
+        return null;
+      });
+
+    this.pendingSaleWrites.set(transactionId, write);
+    void write.finally(() => {
+      if (this.pendingSaleWrites.get(transactionId) !== write) return;
+      this.pendingSaleWrites.delete(transactionId);
+      this.scheduleSalesRefresh(120, transactionId);
+    });
+    return write;
+  }
+
+  broadcastSaleChange(transaction) {
+    if (!transaction?.id || !this.realtimeChannel || this.realtimeStatus !== 'SUBSCRIBED') return;
+    void this.realtimeChannel.send({
+      type: 'broadcast',
+      event: 'sale-upserted',
+      payload: { transaction }
+    }).catch(err => {
+      console.warn('[Store] No se pudo emitir la venta por Realtime Broadcast.', err);
     });
   }
 
@@ -848,6 +946,7 @@ class Store {
     this.resumeSyncTimer = setTimeout(() => {
       this.resumeSyncTimer = null;
       void this.refreshSharedStateFromSupabase();
+      this.scheduleSalesRefresh(50);
     }, delay);
   }
 
@@ -873,6 +972,15 @@ class Store {
 
     this.realtimeChannel = supabase
       .channel('tpv-state-changes')
+      .on(
+        'broadcast',
+        { event: 'sale-upserted' },
+        (message) => {
+          const transaction = message?.payload?.transaction;
+          if (!transaction?.id || this.pendingSaleWrites.has(transaction.id)) return;
+          this.upsertSyncedTransaction(transaction, 'sales-broadcast');
+        }
+      )
       .on(
         'postgres_changes',
         {
@@ -909,13 +1017,16 @@ class Store {
           schema: 'public',
           table: 'sales'
         },
-        () => {
-          this.scheduleSalesRefresh();
+        (payload) => {
+          const saleId = payload.new?.id || payload.old?.id;
+          this.scheduleSalesRefresh(220, saleId || null);
         }
       )
       .subscribe((status) => {
+        this.realtimeStatus = status;
         if (status === 'SUBSCRIBED') {
           this.scheduleResumeSync(50);
+          this.scheduleSalesRefresh(80);
           return;
         }
 

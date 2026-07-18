@@ -383,6 +383,50 @@ export async function loadSales(limit = 1000) {
   ));
 }
 
+export async function loadSaleById(saleId) {
+  if (!saleId) return null;
+
+  const { data: sale, error: saleError } = await supabase
+    .from('sales')
+    .select('*')
+    .eq('id', saleId)
+    .maybeSingle();
+
+  if (saleError) {
+    console.warn('[DB] Error loading normalized sale:', saleError.message);
+    return null;
+  }
+  if (!sale || sale.payload?.voided === true) return null;
+
+  const [
+    { data: lines, error: linesError },
+    { data: payments, error: paymentsError },
+    { data: fiscalDocuments, error: fiscalError }
+  ] = await Promise.all([
+    supabase.from('sale_lines').select('*').eq('sale_id', saleId),
+    supabase.from('sale_payments').select('*').eq('sale_id', saleId),
+    supabase
+      .from('fiscal_documents')
+      .select('*')
+      .eq('sale_id', saleId)
+      .order('issued_at', { ascending: false })
+      .limit(1)
+  ]);
+
+  if (linesError) console.warn('[DB] Error loading sale lines:', linesError.message);
+  if (paymentsError) console.warn('[DB] Error loading sale payments:', paymentsError.message);
+  if (fiscalError && !['42P01', 'PGRST205'].includes(fiscalError.code)) {
+    console.warn('[DB] Error loading fiscal document:', fiscalError.message);
+  }
+
+  return mapSaleRow(
+    sale,
+    lines || [],
+    payments || [],
+    fiscalDocuments?.[0] ? mapFiscalDocument(fiscalDocuments[0]) : null
+  );
+}
+
 export async function upsertSaleRecord(transaction) {
   if (!transaction?.id) return null;
 
@@ -414,10 +458,16 @@ export async function upsertSaleRecord(transaction) {
   }
 
   const { error: deleteLinesError } = await supabase.from('sale_lines').delete().eq('sale_id', transaction.id);
-  if (deleteLinesError) notifyDbError('upsertSaleRecord:deleteLines', deleteLinesError.message);
+  if (deleteLinesError) {
+    notifyDbError('upsertSaleRecord:deleteLines', deleteLinesError.message);
+    return null;
+  }
 
   const { error: deletePaymentsError } = await supabase.from('sale_payments').delete().eq('sale_id', transaction.id);
-  if (deletePaymentsError) notifyDbError('upsertSaleRecord:deletePayments', deletePaymentsError.message);
+  if (deletePaymentsError) {
+    notifyDbError('upsertSaleRecord:deletePayments', deletePaymentsError.message);
+    return null;
+  }
 
   const lines = (transaction.items || []).map((item, index) => ({
     id: `${transaction.id}-line-${String(index + 1).padStart(3, '0')}`,
@@ -434,7 +484,10 @@ export async function upsertSaleRecord(transaction) {
 
   if (lines.length > 0) {
     const { error: linesError } = await supabase.from('sale_lines').upsert(lines, { onConflict: 'id' });
-    if (linesError) notifyDbError('upsertSaleRecord:lines', linesError.message);
+    if (linesError) {
+      notifyDbError('upsertSaleRecord:lines', linesError.message);
+      return null;
+    }
   }
 
   const paymentRows = (transaction.payments?.length ? transaction.payments : [{
@@ -452,7 +505,20 @@ export async function upsertSaleRecord(transaction) {
 
   if (paymentRows.length > 0) {
     const { error: paymentsError } = await supabase.from('sale_payments').upsert(paymentRows, { onConflict: 'id' });
-    if (paymentsError) notifyDbError('upsertSaleRecord:payments', paymentsError.message);
+    if (paymentsError) {
+      notifyDbError('upsertSaleRecord:payments', paymentsError.message);
+      return null;
+    }
+  }
+
+  // Emit a final sales UPDATE only after the ticket, lines and payments are complete.
+  // Realtime consumers can then safely reconcile the complete normalized sale.
+  const { error: completedSaleError } = await supabase
+    .from('sales')
+    .upsert(saleRow, { onConflict: 'id' });
+  if (completedSaleError) {
+    notifyDbError('upsertSaleRecord:completedSale', completedSaleError.message);
+    return null;
   }
 
   return transaction.id;
