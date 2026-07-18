@@ -5148,6 +5148,7 @@ function showPaymentModal(totalAmount) {
   let loyaltyCustomer = null;
   let loyaltyStatus = isLoyaltyConfigured ? '' : 'Configura fidelidad para activar RFID.';
   let loyaltyBusy = false;
+  let loyaltyExpanded = false;
   let giftCardCodeInput = '';
   let giftCardLookup = null;
   let giftCardStatus = '';
@@ -5592,11 +5593,17 @@ function showPaymentModal(totalAmount) {
 
   // ── Renderizador reactivo de contenido
   const renderPaymentContent = () => {
+    const previousBody = modal.querySelector('.modal-body');
+    const previousArticlesScroll = modal.querySelector('.split-articles-scroll');
+    const previousScroll = previousBody ? {
+      body: previousBody.scrollTop,
+      articles: previousArticlesScroll?.scrollTop || 0
+    } : null;
     const change = getChangeAmount();
     const isEfectivo = selectedMethod === 'Efectivo';
     const isDividir = selectedMethod === 'Dividir';
     const isGiftCard = selectedMethod === 'Tarjeta Regalo';
-    const showsCardTip = selectedMethod === 'Tarjeta' || isDividir;
+    const showsCardTip = selectedMethod === 'Tarjeta';
     const cardChargeTotal = cardChargeTotalInput === null
       ? Number(totalAmount.toFixed(2))
       : Number(cardChargeTotalInput.toFixed(2));
@@ -5610,36 +5617,52 @@ function showPaymentModal(totalAmount) {
     const giftCardRedeemAmount = Number(Math.min(totalAmount, giftCardBalance).toFixed(2));
     const giftCardRemainingAmount = Number(Math.max(0, totalAmount - giftCardRedeemAmount).toFixed(2));
     const loyaltyHTML = `
-      <div class="payment-loyalty-box">
-        <div class="payment-loyalty-header">
-          <span>Cliente fidelidad</span>
-          ${loyaltyCustomer ? `<button type="button" class="payment-loyalty-link" id="loyalty-clear-btn">Quitar</button>` : ''}
-        </div>
-        ${loyaltyCustomer ? `
-          <div class="payment-loyalty-customer">
-            <div>
-              <strong>${loyaltyCustomer.name}</strong>
-              <small>${loyaltyCustomer.tier} · ${loyaltyCustomer.points.toLocaleString('es-ES')} pts</small>
-            </div>
-            <div class="payment-loyalty-points">+${loyaltyPoints} pts</div>
-          </div>
-        ` : `
-          <div class="payment-loyalty-search">
-            <input type="text" class="search-input" id="loyalty-rfid-input" value="${loyaltyRfidInput}" placeholder="Escanear RFID" ${!isLoyaltyConfigured || loyaltyBusy ? 'disabled' : ''}>
-            <button type="button" class="btn btn-secondary" id="loyalty-search-btn" ${!isLoyaltyConfigured || loyaltyBusy ? 'disabled' : ''}>
-              ${loyaltyBusy ? '...' : 'Buscar'}
-            </button>
-          </div>
-          ${loyaltyStatus ? `<p class="payment-loyalty-status">${loyaltyStatus}</p>` : ''}
-        `}
-        ${existingLoyaltyAward ? `
-          <p class="payment-loyalty-status payment-loyalty-status--awarded">
-            Puntos ya asignados a ${existingLoyaltyAward.customerName}: +${existingLoyaltyAward.points}.
-          </p>
-        ` : ''}
-        <button type="button" class="payment-loyalty-manual-btn" id="loyalty-manual-award-btn" ${!loyaltyCustomer || existingLoyaltyAward ? 'disabled' : ''}>
-          ${existingLoyaltyAward ? 'Puntos ya asignados en esta comanda' : loyaltyCustomer ? 'Sumar puntos sin cobrar' : 'Identifica cliente para sumar sin cobrar'}
+      <div class="payment-loyalty-box payment-loyalty-box--compact ${loyaltyExpanded ? 'is-expanded' : ''}">
+        <button type="button" class="payment-loyalty-toggle" id="loyalty-toggle-btn" aria-expanded="${loyaltyExpanded}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+            <path d="M20 21a8 8 0 0 0-16 0" />
+            <circle cx="12" cy="7" r="4" />
+          </svg>
+          <span class="payment-loyalty-toggle-copy">
+            <strong>Fidelidad</strong>
+            <small>${loyaltyCustomer ? loyaltyCustomer.name : 'Asignar cliente'}</small>
+          </span>
+          ${loyaltyCustomer ? `<span class="payment-loyalty-toggle-points">+${loyaltyPoints} pts</span>` : ''}
+          <svg class="payment-loyalty-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+            <path d="m9 18 6-6-6-6" />
+          </svg>
         </button>
+        ${loyaltyExpanded ? `
+          <div class="payment-loyalty-panel">
+            ${loyaltyCustomer ? `
+              <div class="payment-loyalty-customer">
+                <div>
+                  <strong>${loyaltyCustomer.name}</strong>
+                  <small>${loyaltyCustomer.tier} · ${loyaltyCustomer.points.toLocaleString('es-ES')} pts</small>
+                </div>
+                <button type="button" class="payment-loyalty-link" id="loyalty-clear-btn">Quitar</button>
+              </div>
+            ` : `
+              <div class="payment-loyalty-search">
+                <input type="text" class="search-input" id="loyalty-rfid-input" value="${loyaltyRfidInput}" placeholder="Escanear RFID" ${!isLoyaltyConfigured || loyaltyBusy ? 'disabled' : ''}>
+                <button type="button" class="btn btn-secondary" id="loyalty-search-btn" ${!isLoyaltyConfigured || loyaltyBusy ? 'disabled' : ''}>
+                  ${loyaltyBusy ? '...' : 'Buscar'}
+                </button>
+              </div>
+              ${loyaltyStatus ? `<p class="payment-loyalty-status">${loyaltyStatus}</p>` : ''}
+            `}
+            ${existingLoyaltyAward ? `
+              <p class="payment-loyalty-status payment-loyalty-status--awarded">
+                Puntos ya asignados a ${existingLoyaltyAward.customerName}: +${existingLoyaltyAward.points}.
+              </p>
+            ` : ''}
+            ${loyaltyCustomer || existingLoyaltyAward ? `
+              <button type="button" class="payment-loyalty-manual-btn" id="loyalty-manual-award-btn" ${!loyaltyCustomer || existingLoyaltyAward ? 'disabled' : ''}>
+                ${existingLoyaltyAward ? 'Puntos ya asignados en esta comanda' : 'Sumar puntos sin cobrar'}
+              </button>
+            ` : ''}
+          </div>
+        ` : ''}
       </div>
     `;
     const cardTipHTML = showsCardTip ? `
@@ -5675,7 +5698,6 @@ function showPaymentModal(totalAmount) {
         <p class="payment-card-charge-error" id="card-charge-error" ${cardChargeIsValid ? 'hidden' : ''}>
           El total cobrado no puede ser inferior al total del ticket.
         </p>
-        ${isDividir ? '<p class="payment-card-charge-note">En un pago dividido, introduce la suma final de todos los pagos, incluida la propina.</p>' : ''}
       </div>
     ` : '';
 
@@ -5916,11 +5938,11 @@ function showPaymentModal(totalAmount) {
             <div class="split-articles-actions">
               <div>
                 <div style="font-size:0.7rem; color:var(--text-muted); font-weight:700; text-transform:uppercase;">Seleccionado</div>
-                <strong style="font-size:1.15rem; color:var(--secondary);">${getSelectedArticlesTotal().toFixed(2)}€</strong>
+                <strong id="split-selected-total" style="font-size:1.15rem; color:var(--secondary);">${getSelectedArticlesTotal().toFixed(2)}€</strong>
               </div>
               <div class="split-articles-actions-right">
-                <button class="split-part-pay-btn card-btn" id="art-pay-card-btn" style="height:36px; padding:0 12px;" ${!isSelectedAny ? 'disabled style="opacity:0.3; pointer-events:none;"' : ''}>Tarjeta</button>
-                <button class="split-part-pay-btn cash-btn" id="art-pay-cash-btn" style="height:36px; padding:0 12px;" ${!isSelectedAny ? 'disabled style="opacity:0.3; pointer-events:none;"' : ''}>Efectivo</button>
+                <button class="split-part-pay-btn card-btn" id="art-pay-card-btn" style="height:36px; padding:0 12px;" ${!isSelectedAny ? 'disabled' : ''}>Tarjeta</button>
+                <button class="split-part-pay-btn cash-btn" id="art-pay-cash-btn" style="height:36px; padding:0 12px;" ${!isSelectedAny ? 'disabled' : ''}>Efectivo</button>
               </div>
             </div>
 
@@ -6007,7 +6029,7 @@ function showPaymentModal(totalAmount) {
           stopGiftCardScanner();
         }
         selectedMethod = card.dataset.method;
-        if (selectedMethod !== 'Tarjeta' && selectedMethod !== 'Dividir') {
+        if (selectedMethod !== 'Tarjeta') {
           cardTipAmount = 0;
           cardChargeTotalInput = null;
         }
@@ -6024,6 +6046,14 @@ function showPaymentModal(totalAmount) {
       modal.remove();
     });
 
+    const loyaltyToggleBtn = modal.querySelector('#loyalty-toggle-btn');
+    if (loyaltyToggleBtn) {
+      loyaltyToggleBtn.addEventListener('click', () => {
+        loyaltyExpanded = !loyaltyExpanded;
+        renderPaymentContent();
+      });
+    }
+
     const loyaltyInput = modal.querySelector('#loyalty-rfid-input');
     if (loyaltyInput) {
       loyaltyInput.addEventListener('input', (e) => {
@@ -6033,7 +6063,7 @@ function showPaymentModal(totalAmount) {
         if (e.key === 'Enter') identifyLoyaltyCustomer();
       });
       setTimeout(() => {
-        if (!loyaltyCustomer && isLoyaltyConfigured) loyaltyInput.focus();
+        if (!loyaltyCustomer && isLoyaltyConfigured) loyaltyInput.focus({ preventScroll: true });
       }, 30);
     }
 
@@ -6269,7 +6299,22 @@ function showPaymentModal(totalAmount) {
                 selected--;
               }
               articleSelections[stockId] = selected;
-              renderPaymentContent();
+
+              const selector = btn.closest('.split-article-selector');
+              const minusBtn = selector?.querySelector('.art-minus');
+              const plusBtn = selector?.querySelector('.art-plus');
+              const selectedQty = selector?.querySelector('.selected-qty');
+              if (minusBtn) minusBtn.disabled = selected === 0;
+              if (plusBtn) plusBtn.disabled = selected === stock.qtyRemaining;
+              if (selectedQty) selectedQty.textContent = String(selected);
+
+              const selectedTotal = getSelectedArticlesTotal();
+              const selectedTotalEl = modal.querySelector('#split-selected-total');
+              const artCardBtn = modal.querySelector('#art-pay-card-btn');
+              const artCashBtn = modal.querySelector('#art-pay-cash-btn');
+              if (selectedTotalEl) selectedTotalEl.textContent = `${selectedTotal.toFixed(2)}€`;
+              if (artCardBtn) artCardBtn.disabled = selectedTotal <= 0;
+              if (artCashBtn) artCashBtn.disabled = selectedTotal <= 0;
             }
           });
         });
@@ -6289,6 +6334,17 @@ function showPaymentModal(totalAmount) {
           });
         }
       }
+    }
+
+    if (previousScroll) {
+      const restoreScroll = () => {
+        const body = modal.querySelector('.modal-body');
+        const articlesScroll = modal.querySelector('.split-articles-scroll');
+        if (body) body.scrollTop = previousScroll.body;
+        if (articlesScroll) articlesScroll.scrollTop = previousScroll.articles;
+      };
+      restoreScroll();
+      requestAnimationFrame(restoreScroll);
     }
   };
 
