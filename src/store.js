@@ -500,16 +500,31 @@ class Store {
     ));
   }
 
+  preserveCompleteTransaction(current, incoming) {
+    if (!current) return incoming;
+    const currentItems = Array.isArray(current.items) ? current.items : [];
+    const incomingItems = Array.isArray(incoming?.items) ? incoming.items : [];
+    const currentPayments = Array.isArray(current.payments) ? current.payments : [];
+    const incomingPayments = Array.isArray(incoming?.payments) ? incoming.payments : [];
+
+    return {
+      ...incoming,
+      items: incomingItems.length > 0 ? incomingItems : currentItems,
+      payments: incomingPayments.length > 0 ? incomingPayments : currentPayments
+    };
+  }
+
   upsertSyncedTransaction(transaction, source = 'sales-realtime') {
     if (!transaction?.id) return false;
 
     const currentIndex = this.state.transactions.findIndex(tx => tx.id === transaction.id);
     const current = currentIndex >= 0 ? this.state.transactions[currentIndex] : null;
-    if (current && JSON.stringify(current) === JSON.stringify(transaction)) return false;
+    const nextTransaction = this.preserveCompleteTransaction(current, transaction);
+    if (current && JSON.stringify(current) === JSON.stringify(nextTransaction)) return false;
 
     const nextTransactions = currentIndex >= 0
-      ? this.state.transactions.map(tx => tx.id === transaction.id ? transaction : tx)
-      : [transaction, ...this.state.transactions];
+      ? this.state.transactions.map(tx => tx.id === transaction.id ? nextTransaction : tx)
+      : [nextTransaction, ...this.state.transactions];
 
     this.state.transactions = this.sortTransactions(nextTransactions);
     this.persistDiningState({ remote: false });
@@ -543,7 +558,11 @@ class Store {
     try {
       const normalizedSales = await loadSales();
       if (!Array.isArray(normalizedSales)) return false;
-      const mergedSales = new Map(normalizedSales.map(transaction => [transaction.id, transaction]));
+      const currentSales = new Map(this.state.transactions.map(transaction => [transaction.id, transaction]));
+      const mergedSales = new Map(normalizedSales.map(transaction => [
+        transaction.id,
+        this.preserveCompleteTransaction(currentSales.get(transaction.id), transaction)
+      ]));
       this.state.transactions.forEach(transaction => {
         if (this.pendingSaleWrites.has(transaction.id)) {
           mergedSales.set(transaction.id, transaction);
@@ -653,8 +672,9 @@ class Store {
   }
 
   publishReceiptTicket(transaction) {
-    upsertReceiptTicket(transaction).catch(err => {
+    return upsertReceiptTicket(transaction).catch(err => {
       console.warn('[Store] No se pudo publicar el ticket público.', err);
+      return false;
     });
   }
 

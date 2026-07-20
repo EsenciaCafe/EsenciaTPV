@@ -257,6 +257,11 @@ export async function deleteGridItems(gridKey) {
 
 export async function upsertReceiptTicket(transaction) {
   if (!transaction?.receiptToken) return;
+  const items = Array.isArray(transaction.items) ? transaction.items : [];
+  if (Number(transaction.itemsCount || 0) > 0 && items.length === 0) {
+    console.error('[DB] Se rechazo un ticket publico incompleto:', transaction.id);
+    return false;
+  }
 
   const { error } = await supabase.from('receipt_tickets').upsert({
     token: transaction.receiptToken,
@@ -266,6 +271,7 @@ export async function upsertReceiptTicket(transaction) {
   }, { onConflict: 'token' });
 
   if (error) notifyDbError('upsertReceiptTicket', error.message);
+  return !error;
 }
 
 export async function loadReceiptTicket(token) {
@@ -281,6 +287,29 @@ export async function loadReceiptTicket(token) {
 
 function mapSaleRow(row, lines = [], payments = [], fiscalDocument = null) {
   const payload = row.payload || {};
+  const normalizedItems = lines.length > 0
+    ? lines.map(line => ({
+        ...(line.raw_payload || {}),
+        ticketItemId: line.ticket_item_id,
+        id: line.item_id,
+        name: line.name,
+        qty: parseFloat(line.quantity || 0),
+        price: parseFloat(line.unit_price || 0),
+        total: parseFloat(line.total_amount || 0),
+        selectedOptions: line.selected_options || []
+      }))
+    : (Array.isArray(payload.items) ? payload.items : []);
+  const normalizedPayments = payments.length > 0
+    ? payments.map(payment => ({
+        ...(payment.raw_payload || {}),
+        id: payment.id,
+        method: payment.method,
+        amount: parseFloat(payment.amount || 0),
+        provider: payment.provider || '',
+        externalRef: payment.external_ref || ''
+      }))
+    : (Array.isArray(payload.payments) ? payload.payments : []);
+
   return {
     ...payload,
     id: row.id,
@@ -305,24 +334,49 @@ function mapSaleRow(row, lines = [], payments = [], fiscalDocument = null) {
     refundAmount: parseFloat(row.refund_amount || payload.refundAmount || 0),
     reason: row.refund_reason || payload.reason || '',
     hasRefund: row.has_refund || payload.hasRefund || false,
-    items: lines.map(line => ({
-      ...(line.raw_payload || {}),
-      ticketItemId: line.ticket_item_id,
-      id: line.item_id,
-      name: line.name,
-      qty: parseFloat(line.quantity || 0),
-      price: parseFloat(line.unit_price || 0),
-      total: parseFloat(line.total_amount || 0),
-      selectedOptions: line.selected_options || []
-    })),
-    payments: payments.map(payment => ({
-      ...(payment.raw_payload || {}),
-      id: payment.id,
-      method: payment.method,
-      amount: parseFloat(payment.amount || 0),
-      provider: payment.provider || '',
-      externalRef: payment.external_ref || ''
-    }))
+    items: normalizedItems,
+    payments: normalizedPayments
+  };
+}
+
+const SALE_DETAIL_CHUNK_SIZE = 100;
+const SALE_DETAIL_PAGE_SIZE = 1000;
+
+async function loadSaleDetailRows(table, saleIds) {
+  const chunks = [];
+  for (let index = 0; index < saleIds.length; index += SALE_DETAIL_CHUNK_SIZE) {
+    chunks.push(saleIds.slice(index, index + SALE_DETAIL_CHUNK_SIZE));
+  }
+
+  const chunkResults = await Promise.all(chunks.map(async chunk => {
+    const rows = [];
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await supabase
+        .from(table)
+        .select('*')
+        .in('sale_id', chunk)
+        .order('sale_id', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, from + SALE_DETAIL_PAGE_SIZE - 1);
+
+      if (error) return { data: null, error };
+
+      const page = data || [];
+      rows.push(...page);
+      if (page.length < SALE_DETAIL_PAGE_SIZE) break;
+      from += SALE_DETAIL_PAGE_SIZE;
+    }
+
+    return { data: rows, error: null };
+  }));
+
+  const failedResult = chunkResults.find(result => result.error);
+  if (failedResult) return failedResult;
+  return {
+    data: chunkResults.flatMap(result => result.data || []),
+    error: null
   };
 }
 
@@ -342,18 +396,24 @@ export async function loadSales(limit = 1000) {
   const saleIds = activeSales.map(row => row.id);
   if (saleIds.length === 0) return [];
 
-  const [
-    { data: lines, error: linesError },
-    { data: payments, error: paymentsError },
-    { data: fiscalDocuments, error: fiscalError }
-  ] = await Promise.all([
-    supabase.from('sale_lines').select('*').in('sale_id', saleIds),
-    supabase.from('sale_payments').select('*').in('sale_id', saleIds),
-    supabase.from('fiscal_documents').select('*').in('sale_id', saleIds)
+  const [lineResult, paymentResult, fiscalResult] = await Promise.all([
+    loadSaleDetailRows('sale_lines', saleIds),
+    loadSaleDetailRows('sale_payments', saleIds),
+    loadSaleDetailRows('fiscal_documents', saleIds)
   ]);
 
-  if (linesError) console.warn('[DB] Error loading sale lines:', linesError.message);
-  if (paymentsError) console.warn('[DB] Error loading sale payments:', paymentsError.message);
+  const { data: lines, error: linesError } = lineResult;
+  const { data: payments, error: paymentsError } = paymentResult;
+  const { data: fiscalDocuments, error: fiscalError } = fiscalResult;
+
+  if (linesError) {
+    console.warn('[DB] Error loading sale lines:', linesError.message);
+    return null;
+  }
+  if (paymentsError) {
+    console.warn('[DB] Error loading sale payments:', paymentsError.message);
+    return null;
+  }
   if (fiscalError && !['42P01', 'PGRST205'].includes(fiscalError.code)) {
     console.warn('[DB] Error loading fiscal documents:', fiscalError.message);
   }
@@ -413,8 +473,14 @@ export async function loadSaleById(saleId) {
       .limit(1)
   ]);
 
-  if (linesError) console.warn('[DB] Error loading sale lines:', linesError.message);
-  if (paymentsError) console.warn('[DB] Error loading sale payments:', paymentsError.message);
+  if (linesError) {
+    console.warn('[DB] Error loading sale lines:', linesError.message);
+    return null;
+  }
+  if (paymentsError) {
+    console.warn('[DB] Error loading sale payments:', paymentsError.message);
+    return null;
+  }
   if (fiscalError && !['42P01', 'PGRST205'].includes(fiscalError.code)) {
     console.warn('[DB] Error loading fiscal document:', fiscalError.message);
   }
@@ -429,6 +495,11 @@ export async function loadSaleById(saleId) {
 
 export async function upsertSaleRecord(transaction) {
   if (!transaction?.id) return null;
+  const transactionItems = Array.isArray(transaction.items) ? transaction.items : [];
+  if (Number(transaction.itemsCount || 0) > 0 && transactionItems.length === 0) {
+    console.error('[DB] Se rechazo guardar una venta sin su detalle de articulos:', transaction.id);
+    return null;
+  }
 
   const saleRow = {
     id: transaction.id,
@@ -469,7 +540,7 @@ export async function upsertSaleRecord(transaction) {
     return null;
   }
 
-  const lines = (transaction.items || []).map((item, index) => ({
+  const lines = transactionItems.map((item, index) => ({
     id: `${transaction.id}-line-${String(index + 1).padStart(3, '0')}`,
     sale_id: transaction.id,
     item_id: item.id || null,
