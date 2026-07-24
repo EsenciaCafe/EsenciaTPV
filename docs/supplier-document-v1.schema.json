@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://esencia.local/schemas/supplier-document-v1.json",
+  "title": "Supplier document extracted from Google Drive",
+  "type": "object",
+  "required": ["schema_version", "drive_file_id", "supplier", "invoice", "lines", "totals"],
+  "properties": {
+    "schema_version": { "const": "supplier-document/v1" },
+    "drive_file_id": { "type": "string", "minLength": 1 },
+    "drive_revision": { "type": "string" },
+    "checksum": { "type": "string" },
+    "source_file_id": { "type": "string" },
+    "source_url": { "type": "string" },
+    "supplier": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "legal_name": { "type": "string" },
+        "tax_id": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "invoice": {
+      "type": "object",
+      "required": ["issue_date"],
+      "properties": {
+        "number": { "type": "string" },
+        "issue_date": { "type": "string", "format": "date" },
+        "due_date": { "type": ["string", "null"], "format": "date" },
+        "currency": { "type": "string", "default": "EUR" },
+        "document_type": {
+          "enum": ["invoice", "ticket", "expense", "payroll", "asset", "credit_note"]
+        },
+        "payment_method": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "lines": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["description", "taxable_base", "tax_rate", "tax_amount"],
+        "properties": {
+          "description": { "type": "string" },
+          "quantity": { "type": "number", "default": 1 },
+          "unit_price": { "type": "number" },
+          "taxable_base": { "type": "number" },
+          "tax_rate": { "enum": [0, 3, 7, 9.5, 15] },
+          "tax_amount": { "type": "number" },
+          "tax_scope": { "enum": ["taxable", "exempt", "not_subject"] },
+          "withholding_rate": { "type": "number" },
+          "withholding_amount": { "type": "number" },
+          "account_code": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "totals": {
+      "type": "object",
+      "required": ["taxable_base", "tax_amount", "total"],
+      "properties": {
+        "taxable_base": { "type": "number" },
+        "tax_amount": { "type": "number" },
+        "withholding_amount": { "type": "number" },
+        "total": { "type": "number" }
+      },
+      "additionalProperties": true
+    },
+    "suggestions": {
+      "type": "object",
+      "properties": {
+        "category": { "type": "string" },
+        "account_code": { "type": "string" }
+      }
+    },
+    "confidence": {
+      "type": "object",
+      "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": true
+}

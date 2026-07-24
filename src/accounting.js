@@ -1,0 +1,1058 @@
+import { createClient } from '@supabase/supabase-js';
+import { unzipSync, strFromU8 } from 'fflate';
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+const appRoot = document.querySelector('#accounting-app');
+const baseClient = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+const SESSION_KEY = 'accounting-session-v1';
+const DEVICE_KEY = 'accounting-device-v1';
+const VIEW_LABELS = {
+  dashboard: 'Resumen',
+  sales: 'Ventas',
+  purchases: 'Compras y gastos',
+  treasury: 'Tesorería',
+  ledger: 'Contabilidad',
+  taxes: 'Impuestos',
+  drive: 'Google Drive',
+  settings: 'Configuración'
+};
+
+const state = {
+  view: 'dashboard',
+  token: '',
+  client: null,
+  business: null,
+  documents: [],
+  contacts: [],
+  bankAccounts: [],
+  bankTransactions: [],
+  reconciliations: [],
+  journalEntries: [],
+  journalLines: [],
+  accounts: [],
+  taxDrafts: [],
+  taxPeriods: [],
+  driveSources: [],
+  loading: false,
+  modal: null,
+  googleToken: '',
+  error: ''
+};
+
+function escapeHtml(value = '') {
+  return String(value).replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+  })[char]);
+}
+
+function money(value = 0) {
+  return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(Number(value || 0));
+}
+
+function isoDate(value = new Date()) {
+  const d = new Date(value);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function uuid() {
+  return crypto.randomUUID();
+}
+
+function getDeviceKey() {
+  let key = localStorage.getItem(DEVICE_KEY);
+  if (!key) {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    key = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    localStorage.setItem(DEVICE_KEY, key);
+  }
+  return key;
+}
+
+function setSession(token, expiresAt) {
+  state.token = token;
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ token, expiresAt }));
+  state.client = createClient(supabaseUrl, supabaseKey, {
+    global: { headers: { 'x-accounting-session': token } },
+    auth: { persistSession: false }
+  });
+}
+
+function clearSession() {
+  state.token = '';
+  state.client = null;
+  localStorage.removeItem(SESSION_KEY);
+}
+
+function toast(message, kind = '') {
+  document.querySelector('.toast')?.remove();
+  const node = document.createElement('div');
+  node.className = `toast ${kind}`;
+  node.textContent = message;
+  document.body.appendChild(node);
+  setTimeout(() => node.remove(), 3600);
+}
+
+async function rpc(name, params = {}, client = state.client || baseClient) {
+  if (!client) throw new Error('Supabase no está configurado.');
+  const { data, error } = await client.rpc(name, params);
+  if (error) throw error;
+  return data;
+}
+
+async function resumeOrPair() {
+  if (!baseClient) return renderConfigurationMissing();
+  const saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+  if (saved?.token && (!saved.expiresAt || new Date(saved.expiresAt) > new Date())) {
+    setSession(saved.token, saved.expiresAt);
+    try {
+      await loadAll();
+      return;
+    } catch {
+      clearSession();
+    }
+  }
+
+  const knownDevice = localStorage.getItem(DEVICE_KEY);
+  if (knownDevice) {
+    try {
+      const resumed = await rpc('accounting_resume_device', { p_device_key: knownDevice }, baseClient);
+      if (resumed?.token) {
+        setSession(resumed.token, resumed.expires_at);
+        await loadAll();
+        return;
+      }
+    } catch {
+      // El dispositivo fue revocado o todavía no está vinculado.
+    }
+  }
+  renderPairing();
+}
+
+function renderConfigurationMissing() {
+  appRoot.innerHTML = `
+    <div class="acc-login">
+      <div class="acc-login-card">
+        <div class="acc-mark">€</div>
+        <h1>Falta configurar Supabase</h1>
+        <p>Añade VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en el archivo de entorno y ejecuta la migración contable.</p>
+      </div>
+    </div>`;
+}
+
+function renderPairing() {
+  const pairFromUrl = new URLSearchParams(location.search).get('pair') || '';
+  appRoot.innerHTML = `
+    <div class="acc-login">
+      <form class="acc-login-card" id="pairing-form">
+        <div class="acc-mark">€</div>
+        <h1>Vincular Contabilidad</h1>
+        <p>Abre esta app desde Ajustes del TPV. El código de un solo uso caduca a los 10 minutos.</p>
+        <div class="acc-form">
+          <div class="field">
+            <label>Código de vinculación</label>
+            <input id="pairing-code" value="${escapeHtml(pairFromUrl)}" maxlength="10" autocomplete="one-time-code" required>
+          </div>
+          <div class="field">
+            <label>Nombre de este dispositivo</label>
+            <input id="device-name" value="${escapeHtml(navigator.platform || 'Mi dispositivo')}" maxlength="80" required>
+          </div>
+          <button class="btn btn-primary" type="submit">Vincular dispositivo</button>
+        </div>
+      </form>
+    </div>`;
+  document.querySelector('#pairing-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('button');
+    button.disabled = true;
+    try {
+      const result = await rpc('accounting_pair_device', {
+        p_pairing_code: document.querySelector('#pairing-code').value,
+        p_device_key: getDeviceKey(),
+        p_device_name: document.querySelector('#device-name').value
+      }, baseClient);
+      setSession(result.token, result.expires_at);
+      history.replaceState({}, '', 'accounting.html');
+      await rpc('accounting_seed_defaults');
+      await loadAll();
+    } catch (error) {
+      toast(error.message || 'No se pudo vincular.', 'error');
+      button.disabled = false;
+    }
+  });
+}
+
+async function loadAll() {
+  state.loading = true;
+  const query = (table, select = '*', order = null) => {
+    let req = state.client.from(table).select(select);
+    if (order) req = req.order(order.column, { ascending: order.ascending });
+    return req;
+  };
+  const results = await Promise.all([
+    query('accounting_businesses').limit(1),
+    query('bookkeeping_documents', '*, accounting_contacts(name,tax_id)', { column: 'issue_date', ascending: false }),
+    query('accounting_contacts', '*', { column: 'name', ascending: true }),
+    query('accounting_bank_accounts', '*', { column: 'name', ascending: true }),
+    query('accounting_bank_transactions', '*', { column: 'booked_on', ascending: false }).limit(500),
+    query('accounting_reconciliations', '*, bookkeeping_documents(number,direction,total_amount), accounting_bank_transactions(booked_on,description,amount)', { column: 'created_at', ascending: false }),
+    query('accounting_accounts', '*', { column: 'code', ascending: true }),
+    query('accounting_journal_entries', '*', { column: 'entry_date', ascending: false }).limit(300),
+    query('accounting_journal_lines'),
+    query('accounting_tax_drafts', '*, accounting_tax_periods(year,quarter,starts_on,ends_on)', { column: 'generated_at', ascending: false }),
+    query('accounting_tax_periods', '*', { column: 'starts_on', ascending: false }),
+    query('accounting_drive_sources').limit(1)
+  ]);
+  const failed = results.find(result => result.error);
+  if (failed) throw failed.error;
+  [
+    state.business, state.documents, state.contacts, state.bankAccounts,
+    state.bankTransactions, state.reconciliations, state.accounts, state.journalEntries, state.journalLines,
+    state.taxDrafts, state.taxPeriods, state.driveSources
+  ] = [
+    results[0].data?.[0] || null, results[1].data || [], results[2].data || [],
+    results[3].data || [], results[4].data || [], results[5].data || [],
+    results[6].data || [], results[7].data || [], results[8].data || [],
+    results[9].data || [], results[10].data || [], results[11].data || []
+  ];
+  state.loading = false;
+  renderApp();
+}
+
+function navButton(view, icon, label) {
+  return `<button data-view="${view}" class="${state.view === view ? 'is-active' : ''}"><span>${icon}</span><span>${label}</span></button>`;
+}
+
+function renderApp() {
+  appRoot.innerHTML = `
+    <div class="acc-shell">
+      <aside class="acc-sidebar">
+        <div class="acc-brand"><div class="acc-mark">€</div><div><strong>${escapeHtml(state.business?.name || 'Contabilidad')}</strong><small>Autónomo canario</small></div></div>
+        <nav class="acc-nav">
+          ${navButton('dashboard','⌂','Resumen')}
+          ${navButton('sales','↗','Ventas')}
+          ${navButton('purchases','↙','Compras')}
+          ${navButton('treasury','≈','Tesorería')}
+          ${navButton('ledger','▤','Contabilidad')}
+          ${navButton('taxes','%','Impuestos')}
+          ${navButton('drive','◈','Google Drive')}
+          ${navButton('settings','⚙','Configuración')}
+        </nav>
+        <div class="acc-sidebar-foot"><button class="btn" id="logout-btn">Desvincular sesión</button></div>
+      </aside>
+      <section class="acc-main">
+        <header class="acc-topbar">
+          <div><h1>${VIEW_LABELS[state.view]}</h1><small>${new Date().toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</small></div>
+          <div class="acc-actions">${renderTopActions()}</div>
+        </header>
+        <main class="acc-content">${renderView()}</main>
+      </section>
+    </div>
+    <div id="modal-root">${state.modal ? renderModal() : ''}</div>`;
+  wireEvents();
+}
+
+function renderTopActions() {
+  if (state.view === 'sales') return '<button class="btn btn-primary" data-new-document="sale">Nueva factura</button>';
+  if (state.view === 'purchases') return '<button class="btn btn-primary" data-new-document="purchase">Nuevo gasto</button>';
+  if (state.view === 'treasury') return '<button class="btn btn-primary" id="import-bank-btn">Importar extracto</button>';
+  if (state.view === 'ledger') return '<button class="btn btn-primary" id="new-entry-btn">Nuevo asiento</button>';
+  if (state.view === 'drive') return '<button class="btn btn-primary" id="sync-drive-btn">Sincronizar JSON</button>';
+  return '<button class="btn" id="sync-tpv-btn">Actualizar TPV</button>';
+}
+
+function renderView() {
+  const views = {
+    dashboard: renderDashboard,
+    sales: () => renderDocuments('sale'),
+    purchases: () => renderDocuments('purchase'),
+    treasury: renderTreasury,
+    ledger: renderLedger,
+    taxes: renderTaxes,
+    drive: renderDrive,
+    settings: renderSettings
+  };
+  return (views[state.view] || renderDashboard)();
+}
+
+function dashboardStats() {
+  const year = new Date().getFullYear();
+  const approved = state.documents.filter(doc => Number(String(doc.issue_date).slice(0,4)) === year && !['draft','voided'].includes(doc.status));
+  const sales = approved.filter(doc => doc.direction === 'sale').reduce((sum, doc) => sum + Number(doc.total_amount), 0);
+  const expenses = approved.filter(doc => doc.direction === 'purchase').reduce((sum, doc) => sum + Number(doc.subtotal), 0);
+  const outputTax = approved.filter(doc => doc.direction === 'sale').reduce((sum, doc) => sum + Number(doc.tax_amount), 0);
+  const inputTax = approved.filter(doc => doc.direction === 'purchase').reduce((sum, doc) => sum + Number(doc.tax_amount), 0);
+  return { sales, expenses, profit: sales - expenses, tax: outputTax - inputTax };
+}
+
+function renderDashboard() {
+  const stats = dashboardStats();
+  const recent = state.documents.slice(0, 8);
+  const months = Array.from({ length: 6 }, (_, index) => {
+    const d = new Date(); d.setMonth(d.getMonth() - (5 - index));
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const value = state.documents.filter(doc => doc.direction === 'sale' && String(doc.issue_date).startsWith(key))
+      .reduce((sum, doc) => sum + Number(doc.total_amount), 0);
+    return { label: d.toLocaleDateString('es-ES',{month:'short'}), value };
+  });
+  const max = Math.max(...months.map(item => item.value), 1);
+  return `
+    <div class="acc-grid acc-kpis">
+      <div class="acc-kpi is-accent"><span>Ventas del ejercicio</span><strong>${money(stats.sales)}</strong><small>Facturas y TPV</small></div>
+      <div class="acc-kpi"><span>Gastos deducibles</span><strong>${money(stats.expenses)}</strong><small>Base aprobada</small></div>
+      <div class="acc-kpi"><span>Resultado estimado</span><strong>${money(stats.profit)}</strong><small>Antes de IRPF</small></div>
+      <div class="acc-kpi"><span>IGIC estimado</span><strong>${money(stats.tax)}</strong><small>Repercutido − soportado</small></div>
+    </div>
+    <div class="acc-grid acc-two">
+      <section class="acc-card">
+        <div class="acc-card-head"><h2>Facturación últimos 6 meses</h2></div>
+        <div class="acc-card-body"><div class="chart-bars">${months.map(item => `<div class="chart-bar" title="${money(item.value)}"><i style="height:${Math.max(2,(item.value/max)*160)}px"></i><span>${item.label}</span></div>`).join('')}</div></div>
+      </section>
+      <section class="acc-card">
+        <div class="acc-card-head"><h2>Atención</h2></div>
+        <div class="acc-card-body acc-form">
+          <div><strong>${state.documents.filter(doc => doc.status === 'needs_review').length}</strong><br><small>documentos pendientes de revisión</small></div>
+          <div><strong>${state.bankTransactions.filter(tx => tx.status === 'pending').length}</strong><br><small>movimientos sin conciliar</small></div>
+          <div><strong>${state.documents.filter(doc => ['overdue','partially_paid'].includes(doc.status)).length}</strong><br><small>cobros o pagos pendientes</small></div>
+        </div>
+      </section>
+    </div>
+    <section class="acc-card" style="margin-top:18px">
+      <div class="acc-card-head"><h2>Actividad reciente</h2></div>
+      ${renderDocumentTable(recent)}
+    </section>`;
+}
+
+const STATUS_LABELS = {
+  draft: 'Borrador', needs_review: 'Revisar', approved: 'Aprobada',
+  partially_paid: 'Pago parcial', paid: 'Pagada', overdue: 'Vencida',
+  voided: 'Anulada', rectified: 'Rectificada'
+};
+
+function statusBadge(status) {
+  const cls = ['overdue','voided'].includes(status) ? 'danger' : ['draft','needs_review','partially_paid'].includes(status) ? 'warning' : '';
+  return `<span class="badge ${cls}">${STATUS_LABELS[status] || status}</span>`;
+}
+
+function renderDocumentTable(documents) {
+  if (!documents.length) return '<div class="acc-empty"><strong>Sin documentos</strong>Los documentos aparecerán aquí.</div>';
+  return `<div class="acc-table-wrap"><table class="acc-table">
+    <thead><tr><th>Fecha</th><th>Documento</th><th>Contacto</th><th>Estado</th><th class="num">Base</th><th class="num">IGIC</th><th class="num">Total</th><th></th></tr></thead>
+    <tbody>${documents.map(doc => `<tr>
+      <td>${new Date(`${doc.issue_date}T12:00:00`).toLocaleDateString('es-ES')}</td>
+      <td><strong>${escapeHtml(doc.number || 'Sin número')}</strong><br><small>${escapeHtml(doc.document_type)}</small></td>
+      <td>${escapeHtml(doc.accounting_contacts?.name || (doc.source_type === 'tpv' ? 'Venta TPV' : '—'))}</td>
+      <td>${statusBadge(doc.status)}</td>
+      <td class="num">${money(doc.subtotal)}</td><td class="num">${money(doc.tax_amount)}</td><td class="num"><strong>${money(doc.total_amount)}</strong></td>
+      <td><button class="btn btn-small" data-edit-document="${doc.id}">Ver</button></td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+function renderDocuments(direction) {
+  const docs = state.documents.filter(doc => doc.direction === direction);
+  const title = direction === 'sale' ? 'Facturas emitidas y ventas TPV' : 'Facturas recibidas y gastos';
+  return `<section class="acc-card"><div class="acc-card-head"><h2>${title}</h2><span class="badge muted">${docs.length} documentos</span></div>${renderDocumentTable(docs)}</section>`;
+}
+
+function renderTreasury() {
+  const pending = state.bankTransactions.filter(tx => tx.status === 'pending').length;
+  const balance = state.bankTransactions.find(tx => tx.balance != null)?.balance || 0;
+  return `
+    <div class="acc-grid acc-kpis">
+      <div class="acc-kpi is-accent"><span>Último saldo importado</span><strong>${money(balance)}</strong></div>
+      <div class="acc-kpi"><span>Sin conciliar</span><strong>${pending}</strong></div>
+      <div class="acc-kpi"><span>Cuentas bancarias</span><strong>${state.bankAccounts.length}</strong></div>
+      <div class="acc-kpi"><span>Movimientos</span><strong>${state.bankTransactions.length}</strong></div>
+    </div>
+    <section class="acc-card">
+      <div class="acc-card-head"><h2>Movimientos bancarios</h2><div class="acc-actions"><button class="btn btn-small" id="suggest-matches-btn">Buscar coincidencias</button><button class="btn btn-small" id="new-bank-account-btn">Añadir cuenta</button></div></div>
+      ${state.bankTransactions.length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Fecha</th><th>Concepto</th><th>Referencia</th><th>Estado</th><th class="num">Importe</th><th class="num">Saldo</th></tr></thead><tbody>
+        ${state.bankTransactions.map(tx => `<tr><td>${new Date(`${tx.booked_on}T12:00:00`).toLocaleDateString('es-ES')}</td><td>${escapeHtml(tx.description)}</td><td>${escapeHtml(tx.reference)}</td><td>${statusBadge(tx.status === 'matched' ? 'paid' : 'needs_review')}</td><td class="num">${money(tx.amount)}</td><td class="num">${tx.balance == null ? '—' : money(tx.balance)}</td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="acc-empty"><strong>Importa tu primer extracto</strong>Compatible con CSV y la primera hoja de XLSX.</div>'}
+    </section>
+    <section class="acc-card" style="margin-top:18px">
+      <div class="acc-card-head"><h2>Conciliación asistida</h2></div>
+      ${state.reconciliations.filter(item=>item.status==='suggested').length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Banco</th><th>Documento</th><th>Motivo</th><th class="num">Importe</th><th></th></tr></thead><tbody>
+        ${state.reconciliations.filter(item=>item.status==='suggested').map(item=>`<tr><td>${escapeHtml(item.accounting_bank_transactions?.description)}<br><small>${item.accounting_bank_transactions?.booked_on || ''}</small></td><td>${escapeHtml(item.bookkeeping_documents?.number || '')}</td><td>${escapeHtml(item.reason || '')} · ${Number(item.score)}%</td><td class="num">${money(item.amount)}</td><td><button class="btn btn-small btn-primary" data-confirm-match="${item.id}">Confirmar</button> <button class="btn btn-small" data-reject-match="${item.id}">Descartar</button></td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="acc-empty"><strong>Sin propuestas</strong>Importa movimientos y busca coincidencias.</div>'}
+    </section>`;
+}
+
+function renderLedger() {
+  return `
+    <div class="acc-grid acc-two">
+      <section class="acc-card">
+        <div class="acc-card-head"><h2>Libro diario</h2><span class="badge muted">${state.journalEntries.length} asientos</span></div>
+        ${state.journalEntries.length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Fecha</th><th>Concepto</th><th>Origen</th><th>Estado</th><th class="num">Debe/Haber</th></tr></thead><tbody>
+        ${state.journalEntries.map(entry => {
+          const lines = state.journalLines.filter(line => line.entry_id === entry.id);
+          return `<tr><td>${new Date(`${entry.entry_date}T12:00:00`).toLocaleDateString('es-ES')}</td><td>${escapeHtml(entry.description)}</td><td>${escapeHtml(entry.source_type)}</td><td>${statusBadge(entry.status === 'posted' ? 'approved' : 'draft')}</td><td class="num">${money(lines.reduce((sum,line)=>sum+Number(line.debit),0))}</td></tr>`;
+        }).join('')}</tbody></table></div>` : '<div class="acc-empty"><strong>Sin asientos</strong>Aprueba documentos o crea un asiento manual.</div>'}
+      </section>
+      <section class="acc-card">
+        <div class="acc-card-head"><h2>Plan contable</h2></div>
+        <div class="acc-table-wrap"><table class="acc-table"><tbody>${state.accounts.map(account => `<tr><td><strong>${account.code}</strong></td><td>${escapeHtml(account.name)}</td><td>${escapeHtml(account.kind)}</td></tr>`).join('')}</tbody></table></div>
+      </section>
+    </div>`;
+}
+
+function renderTaxes() {
+  const currentYear = new Date().getFullYear();
+  return `
+    <div class="acc-notice">Los importes son borradores para revisión. Esta aplicación no presenta declaraciones ante la ATC o la AEAT.</div>
+    <div class="acc-grid acc-kpis" style="margin-top:18px">
+      ${['420','425','130'].map(model => `<div class="acc-kpi"><span>Modelo ${model}</span><strong>${model === '420' ? 'IGIC trimestral' : model === '425' ? 'Resumen anual' : 'IRPF'}</strong><button class="btn btn-small" data-tax-model="${model}" style="margin-top:15px">Generar borrador</button></div>`).join('')}
+      <div class="acc-kpi"><span>Ejercicio activo</span><strong>${currentYear}</strong><small>${state.business?.accounting_regime === 'direct_normal' ? 'Estimación directa normal' : 'Directa simplificada'}</small></div>
+    </div>
+    <section class="acc-card">
+      <div class="acc-card-head"><h2>Borradores fiscales</h2><div class="acc-actions"><button class="btn btn-small" id="print-tax-btn">Imprimir / PDF</button><button class="btn btn-small" id="export-tax-btn">Exportar CSV</button></div></div>
+      ${state.taxDrafts.length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Modelo</th><th>Periodo</th><th>Generado</th><th class="num">Repercutido</th><th class="num">Soportado</th><th class="num">Resultado</th></tr></thead><tbody>
+        ${state.taxDrafts.map(draft => `<tr><td><strong>${draft.model}</strong></td><td>${draft.accounting_tax_periods?.quarter ? `T${draft.accounting_tax_periods.quarter}` : 'Anual'} ${draft.accounting_tax_periods?.year || ''}</td><td>${new Date(draft.generated_at).toLocaleString('es-ES')}</td><td class="num">${money(draft.totals?.igic_output)}</td><td class="num">${money(draft.totals?.igic_input)}</td><td class="num"><strong>${money(draft.totals?.net_result)}</strong></td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="acc-empty"><strong>Sin borradores</strong>Genera un modelo para el periodo que quieras revisar.</div>'}
+    </section>
+    <section class="acc-card" style="margin-top:18px">
+      <div class="acc-card-head"><h2>Bloqueo de periodos</h2></div>
+      ${state.taxPeriods.length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Periodo</th><th>Desde</th><th>Hasta</th><th>Estado</th><th></th></tr></thead><tbody>${state.taxPeriods.map(period=>`<tr><td>${period.quarter ? `${period.quarter}T` : 'Anual'} ${period.year}</td><td>${period.starts_on}</td><td>${period.ends_on}</td><td>${statusBadge(period.status==='locked'?'approved':'draft')}</td><td><button class="btn btn-small" data-toggle-period="${period.id}" data-status="${period.status}">${period.status==='locked'?'Reabrir':'Bloquear'}</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="acc-empty">Los periodos aparecen al generar borradores.</div>'}
+    </section>`;
+}
+
+function renderDrive() {
+  const source = state.driveSources[0] || {};
+  return `
+    <div class="acc-grid acc-two">
+      <section class="acc-card">
+        <div class="acc-card-head"><h2>Carpetas supervisadas</h2></div>
+        <div class="acc-card-body">
+          <form class="acc-form" id="drive-settings-form">
+            <div class="field"><label>ID o URL de la carpeta con facturas</label><input id="drive-source-folder" value="${escapeHtml(source.source_folder_id || '')}" placeholder="https://drive.google.com/drive/folders/..."></div>
+            <div class="field"><label>ID o URL de la carpeta fija de resultados JSON</label><input id="drive-result-folder" value="${escapeHtml(source.result_folder_id || '')}" placeholder="https://drive.google.com/drive/folders/..."></div>
+            <button class="btn btn-primary" type="submit">Guardar carpetas</button>
+          </form>
+        </div>
+      </section>
+      <section class="acc-card">
+        <div class="acc-card-head"><h2>Importación asistida</h2></div>
+        <div class="acc-card-body acc-form">
+          <p>Codex procesa las facturas bajo demanda y guarda JSON con contrato <strong>supplier-document/v1</strong>. Aquí se validan antes de crear gastos.</p>
+          ${googleClientId ? '<button class="btn" id="google-connect-btn">Autorizar Google Drive</button>' : '<div class="acc-notice">Configura VITE_GOOGLE_CLIENT_ID para sincronizar directamente con Drive.</div>'}
+          <label class="btn" style="display:grid;place-items:center"><input class="hidden" type="file" id="json-files-input" accept=".json,application/json" multiple>Importar JSON manualmente</label>
+        </div>
+      </section>
+    </div>
+    <section class="acc-card" style="margin-top:18px">
+      <div class="acc-card-head"><h2>Reglas del flujo</h2></div>
+      <div class="acc-card-body"><ol><li>Los originales no se mueven ni modifican.</li><li>Drive ID, revisión y checksum impiden reprocesados.</li><li>Los campos dudosos quedan en revisión.</li><li>Ningún documento se contabiliza sin aprobación.</li></ol></div>
+    </section>`;
+}
+
+function renderSettings() {
+  return `
+    <div class="acc-grid acc-two">
+      <section class="acc-card">
+        <div class="acc-card-head"><h2>Perfil fiscal</h2></div>
+        <div class="acc-card-body">
+          <form class="acc-form" id="business-form">
+            <div class="acc-form-grid"><div class="field"><label>Nombre comercial</label><input id="business-name" value="${escapeHtml(state.business?.name)}" required></div><div class="field"><label>NIF</label><input id="business-nif" value="${escapeHtml(state.business?.nif)}"></div></div>
+            <div class="field"><label>Razón social</label><input id="business-legal-name" value="${escapeHtml(state.business?.legal_name)}"></div>
+            <div class="field"><label>Régimen</label><select id="business-regime"><option value="direct_simplified" ${state.business?.accounting_regime === 'direct_simplified' ? 'selected' : ''}>Estimación directa simplificada</option><option value="direct_normal" ${state.business?.accounting_regime === 'direct_normal' ? 'selected' : ''}>Estimación directa normal</option></select></div>
+            <button class="btn btn-primary" type="submit">Guardar configuración</button>
+          </form>
+        </div>
+      </section>
+      <section class="acc-card">
+        <div class="acc-card-head"><h2>Seguridad</h2></div>
+        <div class="acc-card-body acc-form">
+          <p>Este dispositivo está vinculado y su sesión caduca automáticamente. Puedes revocarla desde aquí.</p>
+          <button class="btn btn-danger" id="revoke-device-btn">Revocar este dispositivo</button>
+        </div>
+      </section>
+    </div>`;
+}
+
+function renderModal() {
+  if (state.modal.type === 'document') return renderDocumentModal(state.modal.document);
+  if (state.modal.type === 'bank-import') return renderBankImportModal();
+  if (state.modal.type === 'bank-account') return renderBankAccountModal();
+  if (state.modal.type === 'tax') return renderTaxModal(state.modal.model);
+  if (state.modal.type === 'entry') return renderEntryModal();
+  return '';
+}
+
+function modalFrame(title, body, foot = '') {
+  return `<div class="acc-modal-backdrop"><div class="acc-modal"><div class="acc-modal-head"><h2>${title}</h2><button class="btn btn-small" data-close-modal>✕</button></div><div class="acc-modal-body">${body}</div>${foot ? `<div class="acc-modal-foot">${foot}</div>` : ''}</div></div>`;
+}
+
+function renderDocumentModal(document = {}) {
+  const isPurchase = (document.direction || state.modal.direction) === 'purchase';
+  const rate = Number(document.source_payload?.tax_rate ?? 7);
+  return modalFrame(document.id ? 'Revisar documento' : isPurchase ? 'Nuevo gasto' : 'Nueva factura', `
+    <form class="acc-form" id="document-form" data-id="${document.id || ''}">
+      <input type="hidden" id="doc-direction" value="${isPurchase ? 'purchase' : 'sale'}">
+      <div class="acc-form-grid three">
+        <div class="field"><label>Tipo</label><select id="doc-type">${(isPurchase ? ['invoice','ticket','expense','payroll','asset'] : ['invoice','credit_note']).map(type => `<option value="${type}" ${document.document_type===type?'selected':''}>${type}</option>`).join('')}</select></div>
+        <div class="field"><label>Número</label><input id="doc-number" value="${escapeHtml(document.number || '')}" required></div>
+        <div class="field"><label>Fecha</label><input type="date" id="doc-date" value="${document.issue_date || isoDate()}" required></div>
+      </div>
+      <div class="field"><label>${isPurchase ? 'Proveedor' : 'Cliente'}</label><select id="doc-contact"><option value="">Sin contacto</option>${state.contacts.filter(c => c.kind === (isPurchase?'supplier':'customer') || c.kind === 'both').map(c => `<option value="${c.id}" ${document.contact_id===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
+      <div class="acc-form-grid three">
+        <div class="field"><label>Base imponible</label><input type="number" step=".01" id="doc-subtotal" value="${document.subtotal ?? ''}" required></div>
+        <div class="field"><label>Tipo IGIC</label><select id="doc-tax-rate">${[0,3,7,9.5,15].map(value => `<option value="${value}" ${rate===value?'selected':''}>${value}%</option>`).join('')}</select></div>
+        <div class="field"><label>Retención</label><input type="number" step=".01" id="doc-withholding" value="${document.withholding_amount || 0}"></div>
+      </div>
+      <div class="field"><label>Descripción</label><textarea id="doc-notes">${escapeHtml(document.notes || '')}</textarea></div>
+      ${document.status === 'needs_review' ? '<div class="acc-notice">Documento extraído automáticamente. Revisa todos los campos antes de aprobar.</div>' : ''}
+    </form>`,
+    `${document.id && !['approved','paid'].includes(document.status) ? '<button class="btn" id="post-document-btn">Aprobar y contabilizar</button>' : ''}<button class="btn btn-primary" type="submit" form="document-form">Guardar</button>`);
+}
+
+function renderBankImportModal() {
+  return modalFrame('Importar extracto bancario', `
+    <form class="acc-form" id="bank-import-form">
+      <div class="field"><label>Cuenta bancaria</label><select id="bank-account-select" required><option value="">Seleccionar</option>${state.bankAccounts.map(a=>`<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>Archivo CSV o XLSX</label><input type="file" id="bank-file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></div>
+      <div class="acc-notice">Columnas reconocidas: fecha, fecha valor, concepto/descripción, referencia, importe, saldo. También se admite Debe/Haber.</div>
+    </form>`, '<button class="btn btn-primary" type="submit" form="bank-import-form">Importar</button>');
+}
+
+function renderBankAccountModal() {
+  return modalFrame('Nueva cuenta bancaria', `<form class="acc-form" id="bank-account-form"><div class="field"><label>Nombre</label><input id="bank-name" placeholder="BBVA principal" required></div><div class="field"><label>Últimos 4 del IBAN</label><input id="bank-last4" maxlength="4"></div><div class="field"><label>Saldo inicial</label><input type="number" step=".01" id="bank-opening" value="0"></div></form>`, '<button class="btn btn-primary" type="submit" form="bank-account-form">Guardar</button>');
+}
+
+function renderTaxModal(model) {
+  return modalFrame(`Generar modelo ${model}`, `<form class="acc-form" id="tax-form"><div class="field"><label>Ejercicio</label><input id="tax-year" type="number" value="${new Date().getFullYear()}" required></div>${model !== '425' ? '<div class="field"><label>Trimestre</label><select id="tax-quarter"><option value="1">1T</option><option value="2">2T</option><option value="3">3T</option><option value="4">4T</option></select></div>' : ''}<div class="acc-notice">Se recalculará desde los documentos aprobados del periodo.</div></form>`, '<button class="btn btn-primary" type="submit" form="tax-form">Generar borrador</button>');
+}
+
+function renderEntryModal() {
+  return modalFrame('Nuevo asiento manual', `<form class="acc-form" id="entry-form"><div class="acc-form-grid"><div class="field"><label>Fecha</label><input id="entry-date" type="date" value="${isoDate()}" required></div><div class="field"><label>Concepto</label><input id="entry-description" required></div></div><div class="acc-form-grid"><div class="field"><label>Cuenta Debe</label><select id="entry-debit-account">${state.accounts.map(a=>`<option value="${a.id}">${a.code} · ${escapeHtml(a.name)}</option>`).join('')}</select></div><div class="field"><label>Cuenta Haber</label><select id="entry-credit-account">${state.accounts.map(a=>`<option value="${a.id}">${a.code} · ${escapeHtml(a.name)}</option>`).join('')}</select></div></div><div class="field"><label>Importe</label><input id="entry-amount" type="number" step=".01" min=".01" required></div></form>`, '<button class="btn btn-primary" type="submit" form="entry-form">Registrar asiento</button>');
+}
+
+function wireEvents() {
+  document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
+    state.view = button.dataset.view; state.modal = null; renderApp();
+  }));
+  document.querySelector('#logout-btn')?.addEventListener('click', logout);
+  document.querySelector('#sync-tpv-btn')?.addEventListener('click', syncTpv);
+  document.querySelectorAll('[data-new-document]').forEach(button => button.addEventListener('click', () => openDocument({}, button.dataset.newDocument)));
+  document.querySelectorAll('[data-edit-document]').forEach(button => button.addEventListener('click', () => openDocument(state.documents.find(doc => doc.id === button.dataset.editDocument))));
+  document.querySelector('#import-bank-btn')?.addEventListener('click', () => openModal({ type: 'bank-import' }));
+  document.querySelector('#new-bank-account-btn')?.addEventListener('click', () => openModal({ type: 'bank-account' }));
+  document.querySelector('#suggest-matches-btn')?.addEventListener('click', suggestMatches);
+  document.querySelectorAll('[data-confirm-match]').forEach(button => button.addEventListener('click', () => updateMatch(button.dataset.confirmMatch, 'confirmed')));
+  document.querySelectorAll('[data-reject-match]').forEach(button => button.addEventListener('click', () => updateMatch(button.dataset.rejectMatch, 'rejected')));
+  document.querySelector('#new-entry-btn')?.addEventListener('click', () => openModal({ type: 'entry' }));
+  document.querySelectorAll('[data-tax-model]').forEach(button => button.addEventListener('click', () => openModal({ type: 'tax', model: button.dataset.taxModel })));
+  document.querySelector('#export-tax-btn')?.addEventListener('click', exportTaxCsv);
+  document.querySelector('#print-tax-btn')?.addEventListener('click', () => window.print());
+  document.querySelectorAll('[data-toggle-period]').forEach(button => button.addEventListener('click', () => togglePeriod(button.dataset.togglePeriod, button.dataset.status)));
+  document.querySelector('#drive-settings-form')?.addEventListener('submit', saveDriveSettings);
+  document.querySelector('#json-files-input')?.addEventListener('change', event => importJsonFiles([...event.target.files]));
+  document.querySelector('#google-connect-btn')?.addEventListener('click', connectGoogle);
+  document.querySelector('#sync-drive-btn')?.addEventListener('click', syncGoogleDrive);
+  document.querySelector('#business-form')?.addEventListener('submit', saveBusiness);
+  document.querySelector('#revoke-device-btn')?.addEventListener('click', logout);
+  wireModal();
+}
+
+function wireModal() {
+  document.querySelectorAll('[data-close-modal]').forEach(button => button.addEventListener('click', closeModal));
+  document.querySelector('.acc-modal-backdrop')?.addEventListener('click', event => {
+    if (event.target.classList.contains('acc-modal-backdrop')) closeModal();
+  });
+  document.querySelector('#document-form')?.addEventListener('submit', saveDocument);
+  document.querySelector('#post-document-btn')?.addEventListener('click', postDocument);
+  document.querySelector('#bank-import-form')?.addEventListener('submit', importBankFile);
+  document.querySelector('#bank-account-form')?.addEventListener('submit', saveBankAccount);
+  document.querySelector('#tax-form')?.addEventListener('submit', generateTaxDraft);
+  document.querySelector('#entry-form')?.addEventListener('submit', saveEntry);
+}
+
+function openModal(modal) { state.modal = modal; renderApp(); }
+function closeModal() { state.modal = null; renderApp(); }
+function openDocument(document = {}, direction = document.direction || 'purchase') { openModal({ type: 'document', document, direction }); }
+
+async function syncTpv() {
+  try {
+    await rpc('accounting_seed_defaults');
+    const count = await rpc('accounting_sync_tpv_sales');
+    toast(`${count} ventas sincronizadas.`);
+    await loadAll();
+  } catch (error) { toast(error.message, 'error'); }
+}
+
+async function saveDocument(event) {
+  event.preventDefault();
+  const current = state.modal.document || {};
+  const subtotal = Number(document.querySelector('#doc-subtotal').value || 0);
+  const rate = Number(document.querySelector('#doc-tax-rate').value || 0);
+  const tax = Math.round(subtotal * rate) / 100;
+  const withholding = Number(document.querySelector('#doc-withholding').value || 0);
+  const row = {
+    business_id: state.business.id,
+    contact_id: document.querySelector('#doc-contact').value || null,
+    source_type: current.source_type || 'manual',
+    source_id: current.source_id || `manual-${uuid()}`,
+    direction: document.querySelector('#doc-direction').value,
+    document_type: document.querySelector('#doc-type').value,
+    status: current.status || 'draft',
+    number: document.querySelector('#doc-number').value.trim(),
+    issue_date: document.querySelector('#doc-date').value,
+    subtotal, tax_amount: tax, withholding_amount: withholding,
+    total_amount: Math.round((subtotal + tax - withholding) * 100) / 100,
+    notes: document.querySelector('#doc-notes').value,
+    source_payload: { ...(current.source_payload || {}), tax_rate: rate },
+    updated_at: new Date().toISOString()
+  };
+  const request = current.id
+    ? state.client.from('bookkeeping_documents').update(row).eq('id', current.id).select('id').single()
+    : state.client.from('bookkeeping_documents').insert(row).select('id').single();
+  const { data: savedDocument, error } = await request;
+  if (error) return toast(error.message, 'error');
+  const documentId = savedDocument.id;
+  if (!current.id) {
+    const { error: lineError } = await state.client.from('bookkeeping_document_lines').insert({
+      business_id: state.business.id,
+      document_id: documentId,
+      position: 1,
+      description: document.querySelector('#doc-notes').value || document.querySelector('#doc-number').value.trim(),
+      quantity: 1,
+      unit_price: subtotal,
+      taxable_base: subtotal,
+      tax_rate: rate,
+      tax_amount: tax,
+      withholding_amount: withholding,
+      account_code: row.direction === 'sale' ? '700' : '600'
+    });
+    if (lineError) return toast(lineError.message, 'error');
+  }
+  state.modal = null; toast('Documento guardado.'); await loadAll();
+}
+
+async function postDocument() {
+  try {
+    await rpc('accounting_post_document', { p_document_id: state.modal.document.id });
+    state.modal = null; toast('Documento aprobado y contabilizado.'); await loadAll();
+  } catch (error) { toast(error.message, 'error'); }
+}
+
+async function saveBankAccount(event) {
+  event.preventDefault();
+  const { error } = await state.client.from('accounting_bank_accounts').insert({
+    business_id: state.business.id,
+    name: document.querySelector('#bank-name').value,
+    iban_last4: document.querySelector('#bank-last4').value,
+    opening_balance: Number(document.querySelector('#bank-opening').value || 0)
+  });
+  if (error) return toast(error.message, 'error');
+  state.modal = null; await loadAll();
+}
+
+async function suggestMatches() {
+  try {
+    const count = await rpc('accounting_suggest_reconciliations');
+    toast(`${count} posibles coincidencias revisadas.`);
+    await loadAll();
+  } catch (error) { toast(error.message, 'error'); }
+}
+
+async function updateMatch(id, status) {
+  const match = state.reconciliations.find(item => item.id === id);
+  if (!match) return;
+  const { error } = await state.client.from('accounting_reconciliations').update({ status }).eq('id', id);
+  if (error) return toast(error.message, 'error');
+  if (status === 'confirmed') {
+    await state.client.from('accounting_bank_transactions').update({ status: 'matched' }).eq('id', match.bank_transaction_id);
+    const document = state.documents.find(item => item.id === match.document_id);
+    if (document) {
+      const paid = Math.min(Number(document.total_amount), Number(document.paid_amount || 0) + Number(match.amount));
+      await state.client.from('bookkeeping_documents').update({
+        paid_amount: paid,
+        status: paid >= Number(document.total_amount) ? 'paid' : 'partially_paid'
+      }).eq('id', document.id);
+    }
+  }
+  await loadAll();
+}
+
+function normalizeHeader(value = '') {
+  return String(value).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '_');
+}
+
+function parseCsv(text) {
+  const firstLine = text.split(/\r?\n/)[0] || '';
+  const delimiter = firstLine.split(';').length > firstLine.split(',').length ? ';' : ',';
+  const rows = [];
+  let row = [], cell = '', quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i], next = text[i + 1];
+    if (char === '"' && quoted && next === '"') { cell += '"'; i++; }
+    else if (char === '"') quoted = !quoted;
+    else if (char === delimiter && !quoted) { row.push(cell); cell = ''; }
+    else if ((char === '\n' || char === '\r') && !quoted) {
+      if (char === '\r' && next === '\n') i++;
+      row.push(cell); if (row.some(value => value.trim())) rows.push(row); row = []; cell = '';
+    } else cell += char;
+  }
+  row.push(cell); if (row.some(value => value.trim())) rows.push(row);
+  return rows;
+}
+
+function parseXlsx(buffer) {
+  const files = unzipSync(new Uint8Array(buffer));
+  const sharedXml = files['xl/sharedStrings.xml'] ? strFromU8(files['xl/sharedStrings.xml']) : '';
+  const shared = sharedXml ? [...new DOMParser().parseFromString(sharedXml, 'text/xml').querySelectorAll('si')].map(si => si.textContent || '') : [];
+  const sheetName = Object.keys(files).filter(name => /^xl\/worksheets\/sheet\d+\.xml$/.test(name)).sort()[0];
+  if (!sheetName) throw new Error('El XLSX no contiene hojas reconocibles.');
+  const xml = new DOMParser().parseFromString(strFromU8(files[sheetName]), 'text/xml');
+  return [...xml.querySelectorAll('row')].map(row => {
+    const values = [];
+    row.querySelectorAll('c').forEach(cell => {
+      const ref = cell.getAttribute('r') || 'A1';
+      const letters = ref.replace(/\d/g, '');
+      let index = 0;
+      for (const letter of letters) index = index * 26 + letter.charCodeAt(0) - 64;
+      const raw = cell.querySelector('v')?.textContent || cell.querySelector('is')?.textContent || '';
+      values[index - 1] = cell.getAttribute('t') === 's' ? shared[Number(raw)] || '' : raw;
+    });
+    return values.map(value => value ?? '');
+  });
+}
+
+function parseSpanishNumber(value) {
+  if (typeof value === 'number') return value;
+  const clean = String(value ?? '').replace(/[€\s]/g, '');
+  if (!clean) return null;
+  const normalized = clean.includes(',') ? clean.replace(/\./g, '').replace(',', '.') : clean;
+  const number = Number(normalized);
+  return Number.isFinite(number) ? number : null;
+}
+
+function excelDate(value) {
+  if (/^\d{5}(\.\d+)?$/.test(String(value))) {
+    return isoDate(new Date(Date.UTC(1899, 11, 30) + Number(value) * 86400000));
+  }
+  const match = String(value).match(/(\d{1,4})[\/.-](\d{1,2})[\/.-](\d{1,4})/);
+  if (match) {
+    const yearFirst = match[1].length === 4;
+    const year = yearFirst ? match[1] : match[3];
+    const month = String(match[2]).padStart(2, '0');
+    const day = String(yearFirst ? match[3] : match[1]).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : isoDate(date);
+}
+
+function mapBankRows(rows) {
+  if (rows.length < 2) throw new Error('El extracto está vacío.');
+  const headers = rows[0].map(normalizeHeader);
+  const find = (...names) => headers.findIndex(header => names.includes(header));
+  const indexes = {
+    date: find('fecha','fecha_operacion','fecha_contable','date'),
+    valueDate: find('fecha_valor','value_date'),
+    description: find('concepto','descripcion','description'),
+    reference: find('referencia','reference','observaciones'),
+    amount: find('importe','amount'),
+    debit: find('debe','cargo','debit'),
+    credit: find('haber','abono','credit'),
+    balance: find('saldo','balance')
+  };
+  if (indexes.date < 0 || (indexes.amount < 0 && indexes.debit < 0 && indexes.credit < 0)) {
+    throw new Error('No se reconocen las columnas de fecha e importe.');
+  }
+  return rows.slice(1).map(row => {
+    const amount = indexes.amount >= 0
+      ? parseSpanishNumber(row[indexes.amount])
+      : (parseSpanishNumber(row[indexes.credit]) || 0) - (parseSpanishNumber(row[indexes.debit]) || 0);
+    return {
+      booked_on: excelDate(row[indexes.date]),
+      value_on: indexes.valueDate >= 0 ? excelDate(row[indexes.valueDate]) : null,
+      description: indexes.description >= 0 ? String(row[indexes.description] || '').trim() : '',
+      reference: indexes.reference >= 0 ? String(row[indexes.reference] || '').trim() : '',
+      amount,
+      balance: indexes.balance >= 0 ? parseSpanishNumber(row[indexes.balance]) : null
+    };
+  }).filter(row => row.booked_on && row.amount != null);
+}
+
+async function sha256(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function importBankFile(event) {
+  event.preventDefault();
+  try {
+    const file = document.querySelector('#bank-file').files[0];
+    const rows = file.name.toLowerCase().endsWith('.xlsx')
+      ? parseXlsx(await file.arrayBuffer())
+      : parseCsv(await file.text());
+    const mapped = mapBankRows(rows);
+    const accountId = document.querySelector('#bank-account-select').value;
+    const batch = uuid();
+    const payload = [];
+    for (const item of mapped) {
+      payload.push({
+        ...item, business_id: state.business.id, bank_account_id: accountId,
+        fingerprint: await sha256([accountId,item.booked_on,item.amount,item.description,item.reference].join('|')),
+        import_batch: batch, raw_payload: item
+      });
+    }
+    const { data, error } = await state.client.from('accounting_bank_transactions')
+      .upsert(payload, { onConflict: 'business_id,fingerprint', ignoreDuplicates: true }).select();
+    if (error) throw error;
+    state.modal = null; toast(`${data?.length || 0} movimientos nuevos importados.`); await loadAll();
+  } catch (error) { toast(error.message, 'error'); }
+}
+
+async function generateTaxDraft(event) {
+  event.preventDefault();
+  try {
+    await rpc('accounting_generate_tax_draft', {
+      p_year: Number(document.querySelector('#tax-year').value),
+      p_quarter: Number(document.querySelector('#tax-quarter')?.value || 1),
+      p_model: state.modal.model
+    });
+    state.modal = null; toast('Borrador fiscal generado.'); await loadAll();
+  } catch (error) { toast(error.message, 'error'); }
+}
+
+async function togglePeriod(id, currentStatus) {
+  const next = currentStatus === 'locked' ? 'open' : 'locked';
+  const { error } = await state.client.from('accounting_tax_periods').update({
+    status: next,
+    locked_at: next === 'locked' ? new Date().toISOString() : null
+  }).eq('id', id);
+  if (error) return toast(error.message, 'error');
+  await state.client.from('accounting_audit_log').insert({
+    business_id: state.business.id,
+    event_type: next === 'locked' ? 'tax_period_locked' : 'tax_period_reopened',
+    entity_type: 'tax_period',
+    entity_id: id
+  });
+  toast(next === 'locked' ? 'Periodo bloqueado.' : 'Periodo reabierto.');
+  await loadAll();
+}
+
+async function saveEntry(event) {
+  event.preventDefault();
+  const id = uuid(), amount = Number(document.querySelector('#entry-amount').value);
+  const entry = {
+    id, business_id: state.business.id, entry_date: document.querySelector('#entry-date').value,
+    description: document.querySelector('#entry-description').value, source_type: 'manual',
+    source_id: `manual-${id}`, status: 'draft', posted_at: null
+  };
+  const lines = [
+    { business_id: state.business.id, entry_id: id, account_id: document.querySelector('#entry-debit-account').value, debit: amount, credit: 0 },
+    { business_id: state.business.id, entry_id: id, account_id: document.querySelector('#entry-credit-account').value, debit: 0, credit: amount }
+  ];
+  const { error } = await state.client.from('accounting_journal_entries').insert(entry);
+  if (error) return toast(error.message, 'error');
+  const { error: lineError } = await state.client.from('accounting_journal_lines').insert(lines);
+  if (lineError) return toast(lineError.message, 'error');
+  const { error: postError } = await state.client.from('accounting_journal_entries')
+    .update({ status: 'posted', posted_at: new Date().toISOString() }).eq('id', id);
+  if (postError) return toast(postError.message, 'error');
+  state.modal = null; await loadAll();
+}
+
+async function saveDriveSettings(event) {
+  event.preventDefault();
+  const row = {
+    business_id: state.business.id,
+    source_folder_id: folderId(document.querySelector('#drive-source-folder').value),
+    result_folder_id: folderId(document.querySelector('#drive-result-folder').value),
+    updated_at: new Date().toISOString()
+  };
+  const request = state.driveSources[0]
+    ? state.client.from('accounting_drive_sources').update(row).eq('id', state.driveSources[0].id)
+    : state.client.from('accounting_drive_sources').insert(row);
+  const { error } = await request;
+  if (error) return toast(error.message, 'error');
+  toast('Carpetas guardadas.'); await loadAll();
+}
+
+function folderId(value = '') {
+  return value.match(/\/folders\/([a-zA-Z0-9_-]+)/)?.[1] || value.trim();
+}
+
+function validateSupplierDocument(payload) {
+  if (payload.schema_version !== 'supplier-document/v1') throw new Error('Versión de contrato no compatible.');
+  if (!payload.drive_file_id || !payload.supplier?.name || !payload.invoice?.issue_date) {
+    throw new Error('Faltan drive_file_id, supplier.name o invoice.issue_date.');
+  }
+  if (!Array.isArray(payload.lines) || !payload.totals) throw new Error('Faltan líneas o totales.');
+  return payload;
+}
+
+async function importSupplierJson(payload, resultFileId = '') {
+  validateSupplierDocument(payload);
+  const revision = payload.drive_revision || payload.checksum || 'v1';
+  const { data: existing } = await state.client.from('accounting_drive_imports').select('id,status')
+    .eq('drive_file_id', payload.drive_file_id).eq('drive_revision', revision).maybeSingle();
+  if (existing) return 'duplicate';
+
+  let contactId = null;
+  if (payload.supplier.tax_id) {
+    const { data } = await state.client.from('accounting_contacts').select('id')
+      .eq('tax_id', payload.supplier.tax_id).limit(1);
+    contactId = data?.[0]?.id || null;
+  }
+  if (!contactId) {
+    const { data, error } = await state.client.from('accounting_contacts').insert({
+      business_id: state.business.id, kind: 'supplier', name: payload.supplier.name,
+      legal_name: payload.supplier.legal_name || payload.supplier.name,
+      tax_id: payload.supplier.tax_id || '', email: payload.supplier.email || ''
+    }).select('id').single();
+    if (error) throw error;
+    contactId = data.id;
+  }
+  const lowConfidence = Object.values(payload.confidence || {}).some(value => Number(value) < .8)
+    || (payload.warnings || []).length > 0;
+  const documentId = uuid();
+  const totals = payload.totals;
+  const { error: docError } = await state.client.from('bookkeeping_documents').insert({
+    id: documentId, business_id: state.business.id, contact_id: contactId,
+    source_type: 'drive_json', source_id: payload.drive_file_id,
+    direction: 'purchase', document_type: payload.invoice.document_type || 'invoice',
+    status: 'needs_review', number: payload.invoice.number || '',
+    issue_date: payload.invoice.issue_date, due_date: payload.invoice.due_date || null,
+    currency: payload.invoice.currency || 'EUR', subtotal: Number(totals.taxable_base || 0),
+    tax_amount: Number(totals.tax_amount || 0), withholding_amount: Number(totals.withholding_amount || 0),
+    total_amount: Number(totals.total || 0), payment_method: payload.invoice.payment_method || null,
+    category: payload.suggestions?.category || null, attachment_url: payload.source_url || null,
+    notes: (payload.warnings || []).join('\n'), source_payload: payload
+  });
+  if (docError) throw docError;
+  const lines = payload.lines.map((line, index) => ({
+    business_id: state.business.id, document_id: documentId, position: index + 1,
+    description: line.description || 'Línea', quantity: Number(line.quantity || 1),
+    unit_price: Number(line.unit_price || 0), taxable_base: Number(line.taxable_base || 0),
+    tax_rate: Number(line.tax_rate || 0), tax_amount: Number(line.tax_amount || 0),
+    tax_scope: line.tax_scope || 'taxable', withholding_rate: Number(line.withholding_rate || 0),
+    withholding_amount: Number(line.withholding_amount || 0), account_code: line.account_code || payload.suggestions?.account_code || '600'
+  }));
+  const { error: lineError } = await state.client.from('bookkeeping_document_lines').insert(lines);
+  if (lineError) throw lineError;
+  await state.client.from('accounting_drive_imports').insert({
+    business_id: state.business.id, drive_file_id: payload.drive_file_id,
+    drive_revision: revision, checksum: payload.checksum || null,
+    schema_version: payload.schema_version, source_file_id: payload.source_file_id || resultFileId,
+    status: lowConfidence ? 'pending' : 'imported', document_id: documentId,
+    payload, processed_at: new Date().toISOString()
+  });
+  return 'imported';
+}
+
+async function importJsonFiles(files) {
+  let imported = 0, duplicates = 0, errors = 0;
+  for (const file of files) {
+    try {
+      const result = await importSupplierJson(JSON.parse(await file.text()), file.name);
+      if (result === 'duplicate') duplicates++; else imported++;
+    } catch (error) {
+      errors++; console.warn(`[Contabilidad] ${file.name}`, error);
+    }
+  }
+  toast(`${imported} importados · ${duplicates} duplicados · ${errors} con error`, errors ? 'error' : '');
+  await loadAll();
+}
+
+function loadGoogleIdentity() {
+  if (window.google?.accounts?.oauth2) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.onload = resolve; script.onerror = () => reject(new Error('No se pudo cargar Google Identity.'));
+    document.head.appendChild(script);
+  });
+}
+
+async function connectGoogle() {
+  try {
+    await loadGoogleIdentity();
+    const token = await new Promise((resolve, reject) => {
+      const client = google.accounts.oauth2.initTokenClient({
+        client_id: googleClientId,
+        scope: 'https://www.googleapis.com/auth/drive.readonly',
+        callback: response => response.error ? reject(new Error(response.error)) : resolve(response.access_token)
+      });
+      client.requestAccessToken({ prompt: 'consent' });
+    });
+    state.googleToken = token;
+    toast('Google Drive autorizado para esta sesión.');
+    await syncGoogleDrive();
+  } catch (error) { toast(error.message, 'error'); }
+}
+
+async function driveFetch(url) {
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${state.googleToken}` } });
+  if (!response.ok) throw new Error(`Google Drive respondió ${response.status}.`);
+  return response;
+}
+
+async function syncGoogleDrive() {
+  if (!state.driveSources[0]?.result_folder_id) return toast('Configura la carpeta de resultados.', 'error');
+  if (!state.googleToken) return connectGoogle();
+  try {
+    const folder = state.driveSources[0].result_folder_id;
+    const q = encodeURIComponent(`'${folder}' in parents and trashed = false and mimeType = 'application/json'`);
+    const list = await (await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime,md5Checksum)&pageSize=1000`)).json();
+    let imported = 0, duplicates = 0, errors = 0;
+    for (const file of list.files || []) {
+      try {
+        const payload = await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`)).json();
+        payload.drive_revision ||= file.modifiedTime;
+        payload.checksum ||= file.md5Checksum;
+        const result = await importSupplierJson(payload, file.id);
+        result === 'duplicate' ? duplicates++ : imported++;
+      } catch (error) { errors++; console.warn(`[Drive] ${file.name}`, error); }
+    }
+    await state.client.from('accounting_drive_sources').update({ last_sync_at: new Date().toISOString() }).eq('id', state.driveSources[0].id);
+    toast(`${imported} nuevos · ${duplicates} ya procesados · ${errors} errores`, errors ? 'error' : '');
+    await loadAll();
+  } catch (error) { toast(error.message, 'error'); }
+}
+
+async function saveBusiness(event) {
+  event.preventDefault();
+  const { error } = await state.client.from('accounting_businesses').update({
+    name: document.querySelector('#business-name').value,
+    legal_name: document.querySelector('#business-legal-name').value,
+    nif: document.querySelector('#business-nif').value,
+    accounting_regime: document.querySelector('#business-regime').value,
+    updated_at: new Date().toISOString()
+  }).eq('id', state.business.id);
+  if (error) return toast(error.message, 'error');
+  toast('Perfil fiscal guardado.'); await loadAll();
+}
+
+function downloadCsv(name, rows) {
+  const csv = rows.map(row => row.map(value => `"${String(value ?? '').replace(/"/g,'""')}"`).join(';')).join('\r\n');
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' }));
+  link.download = name; link.click(); URL.revokeObjectURL(link.href);
+}
+
+function exportTaxCsv() {
+  downloadCsv('borradores-fiscales.csv', [
+    ['Modelo','Año','Trimestre','Base ventas','IGIC repercutido','Base compras','IGIC soportado','Resultado'],
+    ...state.taxDrafts.map(d => [d.model,d.accounting_tax_periods?.year,d.accounting_tax_periods?.quarter || '',
+      d.totals?.sales_base,d.totals?.igic_output,d.totals?.purchases_base,d.totals?.igic_input,d.totals?.net_result])
+  ]);
+}
+
+async function logout() {
+  try { if (state.client) await rpc('accounting_revoke_current_session'); } catch { /* revocación local */ }
+  localStorage.removeItem(DEVICE_KEY);
+  clearSession();
+  renderPairing();
+}
+
+resumeOrPair().catch(error => {
+  console.error(error);
+  clearSession();
+  renderPairing();
+  toast(error.message, 'error');
+});

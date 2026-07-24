@@ -1,10 +1,11 @@
-const CACHE_NAME = 'tpv-cache-v78';
+const CACHE_NAME = 'tpv-cache-v79';
 const BASE_URL = new URL('./', self.location.href);
 const ASSETS = [
   './',
   './index.html',
   './kds.html',
   './ticket.html',
+  './accounting.html',
   './manifest.webmanifest',
   './kds.webmanifest',
   './icon.svg',

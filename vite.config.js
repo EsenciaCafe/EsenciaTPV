@@ -16,7 +16,8 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         kds: resolve(__dirname, 'kds.html'),
-        ticket: resolve(__dirname, 'ticket.html')
+        ticket: resolve(__dirname, 'ticket.html'),
+        accounting: resolve(__dirname, 'accounting.html')
       }
     }
   }

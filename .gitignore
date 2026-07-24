@@ -43,3 +43,5 @@ prev/
 temp/
 tmp/
 supabase/.temp/
+.playwright-cli/
+output/playwright/

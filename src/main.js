@@ -1,4 +1,5 @@
 import { store } from './store.js';
+import { supabase } from './supabase.js';
 import QRCode from 'qrcode';
 import {
   addLoyaltyPurchase,
@@ -1572,6 +1573,14 @@ function renderAjustesView(state) {
             <span>Datos Fiscales</span>
             ${chevron}
           </button>` : '',
+      `
+        <button class="settings-tree-item" id="settings-open-accounting">
+          <span>
+            <strong>Contabilidad</strong>
+            <small>Facturas, gastos, bancos e impuestos · requiere PIN administrador</small>
+          </span>
+          ${chevron}
+        </button>`,
       store.canViewReports() ? `
           <button class="settings-tree-item" id="settings-to-informes">
             <span>Informes y Ventas</span>
@@ -8082,6 +8091,35 @@ function setupEventListeners(container) {
   if (toCierreBtn) {
     toCierreBtn.addEventListener('click', () => {
       store.navigateSettings(['cierre']);
+    });
+  }
+
+  const openAccountingBtn = container.querySelector('#settings-open-accounting');
+  if (openAccountingBtn) {
+    openAccountingBtn.addEventListener('click', async () => {
+      const adminPin = window.prompt('Confirma el PIN de administrador para vincular Contabilidad:');
+      if (!adminPin) return;
+      openAccountingBtn.disabled = true;
+      try {
+        const { data: pairingCode, error } = await supabase.rpc('accounting_create_pairing_code', {
+          p_admin_pin: adminPin
+        });
+        if (error) throw error;
+        const target = new URL('accounting.html', document.baseURI);
+        target.searchParams.set('pair', pairingCode);
+        window.open(target.toString(), '_blank', 'noopener');
+        showToast('Código de Contabilidad creado. Caduca en 10 minutos.', 'success');
+      } catch (error) {
+        const migrationMissing = ['PGRST202', '42883'].includes(error?.code);
+        showToast(
+          migrationMissing
+            ? 'Activa primero sql/accounting_app_migration.sql en Supabase.'
+            : (error?.message || 'No se pudo abrir Contabilidad.'),
+          'error'
+        );
+      } finally {
+        openAccountingBtn.disabled = false;
+      }
     });
   }
 
