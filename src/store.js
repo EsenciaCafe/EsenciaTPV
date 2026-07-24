@@ -742,7 +742,7 @@ class Store {
       this.publishReceiptTicket(updatedTx);
     }
 
-    this.notify();
+    this.notify({ source: 'background-fiscal' });
     return fiscalData;
   }
 

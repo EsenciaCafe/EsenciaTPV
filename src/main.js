@@ -4053,27 +4053,40 @@ function isCashClosureViewActive(state = store.state) {
     state.settingsPath[0] === 'cierre';
 }
 
-function isArticleManagerViewActive(state = store.state) {
+function isCatalogManagerViewActive(state = store.state) {
   return state.activeTab === 'ajustes' &&
     Array.isArray(state.settingsPath) &&
-    state.settingsPath.length === 2 &&
-    state.settingsPath[0] === 'articulos' &&
-    state.settingsPath[1] === 'todos';
+    state.settingsPath[0] === 'articulos';
+}
+
+function isEditableControlFocused() {
+  const element = document.activeElement;
+  if (!element) return false;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName) ||
+    element.isContentEditable === true;
 }
 
 function isExternalRenderMeta(meta = {}) {
-  return ['realtime', 'remote-refresh', 'square-gift-card-event', 'sales-realtime', 'sales-broadcast'].includes(meta.source);
+  return [
+    'realtime',
+    'remote-refresh',
+    'square-gift-card-event',
+    'sales-realtime',
+    'sales-broadcast',
+    'background-fiscal'
+  ].includes(meta.source);
 }
 
 function shouldDeferExternalRender(meta = {}) {
   if (!isExternalRenderMeta(meta)) return false;
+  if (isEditableControlFocused()) return true;
   if (['sales-realtime', 'sales-broadcast'].includes(meta.source)) {
     const salesViewIsVisible = store.state.activeTab === 'transacciones' ||
       (store.state.activeTab === 'ajustes' &&
         ['informes', 'cierre'].includes(store.state.settingsPath?.[0]));
     if (!salesViewIsVisible) return true;
   }
-  if (isArticleManagerViewActive(store.state)) return true;
+  if (isCatalogManagerViewActive(store.state)) return true;
   return cashClosureEditLocked && isCashClosureViewActive(store.state);
 }
 
@@ -9649,6 +9662,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const loadingEl = document.getElementById('app-loading-overlay');
   let pendingRenderState = null;
   let pendingRenderFrame = null;
+  let deferredExternalRenderState = null;
 
   const scheduleRender = (state = store.state) => {
     const scrollSnapshot = captureScrollState(store.state);
@@ -9666,6 +9680,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   };
 
+  const scheduleBackgroundRender = (state = store.state) => {
+    if (isEditableControlFocused() || isCatalogManagerViewActive(store.state)) {
+      deferredExternalRenderState = state;
+      return;
+    }
+    scheduleRender(state);
+  };
+
   // Listen for DB write errors and show toast
   window.addEventListener('db-error', (e) => {
     const { operation, message } = e.detail;
@@ -9678,24 +9700,36 @@ document.addEventListener('DOMContentLoaded', async () => {
       userMsg = 'Tablas no encontradas \u2014 ejecuta schema.sql y seed.sql';
     }
     showToast(userMsg, 'error');
-    scheduleRender(store.state); // refresh header dot color
+    scheduleBackgroundRender(store.state); // refresh header dot color without resetting open forms
   });
 
   // Bind store event reactive updates
   store.subscribe((state, meta = {}) => {
     if (shouldDeferExternalRender(meta)) {
+      deferredExternalRenderState = state;
       return;
     }
+    deferredExternalRenderState = null;
     if (meta.renderScope === 'ticket' && renderTicketOnly()) {
       return;
     }
     scheduleRender(state);
   });
 
+  document.addEventListener('focusout', () => {
+    queueMicrotask(() => {
+      if (!deferredExternalRenderState || isEditableControlFocused()) return;
+      if (isCatalogManagerViewActive(store.state)) return;
+      const nextState = deferredExternalRenderState;
+      deferredExternalRenderState = null;
+      scheduleRender(nextState);
+    });
+  });
+
   // Watch system theme changes for System theme mode
   window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
     if (store.state.theme === 'system') {
-      scheduleRender(store.state);
+      scheduleBackgroundRender(store.state);
     }
   });
 
@@ -9726,9 +9760,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // First paint
   render(store.state);
 
-  // Resize monitor to refresh template bindings (switching tablet split dynamically)
-  window.addEventListener('resize', () => {
-    scheduleRender(store.state);
+  // Re-render only when the responsive layout actually changes. Mobile keyboards
+  // also emit resize events and must never rebuild the active form.
+  const tabletLayoutQuery = window.matchMedia('(min-width: 768px)');
+  tabletLayoutQuery.addEventListener('change', () => {
+    scheduleBackgroundRender(store.state);
   });
 
   if ('serviceWorker' in navigator) {
