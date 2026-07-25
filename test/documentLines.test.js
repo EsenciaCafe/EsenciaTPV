@@ -51,6 +51,18 @@ test('las operaciones exentas no generan cuota de IGIC', () => {
   assert.equal(totals.lines[0].tax_rate, 0);
 });
 
+test('admite el tipo reducido de IGIC del 5 % en revisión manual', () => {
+  const line = calculateDocumentLine({
+    description: 'Bebida con tipo reducido',
+    quantity: 2,
+    unit_price: 32,
+    tax_scope: 'taxable',
+    tax_rate: 5
+  });
+  assert.equal(line.taxable_base, 64);
+  assert.equal(line.tax_amount, 3.2);
+});
+
 test('calcula la variación respecto al precio de compra anterior', () => {
   assert.deepEqual(calculatePriceVariation(12, 10), { amount: 2, percent: 20 });
   assert.deepEqual(calculatePriceVariation(8, 10), { amount: -2, percent: -20 });

@@ -13,6 +13,7 @@ import {
   driveImportStatus,
   folderId,
   isSupportedInvoiceFile,
+  reviewableSupplierDocument,
   validateSupplierDocument
 } from './driveInvoices.js';
 
@@ -69,6 +70,17 @@ function escapeHtml(value = '') {
 
 function money(value = 0) {
   return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(Number(value || 0));
+}
+
+function safeDriveUrl(value = '') {
+  try {
+    const url = new URL(String(value));
+    return url.protocol === 'https:' && ['drive.google.com', 'docs.google.com'].includes(url.hostname)
+      ? url.href
+      : '';
+  } catch {
+    return '';
+  }
 }
 
 function isoDate(value = new Date()) {
@@ -350,13 +362,13 @@ const STATUS_LABELS = {
   partially_paid: 'Pago parcial', paid: 'Pagada', overdue: 'Vencida',
   voided: 'Anulada', rectified: 'Rectificada', unprocessed: 'Pendiente de análisis',
   pending: 'Revisar', imported: 'Importado', duplicate: 'Duplicado',
-  invalid: 'JSON inválido', error: 'Error'
+  needs_correction: 'Pendiente de corrección', invalid: 'JSON inválido', error: 'Error'
 };
 
 function statusBadge(status) {
   const cls = ['overdue','voided','invalid','error'].includes(status)
     ? 'danger'
-    : ['draft','needs_review','partially_paid','pending','unprocessed'].includes(status) ? 'warning' : '';
+    : ['draft','needs_review','partially_paid','pending','needs_correction','unprocessed'].includes(status) ? 'warning' : '';
   return `<span class="badge ${cls}">${STATUS_LABELS[status] || status}</span>`;
 }
 
@@ -502,8 +514,15 @@ function renderDrive() {
       ${state.driveImports.length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Proveedor / documento</th><th>Resultado</th><th>Total</th><th>Procesado</th><th></th></tr></thead><tbody>
         ${state.driveImports.map(item => {
           const payload = item.payload || {};
+          const reviewPayload = payload.extracted || payload;
           const document = item.bookkeeping_documents;
-          return `<tr><td><strong>${escapeHtml(payload.supplier?.name || 'Resultado sin proveedor')}</strong><br><small>${escapeHtml(payload.invoice?.number || item.drive_file_id)}</small></td><td>${statusBadge(item.status)}${item.error_message ? `<br><small class="drive-error">${escapeHtml(item.error_message)}</small>` : ''}</td><td class="num">${payload.totals?.total != null ? money(payload.totals.total) : document?.total_amount != null ? money(document.total_amount) : '—'}</td><td>${item.processed_at ? new Date(item.processed_at).toLocaleString('es-ES') : new Date(item.created_at).toLocaleString('es-ES')}</td><td>${item.document_id ? `<button class="btn btn-small" data-edit-document="${item.document_id}">Revisar</button>` : ''}</td></tr>`;
+          const reviewStatus = item.status === 'pending' && item.error_message ? 'needs_correction' : item.status;
+          const reviewButton = item.document_id
+            ? `<button class="btn btn-small" data-edit-document="${item.document_id}">Revisar</button>`
+            : item.status === 'pending'
+              ? `<button class="btn btn-small btn-primary" data-review-drive-import="${item.id}">Revisar</button>`
+              : '';
+          return `<tr><td><strong>${escapeHtml(reviewPayload.supplier?.name || 'Resultado sin proveedor')}</strong><br><small>${escapeHtml(reviewPayload.invoice?.number || item.drive_file_id)}</small></td><td>${statusBadge(reviewStatus)}${item.error_message ? `<br><small class="drive-error">${escapeHtml(item.error_message)}</small>` : ''}</td><td class="num">${reviewPayload.totals?.total != null ? money(reviewPayload.totals.total) : document?.total_amount != null ? money(document.total_amount) : '—'}</td><td>${item.processed_at ? new Date(item.processed_at).toLocaleString('es-ES') : new Date(item.created_at).toLocaleString('es-ES')}</td><td>${reviewButton}</td></tr>`;
         }).join('')}
       </tbody></table></div>` : '<div class="acc-empty"><strong>Sin análisis importados</strong>Los JSON nuevos aparecerán aquí, incluidos duplicados y errores.</div>'}
     </section>
@@ -581,7 +600,7 @@ function renderDocumentLine(line, index, readOnly) {
         <div class="field line-code"><label>Código proveedor</label><input data-line-field="supplier_item_code" value="${escapeHtml(line.supplier_item_code || '')}" placeholder="Opcional" ${disabled}></div>
         <div class="field line-description"><label>Artículo / concepto</label><input data-line-field="description" value="${escapeHtml(line.description || '')}" required ${disabled}></div>
         <div class="field"><label>Cantidad</label><input data-line-field="quantity" type="number" min=".001" step=".001" value="${Number(line.quantity ?? 1)}" required ${disabled}></div>
-        <div class="field"><label>Precio compra/unidad</label><input data-line-field="unit_price" type="number" min="0" step=".0001" value="${Number(line.unit_price ?? 0)}" required ${disabled}></div>
+        <div class="field"><label>Precio compra/unidad</label><input data-line-field="unit_price" type="number" step=".0001" value="${Number(line.unit_price ?? 0)}" required ${disabled}></div>
         <div class="field"><label>Tratamiento</label><select data-line-field="tax_scope" ${disabled}>
           <option value="taxable" ${scope === 'taxable' ? 'selected' : ''}>Gravado</option>
           <option value="exempt" ${scope === 'exempt' ? 'selected' : ''}>Exento</option>
@@ -605,6 +624,15 @@ function renderDocumentModal(document = {}) {
   }
   const readOnly = Boolean(document.id && !['draft', 'needs_review'].includes(document.status));
   const totals = calculateDocumentTotals(state.modal.lines || []);
+  const originalUrl = safeDriveUrl(
+    document.attachment_url
+    || document.source_payload?.source_url
+    || state.modal.sourceUrl
+    || ''
+  );
+  const originalButton = originalUrl
+    ? `<a class="btn document-original-link" href="${escapeHtml(originalUrl)}" target="_blank" rel="noreferrer">Abrir factura original ↗</a>`
+    : '';
   return modalFrame(document.id ? 'Revisar documento' : isPurchase ? 'Nuevo gasto' : 'Nueva factura', `
     <form class="acc-form" id="document-form" data-id="${document.id || ''}">
       <input type="hidden" id="doc-direction" value="${isPurchase ? 'purchase' : 'sale'}">
@@ -628,10 +656,11 @@ function renderDocumentModal(document = {}) {
         <div class="grand-total"><span>Total factura</span><strong id="doc-total-amount">${money(totals.totalAmount)}</strong></div>
       </div>
       <div class="field"><label>Notas</label><textarea id="doc-notes" ${readOnly ? 'disabled' : ''}>${escapeHtml(document.notes || '')}</textarea></div>
+      ${state.modal.correctionError ? `<div class="acc-notice"><strong>Pendiente de corrección manual.</strong><br>${escapeHtml(state.modal.correctionError)}</div>` : ''}
       ${document.status === 'needs_review' ? '<div class="acc-notice">Documento extraído automáticamente. Revisa todos los campos antes de aprobar.</div>' : ''}
       ${readOnly ? '<div class="acc-notice acc-success">Documento aprobado. Sus líneas se conservan sin cambios; cualquier corrección deberá hacerse mediante una rectificativa.</div>' : ''}
     </form>`,
-    `${document.id && !readOnly ? '<button class="btn" id="post-document-btn">Aprobar y contabilizar</button>' : ''}${!readOnly ? '<button class="btn btn-primary" type="submit" form="document-form">Guardar</button>' : '<button class="btn" data-close-modal>Cerrar</button>'}`,
+    `${originalButton}${document.id && !readOnly ? '<button class="btn" id="post-document-btn">Aprobar y contabilizar</button>' : ''}${!readOnly ? '<button class="btn btn-primary" type="submit" form="document-form">Guardar</button>' : '<button class="btn" data-close-modal>Cerrar</button>'}`,
     'acc-modal-wide');
 }
 
@@ -664,6 +693,10 @@ function wireEvents() {
   document.querySelector('#sync-tpv-btn')?.addEventListener('click', syncTpv);
   document.querySelectorAll('[data-new-document]').forEach(button => button.addEventListener('click', () => openDocument({}, button.dataset.newDocument)));
   document.querySelectorAll('[data-edit-document]').forEach(button => button.addEventListener('click', () => openDocument(state.documents.find(doc => doc.id === button.dataset.editDocument))));
+  document.querySelectorAll('[data-review-drive-import]').forEach(button => button.addEventListener('click', () => {
+    const item = state.driveImports.find(importItem => importItem.id === button.dataset.reviewDriveImport);
+    if (item) openDriveImportReview(item);
+  }));
   document.querySelector('#import-bank-btn')?.addEventListener('click', () => openModal({ type: 'bank-import' }));
   document.querySelector('#new-bank-account-btn')?.addEventListener('click', () => openModal({ type: 'bank-account' }));
   document.querySelector('#suggest-matches-btn')?.addEventListener('click', suggestMatches);
@@ -738,6 +771,48 @@ async function openDocument(document = {}, direction = document.direction || 'pu
     loading: false
   };
   renderApp();
+}
+
+function openDriveImportReview(item) {
+  const review = reviewableSupplierDocument(item.payload, {
+    drive_file_id: item.drive_file_id,
+    issue_date: isoDate(),
+    number: `PENDIENTE-${String(item.drive_file_id || item.id).slice(-8)}`
+  });
+  const taxId = String(review.supplier.tax_id || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  const supplierName = review.supplier.name.toLocaleLowerCase('es');
+  const contact = state.contacts.find(candidate => {
+    const candidateTaxId = String(candidate.tax_id || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    return (taxId && candidateTaxId === taxId)
+      || (!taxId && String(candidate.name || '').toLocaleLowerCase('es') === supplierName);
+  });
+  const sourceUrl = safeDriveUrl(review.source_url || driveFileUrl(review.drive_file_id));
+  const notes = [
+    item.error_message ? `Corrección pendiente: ${item.error_message}` : '',
+    ...review.warnings
+  ].filter(Boolean).join('\n');
+  openModal({
+    type: 'document',
+    driveImportId: item.id,
+    correctionError: item.error_message || 'El análisis necesita una revisión manual.',
+    sourceUrl,
+    direction: 'purchase',
+    priceHistory: [],
+    lines: review.lines,
+    document: {
+      direction: 'purchase',
+      status: 'needs_review',
+      document_type: review.invoice.document_type,
+      number: review.invoice.number,
+      issue_date: review.invoice.issue_date,
+      contact_id: contact?.id || null,
+      source_type: 'drive_json',
+      source_id: review.drive_file_id || item.drive_file_id,
+      source_payload: item.payload || {},
+      attachment_url: sourceUrl,
+      notes
+    }
+  });
 }
 
 async function syncTpv() {
@@ -825,7 +900,7 @@ async function persistDocument({ closeAfter = true } = {}) {
   if (!form?.reportValidity()) return null;
   const current = state.modal.document || {};
   const lines = readDocumentLines();
-  if (!lines.length || lines.some(line => !line.description || line.quantity <= 0 || line.unit_price < 0)) {
+  if (!lines.length || lines.some(line => !line.description || line.quantity <= 0 || !Number.isFinite(line.unit_price))) {
     toast('Revisa la descripción, cantidad y precio de cada artículo.', 'error');
     return null;
   }
@@ -838,14 +913,21 @@ async function persistDocument({ closeAfter = true } = {}) {
     number: document.querySelector('#doc-number').value.trim(),
     issue_date: document.querySelector('#doc-date').value,
     notes: document.querySelector('#doc-notes').value,
-    source_payload: current.source_payload || {}
+    source_payload: current.source_payload || {},
+    attachment_url: current.attachment_url || state.modal.sourceUrl || ''
   };
   try {
-    const documentId = await rpc('accounting_save_document_with_lines', {
-      p_document_id: current.id || null,
-      p_document: header,
-      p_lines: lines
-    });
+    const documentId = state.modal.driveImportId && !current.id
+      ? await rpc('accounting_save_drive_review', {
+          p_import_id: state.modal.driveImportId,
+          p_document: header,
+          p_lines: lines
+        })
+      : await rpc('accounting_save_document_with_lines', {
+          p_document_id: current.id || null,
+          p_document: header,
+          p_lines: lines
+        });
     if (closeAfter) {
       state.modal = null;
       toast('Documento y artículos guardados.');
@@ -1034,7 +1116,7 @@ async function importJsonFiles(files) {
     } catch (error) {
       errors++;
       console.warn(`[Contabilidad] ${file.name}`, error);
-      await recordDriveImportError(payload, { id: file.name, name: file.name }, error, 'invalid');
+      await recordDriveImportError(payload, { id: file.name, name: file.name }, error, payload ? 'pending' : 'error');
     }
   }
   toast(`${imported} importados · ${duplicates} duplicados · ${errors} con error`, errors ? 'error' : '');
@@ -1210,7 +1292,7 @@ async function syncGoogleDrive() {
       } catch (error) {
         errors++;
         console.warn(`[Drive] ${file.name}`, error);
-        await recordDriveImportError(payload, file, error, payload ? 'invalid' : 'error');
+        await recordDriveImportError(payload, file, error, payload ? 'pending' : 'error');
       }
     }
     await state.client.from('accounting_drive_sources').update({ last_sync_at: new Date().toISOString() }).eq('id', state.driveSources[0].id);

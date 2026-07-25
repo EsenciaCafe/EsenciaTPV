@@ -36,6 +36,81 @@ function finiteNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function reviewNumber(value, fallback = 0) {
+  const number = finiteNumber(value);
+  return number == null ? fallback : number;
+}
+
+function reviewDate(value, fallback = '') {
+  return validIsoDate(value) ? value : fallback;
+}
+
+export function reviewableSupplierDocument(payload = {}, fallback = {}) {
+  const root = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+  const extracted = root.extracted && typeof root.extracted === 'object' && !Array.isArray(root.extracted)
+    ? root.extracted
+    : root;
+  const invoice = extracted.invoice && typeof extracted.invoice === 'object' ? extracted.invoice : {};
+  const supplier = extracted.supplier && typeof extracted.supplier === 'object' ? extracted.supplier : {};
+  const rawLines = Array.isArray(extracted.lines) && extracted.lines.length
+    ? extracted.lines
+    : [{
+        description: 'Revisar los datos de la factura original',
+        quantity: 1,
+        unit_price: 0,
+        taxable_base: 0,
+        tax_rate: 0,
+        tax_amount: 0,
+        tax_scope: 'taxable'
+      }];
+
+  const lines = rawLines.map((item, index) => {
+    const quantity = reviewNumber(item?.quantity, 1) || 1;
+    const taxableBase = reviewNumber(item?.taxable_base, 0);
+    const unitPrice = finiteNumber(item?.unit_price)
+      ?? (quantity ? taxableBase / quantity : 0);
+    const taxScope = TAX_SCOPES.has(item?.tax_scope) ? item.tax_scope : 'taxable';
+    const rawRate = reviewNumber(item?.tax_rate, 0);
+    return {
+      id: '',
+      supplier_item_code: String(item?.supplier_item_code || ''),
+      description: String(item?.description || `Artículo pendiente ${index + 1}`),
+      quantity,
+      unit_price: unitPrice,
+      taxable_base: taxableBase,
+      tax_scope: taxScope,
+      tax_rate: taxScope === 'taxable' ? rawRate : 0,
+      tax_amount: reviewNumber(item?.tax_amount, 0),
+      withholding_rate: reviewNumber(item?.withholding_rate, 0),
+      withholding_amount: reviewNumber(item?.withholding_amount, 0),
+      account_code: String(item?.account_code || extracted.suggestions?.account_code || '600')
+    };
+  });
+
+  const warnings = [
+    ...(Array.isArray(extracted.warnings) ? extracted.warnings : []),
+    ...(Array.isArray(root.warnings) && extracted !== root ? root.warnings : [])
+  ].map(String);
+
+  return {
+    drive_file_id: String(root.drive_file_id || root.source_file_id || fallback.drive_file_id || ''),
+    source_url: String(root.source_url || fallback.source_url || ''),
+    supplier: {
+      name: String(supplier.name || supplier.legal_name || 'Proveedor pendiente'),
+      legal_name: String(supplier.legal_name || supplier.name || ''),
+      tax_id: String(supplier.tax_id || '')
+    },
+    invoice: {
+      number: String(invoice.number || fallback.number || 'PENDIENTE'),
+      issue_date: reviewDate(invoice.issue_date, fallback.issue_date || new Date().toISOString().slice(0, 10)),
+      document_type: DOCUMENT_TYPES.has(invoice.document_type) ? invoice.document_type : 'invoice',
+      payment_method: invoice.payment_method == null ? null : String(invoice.payment_method)
+    },
+    lines,
+    warnings
+  };
+}
+
 function validIsoDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
   const date = new Date(`${value}T12:00:00Z`);

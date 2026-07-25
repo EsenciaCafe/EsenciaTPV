@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { driveImportStatus, folderId, validateSupplierDocument } from '../src/driveInvoices.js';
+import {
+  driveImportStatus,
+  folderId,
+  reviewableSupplierDocument,
+  validateSupplierDocument
+} from '../src/driveInvoices.js';
 
 function validDocument() {
   return {
@@ -64,4 +69,47 @@ test('extrae IDs de URLs de carpeta y elige el último estado', () => {
     { drive_file_id: 'drive-001', status: 'error', created_at: '2026-07-24T10:00:00Z' },
     { drive_file_id: 'drive-001', status: 'imported', processed_at: '2026-07-25T10:00:00Z' }
   ]), 'imported');
+});
+
+test('convierte un resultado de error en un documento editable', () => {
+  const payload = {
+    error: 'unsupported_tax_rate',
+    drive_file_id: 'drive-zumit',
+    source_url: 'https://drive.google.com/file/d/drive-zumit/view',
+    extracted: {
+      supplier: { name: 'Zumit', tax_id: 'B12345678' },
+      invoice: {
+        number: 'FA/2026/6084',
+        issue_date: '2026-07-14',
+        document_type: 'invoice'
+      },
+      lines: [{
+        supplier_item_code: 'B1',
+        description: 'Smoothie',
+        quantity: 2,
+        taxable_base: 64,
+        tax_rate: 5,
+        tax_amount: 3.2
+      }],
+      warnings: ['Revisar el tipo reducido.']
+    }
+  };
+
+  const review = reviewableSupplierDocument(payload);
+  assert.equal(review.supplier.name, 'Zumit');
+  assert.equal(review.invoice.number, 'FA/2026/6084');
+  assert.equal(review.lines[0].unit_price, 32);
+  assert.equal(review.lines[0].tax_rate, 5);
+  assert.equal(review.source_url, payload.source_url);
+});
+
+test('crea una línea manual si el JSON no contiene detalle recuperable', () => {
+  const review = reviewableSupplierDocument({}, {
+    drive_file_id: 'result-json',
+    issue_date: '2026-07-25',
+    number: 'PENDIENTE'
+  });
+  assert.equal(review.drive_file_id, 'result-json');
+  assert.equal(review.lines.length, 1);
+  assert.match(review.lines[0].description, /revisar/i);
 });

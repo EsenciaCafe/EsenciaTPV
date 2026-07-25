@@ -151,6 +151,7 @@ button { cursor: pointer; }
 .acc-modal-head h2 { margin: 0; font-size: 18px; }
 .acc-modal-body { padding: 22px; }
 .acc-modal-foot { padding: 16px 22px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px; }
+.document-original-link { margin-right: auto; }
 
 .document-lines-section { display: grid; gap: 12px; }
 .document-lines-title { display: flex; justify-content: space-between; align-items: end; gap: 16px; }
@@ -222,6 +223,7 @@ button { cursor: pointer; }
   .acc-modal, .acc-modal.acc-modal-wide { border-radius: 18px 18px 0 0; max-height: 96vh; }
   .acc-modal-body { padding: 16px; }
   .acc-modal-foot { position: sticky; bottom: 0; background: white; flex-wrap: wrap; }
+  .document-original-link { width: 100%; margin-right: 0; text-align: center; }
   .document-lines-title { align-items: start; }
   .document-line-grid { grid-template-columns: 1fr 1fr; }
   .document-line-grid .line-code,

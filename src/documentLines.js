@@ -1,4 +1,4 @@
-export const IGIC_RATES = [0, 3, 7, 9.5, 15];
+export const IGIC_RATES = [0, 3, 5, 7, 9.5, 15];
 
 export function roundMoney(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
