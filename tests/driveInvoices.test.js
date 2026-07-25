@@ -77,7 +77,14 @@ test('convierte un resultado de error en un documento editable', () => {
     drive_file_id: 'drive-zumit',
     source_url: 'https://drive.google.com/file/d/drive-zumit/view',
     extracted: {
-      supplier: { name: 'Zumit', tax_id: 'B12345678' },
+      supplier: {
+        name: 'Zumit',
+        legal_name: 'Zumit Canarias S.L.',
+        tax_id: 'B12345678',
+        email: 'facturas@zumit.example',
+        phone: '922000000',
+        address: 'Santa Cruz de Tenerife'
+      },
       invoice: {
         number: 'FA/2026/6084',
         issue_date: '2026-07-14',
@@ -97,6 +104,10 @@ test('convierte un resultado de error en un documento editable', () => {
 
   const review = reviewableSupplierDocument(payload);
   assert.equal(review.supplier.name, 'Zumit');
+  assert.equal(review.supplier.legal_name, 'Zumit Canarias S.L.');
+  assert.equal(review.supplier.email, 'facturas@zumit.example');
+  assert.equal(review.supplier.phone, '922000000');
+  assert.equal(review.supplier.address, 'Santa Cruz de Tenerife');
   assert.equal(review.invoice.number, 'FA/2026/6084');
   assert.equal(review.lines[0].unit_price, 32);
   assert.equal(review.lines[0].tax_rate, 5);

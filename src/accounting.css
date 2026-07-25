@@ -152,6 +152,13 @@ button { cursor: pointer; }
 .acc-modal-body { padding: 22px; }
 .acc-modal-foot { padding: 16px 22px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px; }
 .document-original-link { margin-right: auto; }
+.document-contact-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: end; }
+.document-contact-row .btn { min-height: 42px; }
+.document-contact-panel { display: grid; gap: 13px; padding: 15px; border: 1px solid #bfd9cf; border-radius: 13px; background: var(--brand-soft); }
+.document-contact-panel-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+.document-contact-panel-head > div { display: grid; gap: 3px; }
+.document-contact-panel-head small { color: var(--muted); }
+.document-contact-panel-actions { display: flex; justify-content: flex-end; }
 
 .document-lines-section { display: grid; gap: 12px; }
 .document-lines-title { display: flex; justify-content: space-between; align-items: end; gap: 16px; }
@@ -215,6 +222,8 @@ button { cursor: pointer; }
   .acc-topbar { height: auto; min-height: 68px; padding: 12px 16px; gap: 10px; }
   .acc-topbar small { display: none; }
   .acc-content { padding: 18px 14px 35px; }
+  .document-contact-row { grid-template-columns: 1fr; }
+  .document-contact-panel .acc-form-grid.three { grid-template-columns: 1fr; }
   .acc-kpis { grid-template-columns: 1fr 1fr; gap: 10px; }
   .acc-kpi { padding: 15px; }
   .acc-kpi strong { font-size: 20px; }

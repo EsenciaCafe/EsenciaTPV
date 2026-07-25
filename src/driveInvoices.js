@@ -100,7 +100,10 @@ export function reviewableSupplierDocument(payload = {}, fallback = {}) {
     supplier: {
       name: String(supplier.name || supplier.legal_name || 'Proveedor pendiente'),
       legal_name: String(supplier.legal_name || supplier.name || ''),
-      tax_id: String(supplier.tax_id || '')
+      tax_id: String(supplier.tax_id || ''),
+      email: String(supplier.email || ''),
+      phone: String(supplier.phone || ''),
+      address: String(supplier.address || '')
     },
     invoice: {
       number: String(invoice.number || fallback.number || 'PENDIENTE'),

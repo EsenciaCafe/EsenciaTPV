@@ -1,4 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
+import {
+  findMatchingContact,
+  mergeContactKind
+} from './accountingContacts.js';
 import { mapBankRows, parseCsv, parseXlsx } from './bankStatement.js';
 import {
   IGIC_RATES,
@@ -617,12 +621,43 @@ function renderDocumentLine(line, index, readOnly) {
     </article>`;
 }
 
+function renderNewContactPanel(kind) {
+  const draft = state.modal.newContact || {};
+  const label = kind === 'supplier' ? 'proveedor' : 'cliente';
+  return `
+    <section class="document-contact-panel">
+      <div class="document-contact-panel-head">
+        <div><strong>Nuevo ${label}</strong><small>Se guardará para poder seleccionarlo en próximas facturas.</small></div>
+        <button class="btn btn-small" id="cancel-document-contact" type="button">Cancelar</button>
+      </div>
+      <div class="acc-form-grid three">
+        <div class="field"><label>Nombre comercial</label><input id="new-contact-name" value="${escapeHtml(draft.name || '')}" maxlength="160" autocomplete="organization"></div>
+        <div class="field"><label>Razón social</label><input id="new-contact-legal-name" value="${escapeHtml(draft.legal_name || '')}" maxlength="200"></div>
+        <div class="field"><label>NIF/CIF</label><input id="new-contact-tax-id" value="${escapeHtml(draft.tax_id || '')}" maxlength="30" autocapitalize="characters"></div>
+      </div>
+      <div class="acc-form-grid three">
+        <div class="field"><label>Correo</label><input id="new-contact-email" type="email" value="${escapeHtml(draft.email || '')}" maxlength="200"></div>
+        <div class="field"><label>Teléfono</label><input id="new-contact-phone" type="tel" value="${escapeHtml(draft.phone || '')}" maxlength="40"></div>
+        <div class="field"><label>Dirección</label><input id="new-contact-address" value="${escapeHtml(draft.address || '')}" maxlength="300"></div>
+      </div>
+      <div class="document-contact-panel-actions">
+        <button class="btn btn-primary" id="save-document-contact" type="button">Guardar y seleccionar</button>
+      </div>
+    </section>`;
+}
+
 function renderDocumentModal(document = {}) {
   const isPurchase = (document.direction || state.modal.direction) === 'purchase';
   if (state.modal.loading) {
     return modalFrame('Revisar documento', '<div class="acc-empty"><strong>Cargando líneas…</strong></div>', '', 'acc-modal-wide');
   }
   const readOnly = Boolean(document.id && !['draft', 'needs_review'].includes(document.status));
+  const contactKind = isPurchase ? 'supplier' : 'customer';
+  const contactLabel = isPurchase ? 'Proveedor' : 'Cliente';
+  const contacts = state.contacts.filter(contact => (
+    contact.active !== false
+    && (contact.kind === contactKind || contact.kind === 'both')
+  ));
   const totals = calculateDocumentTotals(state.modal.lines || []);
   const originalUrl = safeDriveUrl(
     document.attachment_url
@@ -641,7 +676,11 @@ function renderDocumentModal(document = {}) {
         <div class="field"><label>Número</label><input id="doc-number" value="${escapeHtml(document.number || '')}" required ${readOnly ? 'disabled' : ''}></div>
         <div class="field"><label>Fecha</label><input type="date" id="doc-date" value="${document.issue_date || isoDate()}" required ${readOnly ? 'disabled' : ''}></div>
       </div>
-      <div class="field"><label>${isPurchase ? 'Proveedor' : 'Cliente'}</label><select id="doc-contact" ${readOnly ? 'disabled' : ''}><option value="">Sin contacto</option>${state.contacts.filter(c => c.kind === (isPurchase?'supplier':'customer') || c.kind === 'both').map(c => `<option value="${c.id}" ${document.contact_id===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
+      <div class="document-contact-row">
+        <div class="field"><label>${contactLabel}</label><select id="doc-contact" ${readOnly ? 'disabled' : ''}><option value="">Sin contacto</option>${contacts.map(contact => `<option value="${contact.id}" ${document.contact_id===contact.id?'selected':''}>${escapeHtml(contact.name)}${contact.tax_id ? ` · ${escapeHtml(contact.tax_id)}` : ''}</option>`).join('')}</select></div>
+        ${!readOnly ? `<button class="btn" id="new-document-contact" type="button">+ Nuevo ${contactLabel.toLocaleLowerCase('es')}</button>` : ''}
+      </div>
+      ${state.modal.newContact && !readOnly ? renderNewContactPanel(contactKind) : ''}
       <section class="document-lines-section">
         <div class="document-lines-title">
           <div><h3>Líneas de artículos</h3><p>Puedes corregir la base y la cuota; al cambiar cantidad, precio o tipo se recalculan.</p></div>
@@ -726,6 +765,15 @@ function wireModal() {
   });
   document.querySelector('#document-form')?.addEventListener('submit', saveDocument);
   document.querySelector('#post-document-btn')?.addEventListener('click', postDocument);
+  document.querySelector('#new-document-contact')?.addEventListener('click', showNewDocumentContact);
+  document.querySelector('#cancel-document-contact')?.addEventListener('click', cancelNewDocumentContact);
+  document.querySelector('#save-document-contact')?.addEventListener('click', saveNewDocumentContact);
+  document.querySelector('.document-contact-panel')?.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveNewDocumentContact();
+    }
+  });
   document.querySelector('#add-document-line')?.addEventListener('click', addDocumentLine);
   document.querySelectorAll('[data-remove-line]').forEach(button => button.addEventListener('click', () => removeDocumentLine(Number(button.dataset.removeLine))));
   document.querySelectorAll('[data-line-field]').forEach(input => {
@@ -785,13 +833,7 @@ function openDriveImportReview(item) {
     issue_date: isoDate(),
     number: `PENDIENTE-${String(item.drive_file_id || item.id).slice(-8)}`
   });
-  const taxId = String(review.supplier.tax_id || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-  const supplierName = review.supplier.name.toLocaleLowerCase('es');
-  const contact = state.contacts.find(candidate => {
-    const candidateTaxId = String(candidate.tax_id || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-    return (taxId && candidateTaxId === taxId)
-      || (!taxId && String(candidate.name || '').toLocaleLowerCase('es') === supplierName);
-  });
+  const contact = findMatchingContact(state.contacts, review.supplier);
   const sourceUrl = safeDriveUrl(review.source_url || driveFileUrl(review.drive_file_id));
   const notes = [
     item.error_message ? `Corrección pendiente: ${item.error_message}` : '',
@@ -804,6 +846,7 @@ function openDriveImportReview(item) {
     sourceUrl,
     direction: 'purchase',
     priceHistory: [],
+    contactDefaults: review.supplier,
     lines: review.lines,
     document: {
       direction: 'purchase',
@@ -897,6 +940,7 @@ function refreshDocumentCalculations(event) {
 }
 
 function captureDocumentHeader() {
+  captureNewContactDraft();
   const current = state.modal.document || {};
   state.modal.document = {
     ...current,
@@ -907,6 +951,120 @@ function captureDocumentHeader() {
     contact_id: document.querySelector('#doc-contact')?.value || null,
     notes: document.querySelector('#doc-notes')?.value || ''
   };
+}
+
+function captureNewContactDraft() {
+  if (!state.modal?.newContact) return;
+  const value = id => document.querySelector(id)?.value.trim() || '';
+  state.modal.newContact = {
+    ...state.modal.newContact,
+    name: value('#new-contact-name'),
+    legal_name: value('#new-contact-legal-name'),
+    tax_id: value('#new-contact-tax-id'),
+    email: value('#new-contact-email'),
+    phone: value('#new-contact-phone'),
+    address: value('#new-contact-address')
+  };
+}
+
+function showNewDocumentContact() {
+  captureDocumentHeader();
+  state.modal.lines = readDocumentLines();
+  const defaults = state.modal.contactDefaults || {};
+  state.modal.newContact = {
+    name: defaults.name === 'Proveedor pendiente' ? '' : defaults.name || '',
+    legal_name: defaults.legal_name || '',
+    tax_id: defaults.tax_id || '',
+    email: defaults.email || '',
+    phone: defaults.phone || '',
+    address: defaults.address || ''
+  };
+  renderApp();
+  requestAnimationFrame(() => document.querySelector('#new-contact-name')?.focus());
+}
+
+function cancelNewDocumentContact() {
+  captureDocumentHeader();
+  state.modal.lines = readDocumentLines();
+  state.modal.newContact = null;
+  renderApp();
+}
+
+async function saveNewDocumentContact() {
+  captureDocumentHeader();
+  state.modal.lines = readDocumentLines();
+  const draft = state.modal.newContact || {};
+  if (!draft.name) {
+    toast('Escribe el nombre del proveedor.', 'error');
+    document.querySelector('#new-contact-name')?.focus();
+    return;
+  }
+  if (!document.querySelector('#new-contact-email')?.reportValidity()) return;
+  if (!state.business?.id) {
+    toast('No se ha podido identificar el negocio.', 'error');
+    return;
+  }
+
+  const button = document.querySelector('#save-document-contact');
+  if (button) button.disabled = true;
+  const requestedKind = state.modal.direction === 'sale' ? 'customer' : 'supplier';
+  const contactLabel = requestedKind === 'supplier' ? 'proveedor' : 'cliente';
+
+  try {
+    let contact = findMatchingContact(state.contacts, draft);
+    let reused = Boolean(contact);
+    if (contact) {
+      const updates = {
+        kind: mergeContactKind(contact.kind, requestedKind),
+        active: true,
+        updated_at: new Date().toISOString()
+      };
+      ['legal_name', 'tax_id', 'email', 'phone', 'address'].forEach(field => {
+        if (!String(contact[field] || '').trim() && draft[field]) updates[field] = draft[field];
+      });
+      const { data, error } = await state.client
+        .from('accounting_contacts')
+        .update(updates)
+        .eq('id', contact.id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      contact = data;
+    } else {
+      const { data, error } = await state.client
+        .from('accounting_contacts')
+        .insert({
+          business_id: state.business.id,
+          kind: requestedKind,
+          name: draft.name,
+          legal_name: draft.legal_name || draft.name,
+          tax_id: draft.tax_id,
+          email: draft.email,
+          phone: draft.phone,
+          address: draft.address,
+          default_account_code: requestedKind === 'supplier' ? '600' : '700'
+        })
+        .select('*')
+        .single();
+      if (error) throw error;
+      contact = data;
+    }
+
+    state.contacts = [
+      ...state.contacts.filter(item => item.id !== contact.id),
+      contact
+    ].sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    state.modal.document.contact_id = contact.id;
+    state.modal.contactDefaults = contact;
+    state.modal.newContact = null;
+    renderApp();
+    toast(reused
+      ? `El ${contactLabel} ya existía: se ha seleccionado.`
+      : `${contactLabel[0].toUpperCase()}${contactLabel.slice(1)} guardado y seleccionado.`);
+  } catch (error) {
+    toast(error.message || 'No se pudo guardar el proveedor.', 'error');
+    if (button) button.disabled = false;
+  }
 }
 
 function addDocumentLine() {
@@ -926,6 +1084,10 @@ function removeDocumentLine(index) {
 }
 
 async function persistDocument({ closeAfter = true } = {}) {
+  if (state.modal.newContact) {
+    toast('Guarda o cancela el nuevo proveedor antes de continuar.', 'error');
+    return null;
+  }
   const form = document.querySelector('#document-form');
   if (!form?.reportValidity()) return null;
   const current = state.modal.document || {};
