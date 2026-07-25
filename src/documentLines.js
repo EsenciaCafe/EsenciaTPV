@@ -27,7 +27,16 @@ export function calculateDocumentLine(line = {}) {
   const taxScope = line.tax_scope || 'taxable';
   const taxRate = taxScope === 'taxable' ? Number(line.tax_rate || 0) : 0;
   const withholdingRate = Number(line.withholding_rate || 0);
-  const taxableBase = roundMoney(quantity * unitPrice);
+  const suppliedBase = Number(line.taxable_base);
+  const suppliedTax = Number(line.tax_amount);
+  const taxableBase = line.manual_taxable_base && Number.isFinite(suppliedBase)
+    ? roundMoney(suppliedBase)
+    : roundMoney(quantity * unitPrice);
+  const taxAmount = taxScope !== 'taxable'
+    ? 0
+    : line.manual_tax_amount && Number.isFinite(suppliedTax)
+      ? roundMoney(suppliedTax)
+      : roundMoney(taxableBase * taxRate / 100);
   return {
     ...line,
     quantity,
@@ -35,7 +44,7 @@ export function calculateDocumentLine(line = {}) {
     taxable_base: taxableBase,
     tax_scope: taxScope,
     tax_rate: taxRate,
-    tax_amount: taxScope === 'taxable' ? roundMoney(taxableBase * taxRate / 100) : 0,
+    tax_amount: taxAmount,
     withholding_rate: withholdingRate,
     withholding_amount: roundMoney(taxableBase * withholdingRate / 100)
   };

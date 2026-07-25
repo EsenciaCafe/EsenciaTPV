@@ -591,7 +591,7 @@ function renderDocumentLine(line, index, readOnly) {
   const scope = line.tax_scope || 'taxable';
   const disabled = readOnly ? 'disabled' : '';
   return `
-    <article class="document-line" data-line-index="${index}" data-line-id="${line.id || ''}">
+    <article class="document-line" data-line-index="${index}" data-line-id="${line.id || ''}" data-manual-base="${Boolean(line.manual_taxable_base)}" data-manual-tax="${Boolean(line.manual_tax_amount)}">
       <div class="document-line-head">
         <strong>Artículo ${index + 1}</strong>
         ${!readOnly ? `<button class="btn btn-small btn-danger" type="button" data-remove-line="${index}" ${state.modal.lines.length === 1 ? 'disabled' : ''}>Eliminar</button>` : ''}
@@ -609,8 +609,8 @@ function renderDocumentLine(line, index, readOnly) {
         <div class="field"><label>IGIC</label><select data-line-field="tax_rate" ${scope !== 'taxable' || readOnly ? 'disabled' : ''}>${IGIC_RATES.map(value => `<option value="${value}" ${Number(line.tax_rate) === value ? 'selected' : ''}>${value}%</option>`).join('')}</select></div>
         <div class="field"><label>Retención IRPF</label><input data-line-field="withholding_rate" type="number" min="0" max="100" step=".01" value="${Number(line.withholding_rate || 0)}" ${disabled}></div>
         <div class="document-line-amounts">
-          <span>Base <strong data-line-base>${money(line.taxable_base)}</strong></span>
-          <span>IGIC <strong data-line-tax>${money(line.tax_amount)}</strong></span>
+          <label>Base imponible<input data-line-field="taxable_base" data-line-base type="number" step=".01" value="${Number(line.taxable_base ?? 0)}" ${disabled}></label>
+          <label>Cuota IGIC<input data-line-field="tax_amount" data-line-tax type="number" step=".01" value="${Number(line.tax_amount ?? 0)}" ${scope !== 'taxable' || readOnly ? 'disabled' : ''}></label>
         </div>
       </div>
       ${renderPriceHistory(line, readOnly)}
@@ -644,7 +644,7 @@ function renderDocumentModal(document = {}) {
       <div class="field"><label>${isPurchase ? 'Proveedor' : 'Cliente'}</label><select id="doc-contact" ${readOnly ? 'disabled' : ''}><option value="">Sin contacto</option>${state.contacts.filter(c => c.kind === (isPurchase?'supplier':'customer') || c.kind === 'both').map(c => `<option value="${c.id}" ${document.contact_id===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
       <section class="document-lines-section">
         <div class="document-lines-title">
-          <div><h3>Líneas de artículos</h3><p>El precio y el IGIC se guardan por artículo.</p></div>
+          <div><h3>Líneas de artículos</h3><p>Puedes corregir la base y la cuota; al cambiar cantidad, precio o tipo se recalculan.</p></div>
           ${!readOnly ? '<button class="btn btn-small" id="add-document-line" type="button">+ Añadir artículo</button>' : ''}
         </div>
         <div class="document-lines">${(state.modal.lines || []).map((line, index) => renderDocumentLine(line, index, readOnly)).join('')}</div>
@@ -766,7 +766,13 @@ async function openDocument(document = {}, direction = document.direction || 'pu
     type: 'document',
     document,
     direction,
-    lines: linesResult.data?.length ? linesResult.data : [emptyDocumentLine(direction)],
+    lines: linesResult.data?.length
+      ? linesResult.data.map(line => ({
+          ...line,
+          manual_taxable_base: true,
+          manual_tax_amount: true
+        }))
+      : [emptyDocumentLine(direction)],
     priceHistory: historyResult.data || [],
     loading: false
   };
@@ -825,32 +831,56 @@ async function syncTpv() {
 }
 
 function readDocumentLines() {
-  return [...document.querySelectorAll('.document-line')].map(row => ({
-    id: row.dataset.lineId || '',
-    supplier_item_code: row.querySelector('[data-line-field="supplier_item_code"]')?.value.trim() || '',
-    description: row.querySelector('[data-line-field="description"]')?.value.trim() || '',
-    quantity: Number(row.querySelector('[data-line-field="quantity"]')?.value || 0),
-    unit_price: Number(row.querySelector('[data-line-field="unit_price"]')?.value || 0),
-    tax_scope: row.querySelector('[data-line-field="tax_scope"]')?.value || 'taxable',
-    tax_rate: Number(row.querySelector('[data-line-field="tax_rate"]')?.value || 0),
-    withholding_rate: Number(row.querySelector('[data-line-field="withholding_rate"]')?.value || 0),
-    account_code: state.modal.direction === 'sale' ? '700' : '600'
-  }));
+  return [...document.querySelectorAll('.document-line')].map(row => {
+    const taxableBase = row.querySelector('[data-line-field="taxable_base"]');
+    const taxAmount = row.querySelector('[data-line-field="tax_amount"]');
+    return {
+      id: row.dataset.lineId || '',
+      supplier_item_code: row.querySelector('[data-line-field="supplier_item_code"]')?.value.trim() || '',
+      description: row.querySelector('[data-line-field="description"]')?.value.trim() || '',
+      quantity: Number(row.querySelector('[data-line-field="quantity"]')?.value || 0),
+      unit_price: Number(row.querySelector('[data-line-field="unit_price"]')?.value || 0),
+      taxable_base: Number(taxableBase?.value || 0),
+      manual_taxable_base: row.dataset.manualBase === 'true',
+      tax_scope: row.querySelector('[data-line-field="tax_scope"]')?.value || 'taxable',
+      tax_rate: Number(row.querySelector('[data-line-field="tax_rate"]')?.value || 0),
+      tax_amount: Number(taxAmount?.value || 0),
+      manual_tax_amount: row.dataset.manualTax === 'true',
+      withholding_rate: Number(row.querySelector('[data-line-field="withholding_rate"]')?.value || 0),
+      account_code: state.modal.direction === 'sale' ? '700' : '600'
+    };
+  });
 }
 
-function refreshDocumentCalculations() {
+function refreshDocumentCalculations(event) {
   if (state.modal?.type !== 'document') return;
+  const changedField = event?.target?.dataset?.lineField;
+  const changedRow = event?.target?.closest('.document-line');
+  if (changedRow) {
+    if (changedField === 'taxable_base') changedRow.dataset.manualBase = 'true';
+    if (changedField === 'tax_amount') changedRow.dataset.manualTax = 'true';
+    if (['quantity', 'unit_price'].includes(changedField)) {
+      changedRow.dataset.manualBase = 'false';
+      changedRow.dataset.manualTax = 'false';
+    }
+    if (['tax_scope', 'tax_rate'].includes(changedField)) {
+      changedRow.dataset.manualTax = 'false';
+    }
+  }
   const totals = calculateDocumentTotals(readDocumentLines());
   state.modal.lines = totals.lines;
   document.querySelectorAll('.document-line').forEach((row, index) => {
     const line = totals.lines[index];
-    row.querySelector('[data-line-base]').textContent = money(line.taxable_base);
-    row.querySelector('[data-line-tax]').textContent = money(line.tax_amount);
+    const baseInput = row.querySelector('[data-line-base]');
+    const taxInput = row.querySelector('[data-line-tax]');
+    if (baseInput && (event?.type === 'change' || baseInput !== event?.target)) baseInput.value = line.taxable_base;
+    if (taxInput && (event?.type === 'change' || taxInput !== event?.target)) taxInput.value = line.tax_amount;
     const rateSelect = row.querySelector('[data-line-field="tax_rate"]');
     if (rateSelect) {
       rateSelect.disabled = line.tax_scope !== 'taxable';
       if (line.tax_scope !== 'taxable') rateSelect.value = '0';
     }
+    if (taxInput) taxInput.disabled = line.tax_scope !== 'taxable';
     const historyNode = row.querySelector('[data-price-history]');
     if (historyNode) {
       const variation = calculatePriceVariation(line.unit_price, Number(historyNode.dataset.previousPrice));

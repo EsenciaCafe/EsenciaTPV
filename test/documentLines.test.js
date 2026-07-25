@@ -63,6 +63,51 @@ test('admite el tipo reducido de IGIC del 5 % en revisión manual', () => {
   assert.equal(line.tax_amount, 3.2);
 });
 
+test('conserva la base y la cuota corregidas manualmente aunque no coincidan con el tipo', () => {
+  const line = calculateDocumentLine({
+    quantity: 3,
+    unit_price: 1.82,
+    taxable_base: 5.45,
+    manual_taxable_base: true,
+    tax_scope: 'taxable',
+    tax_rate: 7,
+    tax_amount: 0,
+    manual_tax_amount: true
+  });
+  assert.equal(line.taxable_base, 5.45);
+  assert.equal(line.tax_amount, 0);
+});
+
+test('recalcula base y cuota cuando no hay corrección manual', () => {
+  const line = calculateDocumentLine({
+    quantity: 3,
+    unit_price: 1.82,
+    taxable_base: 99,
+    manual_taxable_base: false,
+    tax_scope: 'taxable',
+    tax_rate: 7,
+    tax_amount: 99,
+    manual_tax_amount: false
+  });
+  assert.equal(line.taxable_base, 5.46);
+  assert.equal(line.tax_amount, 0.38);
+});
+
+test('una línea exenta fuerza cuota cero incluso si se introdujo manualmente', () => {
+  const line = calculateDocumentLine({
+    quantity: 1,
+    unit_price: 10,
+    taxable_base: 10,
+    manual_taxable_base: true,
+    tax_scope: 'exempt',
+    tax_rate: 7,
+    tax_amount: 7,
+    manual_tax_amount: true
+  });
+  assert.equal(line.tax_rate, 0);
+  assert.equal(line.tax_amount, 0);
+});
+
 test('calcula la variación respecto al precio de compra anterior', () => {
   assert.deepEqual(calculatePriceVariation(12, 10), { amount: 2, percent: 20 });
   assert.deepEqual(calculatePriceVariation(8, 10), { amount: -2, percent: -20 });

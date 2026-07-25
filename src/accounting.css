@@ -170,8 +170,9 @@ button { cursor: pointer; }
 .document-line-grid .field input,
 .document-line-grid .field select { min-height: 39px; padding: 7px 9px; }
 .document-line-amounts { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; align-self: stretch; }
-.document-line-amounts span { display: grid; gap: 3px; align-content: center; border-radius: 8px; background: white; border: 1px solid var(--line); padding: 6px 8px; color: var(--muted); font-size: 10px; }
-.document-line-amounts strong { color: var(--ink); font-size: 12px; white-space: nowrap; }
+.document-line-amounts label { display: grid; gap: 3px; align-content: center; color: var(--muted); font-size: 10px; }
+.document-line-amounts input { width: 100%; min-height: 39px; border-radius: 8px; background: white; border: 1px solid var(--line); padding: 7px 8px; color: var(--ink); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.document-line-amounts input:disabled { background: #f2f4f3; color: var(--muted); }
 .line-price-history { display: inline-flex; gap: 5px; align-items: baseline; flex-wrap: wrap; margin-top: 9px; border-radius: 8px; padding: 6px 9px; font-size: 11px; background: #eef1f0; color: var(--muted); }
 .line-price-history small { width: 100%; }
 .line-price-history.up { background: #fff0e8; color: #a74b23; }

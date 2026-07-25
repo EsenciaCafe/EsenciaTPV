@@ -11,7 +11,7 @@ export const SUPPORTED_INVOICE_MIME_TYPES = new Set([
 
 const DOCUMENT_TYPES = new Set(['invoice', 'ticket', 'expense', 'payroll', 'asset', 'credit_note']);
 const TAX_SCOPES = new Set(['taxable', 'exempt', 'not_subject']);
-const TAX_RATES = new Set([0, 3, 7, 9.5, 15]);
+const TAX_RATES = new Set([0, 3, 5, 7, 9.5, 15]);
 
 export function folderId(value = '') {
   return String(value).match(/\/folders\/([a-zA-Z0-9_-]+)/)?.[1] || String(value).trim();
@@ -78,9 +78,11 @@ export function reviewableSupplierDocument(payload = {}, fallback = {}) {
       quantity,
       unit_price: unitPrice,
       taxable_base: taxableBase,
+      manual_taxable_base: true,
       tax_scope: taxScope,
       tax_rate: taxScope === 'taxable' ? rawRate : 0,
       tax_amount: reviewNumber(item?.tax_amount, 0),
+      manual_tax_amount: true,
       withholding_rate: reviewNumber(item?.withholding_rate, 0),
       withholding_amount: reviewNumber(item?.withholding_amount, 0),
       account_code: String(item?.account_code || extracted.suggestions?.account_code || '600')
