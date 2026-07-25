@@ -1,5 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
 import { mapBankRows, parseCsv, parseXlsx } from './bankStatement.js';
+import {
+  GOOGLE_DRIVE_SCOPE,
+  driveFileUrl,
+  driveFolderUrl,
+  driveImportStatus,
+  folderId,
+  isSupportedInvoiceFile,
+  validateSupplierDocument
+} from './driveInvoices.js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -35,9 +44,14 @@ const state = {
   taxDrafts: [],
   taxPeriods: [],
   driveSources: [],
+  driveImports: [],
+  driveFiles: [],
+  driveFolders: {},
+  driveBusy: false,
   loading: false,
   modal: null,
   googleToken: '',
+  googleUser: null,
   error: ''
 };
 
@@ -202,19 +216,20 @@ async function loadAll() {
     query('accounting_journal_lines'),
     query('accounting_tax_drafts', '*, accounting_tax_periods(year,quarter,starts_on,ends_on)', { column: 'generated_at', ascending: false }),
     query('accounting_tax_periods', '*', { column: 'starts_on', ascending: false }),
-    query('accounting_drive_sources').limit(1)
+    query('accounting_drive_sources').limit(1),
+    query('accounting_drive_imports', '*, bookkeeping_documents(number,status,total_amount)', { column: 'created_at', ascending: false }).limit(500)
   ]);
   const failed = results.find(result => result.error);
   if (failed) throw failed.error;
   [
     state.business, state.documents, state.contacts, state.bankAccounts,
     state.bankTransactions, state.reconciliations, state.accounts, state.journalEntries, state.journalLines,
-    state.taxDrafts, state.taxPeriods, state.driveSources
+    state.taxDrafts, state.taxPeriods, state.driveSources, state.driveImports
   ] = [
     results[0].data?.[0] || null, results[1].data || [], results[2].data || [],
     results[3].data || [], results[4].data || [], results[5].data || [],
     results[6].data || [], results[7].data || [], results[8].data || [],
-    results[9].data || [], results[10].data || [], results[11].data || []
+    results[9].data || [], results[10].data || [], results[11].data || [], results[12].data || []
   ];
   state.loading = false;
   renderApp();
@@ -258,7 +273,7 @@ function renderTopActions() {
   if (state.view === 'purchases') return '<button class="btn btn-primary" data-new-document="purchase">Nuevo gasto</button>';
   if (state.view === 'treasury') return '<button class="btn btn-primary" id="import-bank-btn">Importar extracto</button>';
   if (state.view === 'ledger') return '<button class="btn btn-primary" id="new-entry-btn">Nuevo asiento</button>';
-  if (state.view === 'drive') return '<button class="btn btn-primary" id="sync-drive-btn">Sincronizar JSON</button>';
+  if (state.view === 'drive') return '<button class="btn btn-primary" id="scan-drive-btn">Buscar facturas</button>';
   return '<button class="btn" id="sync-tpv-btn">Actualizar TPV</button>';
 }
 
@@ -327,11 +342,15 @@ function renderDashboard() {
 const STATUS_LABELS = {
   draft: 'Borrador', needs_review: 'Revisar', approved: 'Aprobada',
   partially_paid: 'Pago parcial', paid: 'Pagada', overdue: 'Vencida',
-  voided: 'Anulada', rectified: 'Rectificada'
+  voided: 'Anulada', rectified: 'Rectificada', unprocessed: 'Pendiente de análisis',
+  pending: 'Revisar', imported: 'Importado', duplicate: 'Duplicado',
+  invalid: 'JSON inválido', error: 'Error'
 };
 
 function statusBadge(status) {
-  const cls = ['overdue','voided'].includes(status) ? 'danger' : ['draft','needs_review','partially_paid'].includes(status) ? 'warning' : '';
+  const cls = ['overdue','voided','invalid','error'].includes(status)
+    ? 'danger'
+    : ['draft','needs_review','partially_paid','pending','unprocessed'].includes(status) ? 'warning' : '';
   return `<span class="badge ${cls}">${STATUS_LABELS[status] || status}</span>`;
 }
 
@@ -420,30 +439,71 @@ function renderTaxes() {
 
 function renderDrive() {
   const source = state.driveSources[0] || {};
+  const sourceFolder = state.driveFolders.source;
+  const resultFolder = state.driveFolders.result;
+  const analyzed = state.driveFiles.filter(file => driveImportStatus(file.id, state.driveImports) !== 'unprocessed').length;
+  const pending = Math.max(0, state.driveFiles.length - analyzed);
+  const connectedLabel = state.googleUser?.emailAddress || state.googleUser?.displayName || 'Google Drive conectado';
+  const sourceUrl = driveFolderUrl(source.source_folder_id);
+  const resultUrl = driveFolderUrl(source.result_folder_id);
   return `
+    <div class="acc-grid acc-kpis drive-kpis">
+      <div class="acc-kpi"><span>Conexión</span><strong>${state.googleToken ? 'Activa' : 'Pendiente'}</strong><small>${escapeHtml(state.googleToken ? connectedLabel : googleClientId ? 'Autoriza tu cuenta de Google' : 'Falta el cliente OAuth')}</small></div>
+      <div class="acc-kpi"><span>Facturas encontradas</span><strong>${state.driveFiles.length || '—'}</strong><small>${state.driveFiles.length ? `${pending} pendientes de análisis` : 'Pulsa Buscar facturas'}</small></div>
+      <div class="acc-kpi"><span>Análisis registrados</span><strong>${state.driveImports.length}</strong><small>${state.documents.filter(doc => doc.source_type === 'drive_json' && doc.status === 'needs_review').length} esperando revisión humana</small></div>
+    </div>
     <div class="acc-grid acc-two">
       <section class="acc-card">
-        <div class="acc-card-head"><h2>Carpetas supervisadas</h2></div>
+        <div class="acc-card-head"><h2>Carpetas supervisadas</h2>${state.googleToken ? '<span class="badge">Verificadas con Drive</span>' : ''}</div>
         <div class="acc-card-body">
           <form class="acc-form" id="drive-settings-form">
             <div class="field"><label>ID o URL de la carpeta con facturas</label><input id="drive-source-folder" value="${escapeHtml(source.source_folder_id || '')}" placeholder="https://drive.google.com/drive/folders/..."></div>
             <div class="field"><label>ID o URL de la carpeta fija de resultados JSON</label><input id="drive-result-folder" value="${escapeHtml(source.result_folder_id || '')}" placeholder="https://drive.google.com/drive/folders/..."></div>
-            <button class="btn btn-primary" type="submit">Guardar carpetas</button>
+            <div class="drive-folder-summary">
+              <div><span>Origen</span><strong>${escapeHtml(sourceFolder?.name || 'Facturas')}</strong>${sourceUrl ? `<a href="${sourceUrl}" target="_blank" rel="noreferrer">Abrir ↗</a>` : ''}</div>
+              <div><span>Historial</span><strong>${escapeHtml(resultFolder?.name || 'JSON de resultados')}</strong>${resultUrl ? `<a href="${resultUrl}" target="_blank" rel="noreferrer">Abrir ↗</a>` : ''}</div>
+            </div>
+            <button class="btn btn-primary" type="submit">Guardar y comprobar</button>
           </form>
         </div>
       </section>
       <section class="acc-card">
-        <div class="acc-card-head"><h2>Importación asistida</h2></div>
+        <div class="acc-card-head"><h2>Conexión y análisis</h2></div>
         <div class="acc-card-body acc-form">
-          <p>Codex procesa las facturas bajo demanda y guarda JSON con contrato <strong>supplier-document/v1</strong>. Aquí se validan antes de crear gastos.</p>
-          ${googleClientId ? '<button class="btn" id="google-connect-btn">Autorizar Google Drive</button>' : '<div class="acc-notice">Configura VITE_GOOGLE_CLIENT_ID para sincronizar directamente con Drive.</div>'}
+          <p>Codex analiza los originales bajo demanda y guarda resultados <strong>supplier-document/v1</strong>. La app valida cada suma y siempre lo deja pendiente de revisión humana.</p>
+          ${googleClientId
+            ? `<div class="acc-actions"><button class="btn" id="google-connect-btn">${state.googleToken ? 'Renovar autorización' : 'Autorizar Google Drive'}</button>${state.googleToken ? '<button class="btn" id="google-disconnect-btn">Desconectar</button>' : ''}</div>`
+            : '<div class="acc-notice"><strong>OAuth preparado, falta activar la credencial.</strong><br>Crea un cliente web de Google con origen <code>https://esenciacafe.github.io</code> y guarda su ID en la variable <code>VITE_GOOGLE_CLIENT_ID</code> de GitHub Actions.</div>'}
+          <div class="acc-actions">
+            <button class="btn" id="scan-drive-inline-btn" ${state.driveBusy ? 'disabled' : ''}>${state.driveBusy ? 'Buscando…' : 'Buscar facturas'}</button>
+            <button class="btn btn-primary" id="sync-drive-btn" ${state.driveBusy ? 'disabled' : ''}>Sincronizar análisis</button>
+          </div>
           <label class="btn" style="display:grid;place-items:center"><input class="hidden" type="file" id="json-files-input" accept=".json,application/json" multiple>Importar JSON manualmente</label>
         </div>
       </section>
     </div>
     <section class="acc-card" style="margin-top:18px">
-      <div class="acc-card-head"><h2>Reglas del flujo</h2></div>
-      <div class="acc-card-body"><ol><li>Los originales no se mueven ni modifican.</li><li>Drive ID, revisión y checksum impiden reprocesados.</li><li>Los campos dudosos quedan en revisión.</li><li>Ningún documento se contabiliza sin aprobación.</li></ol></div>
+      <div class="acc-card-head"><h2>Facturas de la carpeta de origen</h2><small>${state.driveFiles.length ? `${pending} pendientes · ${analyzed} analizadas` : 'Todavía no se ha consultado Drive'}</small></div>
+      ${state.driveFiles.length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Archivo</th><th>Modificado</th><th>Estado</th><th></th></tr></thead><tbody>
+        ${state.driveFiles.map(file => {
+          const status = driveImportStatus(file.id, state.driveImports);
+          return `<tr><td><strong>${escapeHtml(file.name)}</strong><br><small>${escapeHtml(file.mimeType || '')}</small></td><td>${file.modifiedTime ? new Date(file.modifiedTime).toLocaleString('es-ES') : '—'}</td><td>${statusBadge(status)}</td><td><a class="btn btn-small" href="${escapeHtml(file.webViewLink || driveFileUrl(file.id))}" target="_blank" rel="noreferrer">Ver original</a></td></tr>`;
+        }).join('')}
+      </tbody></table></div>` : '<div class="acc-empty"><strong>Conecta Drive y busca facturas</strong>Se mostrarán PDF e imágenes sin mover ni modificar los originales.</div>'}
+    </section>
+    <section class="acc-card" style="margin-top:18px">
+      <div class="acc-card-head"><h2>Historial de resultados</h2><small>Últimos 500 registros</small></div>
+      ${state.driveImports.length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Proveedor / documento</th><th>Resultado</th><th>Total</th><th>Procesado</th><th></th></tr></thead><tbody>
+        ${state.driveImports.map(item => {
+          const payload = item.payload || {};
+          const document = item.bookkeeping_documents;
+          return `<tr><td><strong>${escapeHtml(payload.supplier?.name || 'Resultado sin proveedor')}</strong><br><small>${escapeHtml(payload.invoice?.number || item.drive_file_id)}</small></td><td>${statusBadge(item.status)}${item.error_message ? `<br><small class="drive-error">${escapeHtml(item.error_message)}</small>` : ''}</td><td class="num">${payload.totals?.total != null ? money(payload.totals.total) : document?.total_amount != null ? money(document.total_amount) : '—'}</td><td>${item.processed_at ? new Date(item.processed_at).toLocaleString('es-ES') : new Date(item.created_at).toLocaleString('es-ES')}</td><td>${item.document_id ? `<button class="btn btn-small" data-edit-document="${item.document_id}">Revisar</button>` : ''}</td></tr>`;
+        }).join('')}
+      </tbody></table></div>` : '<div class="acc-empty"><strong>Sin análisis importados</strong>Los JSON nuevos aparecerán aquí, incluidos duplicados y errores.</div>'}
+    </section>
+    <section class="acc-card" style="margin-top:18px">
+      <div class="acc-card-head"><h2>Garantías del flujo</h2></div>
+      <div class="acc-card-body"><ol><li>Los originales no se mueven ni modifican.</li><li>Drive ID, revisión y checksum impiden reprocesados.</li><li>Las sumas deben cuadrar con un máximo de 0,02 € de diferencia.</li><li>Ningún documento se contabiliza sin aprobación humana.</li></ol></div>
     </section>`;
 }
 
@@ -549,6 +609,9 @@ function wireEvents() {
   document.querySelector('#drive-settings-form')?.addEventListener('submit', saveDriveSettings);
   document.querySelector('#json-files-input')?.addEventListener('change', event => importJsonFiles([...event.target.files]));
   document.querySelector('#google-connect-btn')?.addEventListener('click', connectGoogle);
+  document.querySelector('#google-disconnect-btn')?.addEventListener('click', disconnectGoogle);
+  document.querySelector('#scan-drive-btn')?.addEventListener('click', scanDriveInvoices);
+  document.querySelector('#scan-drive-inline-btn')?.addEventListener('click', scanDriveInvoices);
   document.querySelector('#sync-drive-btn')?.addEventListener('click', syncGoogleDrive);
   document.querySelector('#business-form')?.addEventListener('submit', saveBusiness);
   document.querySelector('#revoke-device-btn')?.addEventListener('click', logout);
@@ -758,10 +821,14 @@ async function saveEntry(event) {
 
 async function saveDriveSettings(event) {
   event.preventDefault();
+  const sourceFolderId = folderId(document.querySelector('#drive-source-folder').value);
+  const resultFolderId = folderId(document.querySelector('#drive-result-folder').value);
+  if (!sourceFolderId || !resultFolderId) return toast('Indica las dos carpetas de Drive.', 'error');
+  if (sourceFolderId === resultFolderId) return toast('La carpeta de resultados debe ser distinta de la carpeta con facturas.', 'error');
   const row = {
     business_id: state.business.id,
-    source_folder_id: folderId(document.querySelector('#drive-source-folder').value),
-    result_folder_id: folderId(document.querySelector('#drive-result-folder').value),
+    source_folder_id: sourceFolderId,
+    result_folder_id: resultFolderId,
     updated_at: new Date().toISOString()
   };
   const request = state.driveSources[0]
@@ -769,99 +836,67 @@ async function saveDriveSettings(event) {
     : state.client.from('accounting_drive_sources').insert(row);
   const { error } = await request;
   if (error) return toast(error.message, 'error');
-  toast('Carpetas guardadas.'); await loadAll();
-}
-
-function folderId(value = '') {
-  return value.match(/\/folders\/([a-zA-Z0-9_-]+)/)?.[1] || value.trim();
-}
-
-function validateSupplierDocument(payload) {
-  if (payload.schema_version !== 'supplier-document/v1') throw new Error('Versión de contrato no compatible.');
-  if (!payload.drive_file_id || !payload.supplier?.name || !payload.invoice?.issue_date) {
-    throw new Error('Faltan drive_file_id, supplier.name o invoice.issue_date.');
-  }
-  if (!Array.isArray(payload.lines) || !payload.totals) throw new Error('Faltan líneas o totales.');
-  return payload;
+  toast('Carpetas guardadas.');
+  await loadAll();
+  if (state.googleToken) await scanDriveInvoices();
 }
 
 async function importSupplierJson(payload, resultFileId = '') {
   validateSupplierDocument(payload);
-  const revision = payload.drive_revision || payload.checksum || 'v1';
-  const { data: existing } = await state.client.from('accounting_drive_imports').select('id,status')
-    .eq('drive_file_id', payload.drive_file_id).eq('drive_revision', revision).maybeSingle();
-  if (existing) return 'duplicate';
-
-  let contactId = null;
-  if (payload.supplier.tax_id) {
-    const { data } = await state.client.from('accounting_contacts').select('id')
-      .eq('tax_id', payload.supplier.tax_id).limit(1);
-    contactId = data?.[0]?.id || null;
-  }
-  if (!contactId) {
-    const { data, error } = await state.client.from('accounting_contacts').insert({
-      business_id: state.business.id, kind: 'supplier', name: payload.supplier.name,
-      legal_name: payload.supplier.legal_name || payload.supplier.name,
-      tax_id: payload.supplier.tax_id || '', email: payload.supplier.email || ''
-    }).select('id').single();
-    if (error) throw error;
-    contactId = data.id;
-  }
-  const lowConfidence = Object.values(payload.confidence || {}).some(value => Number(value) < .8)
-    || (payload.warnings || []).length > 0;
-  const documentId = uuid();
-  const totals = payload.totals;
-  const { error: docError } = await state.client.from('bookkeeping_documents').insert({
-    id: documentId, business_id: state.business.id, contact_id: contactId,
-    source_type: 'drive_json', source_id: payload.drive_file_id,
-    direction: 'purchase', document_type: payload.invoice.document_type || 'invoice',
-    status: 'needs_review', number: payload.invoice.number || '',
-    issue_date: payload.invoice.issue_date, due_date: payload.invoice.due_date || null,
-    currency: payload.invoice.currency || 'EUR', subtotal: Number(totals.taxable_base || 0),
-    tax_amount: Number(totals.tax_amount || 0), withholding_amount: Number(totals.withholding_amount || 0),
-    total_amount: Number(totals.total || 0), payment_method: payload.invoice.payment_method || null,
-    category: payload.suggestions?.category || null, attachment_url: payload.source_url || null,
-    notes: (payload.warnings || []).join('\n'), source_payload: payload
+  const result = await rpc('accounting_import_supplier_document', {
+    p_payload: payload,
+    p_result_file_id: resultFileId
   });
-  if (docError) throw docError;
-  const lines = payload.lines.map((line, index) => ({
-    business_id: state.business.id, document_id: documentId, position: index + 1,
-    description: line.description || 'Línea', quantity: Number(line.quantity || 1),
-    unit_price: Number(line.unit_price || 0), taxable_base: Number(line.taxable_base || 0),
-    tax_rate: Number(line.tax_rate || 0), tax_amount: Number(line.tax_amount || 0),
-    tax_scope: line.tax_scope || 'taxable', withholding_rate: Number(line.withholding_rate || 0),
-    withholding_amount: Number(line.withholding_amount || 0), account_code: line.account_code || payload.suggestions?.account_code || '600'
-  }));
-  const { error: lineError } = await state.client.from('bookkeeping_document_lines').insert(lines);
-  if (lineError) throw lineError;
-  await state.client.from('accounting_drive_imports').insert({
-    business_id: state.business.id, drive_file_id: payload.drive_file_id,
-    drive_revision: revision, checksum: payload.checksum || null,
-    schema_version: payload.schema_version, source_file_id: payload.source_file_id || resultFileId,
-    status: lowConfidence ? 'pending' : 'imported', document_id: documentId,
-    payload, processed_at: new Date().toISOString()
-  });
-  return 'imported';
+  return typeof result === 'string' ? result : result?.status || 'imported';
 }
 
 async function importJsonFiles(files) {
   let imported = 0, duplicates = 0, errors = 0;
   for (const file of files) {
+    let payload = null;
     try {
-      const result = await importSupplierJson(JSON.parse(await file.text()), file.name);
+      payload = JSON.parse(await file.text());
+      const result = await importSupplierJson(payload, file.name);
       if (result === 'duplicate') duplicates++; else imported++;
     } catch (error) {
-      errors++; console.warn(`[Contabilidad] ${file.name}`, error);
+      errors++;
+      console.warn(`[Contabilidad] ${file.name}`, error);
+      await recordDriveImportError(payload, { id: file.name, name: file.name }, error, 'invalid');
     }
   }
   toast(`${imported} importados · ${duplicates} duplicados · ${errors} con error`, errors ? 'error' : '');
   await loadAll();
 }
 
+async function recordDriveImportError(payload, resultFile, error, status = 'error') {
+  try {
+    await rpc('accounting_record_drive_import_error', {
+      p_drive_file_id: payload?.drive_file_id || '',
+      p_drive_revision: payload?.drive_revision || resultFile?.modifiedTime || '',
+      p_checksum: payload?.checksum || resultFile?.md5Checksum || '',
+      p_schema_version: payload?.schema_version || 'unknown',
+      p_result_file_id: resultFile?.id || '',
+      p_payload: payload || {},
+      p_status: status,
+      p_error_message: error?.message || String(error)
+    });
+  } catch (recordError) {
+    console.warn('[Contabilidad] No se pudo registrar el error de Drive', recordError);
+  }
+}
+
 function loadGoogleIdentity() {
   if (window.google?.accounts?.oauth2) return Promise.resolve();
+  const existing = document.querySelector('script[data-google-identity]');
+  if (existing) {
+    return new Promise((resolve, reject) => {
+      existing.addEventListener('load', resolve, { once: true });
+      existing.addEventListener('error', () => reject(new Error('No se pudo cargar Google Identity.')), { once: true });
+    });
+  }
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
+    script.dataset.googleIdentity = 'true';
     script.src = 'https://accounts.google.com/gsi/client';
     script.onload = resolve; script.onerror = () => reject(new Error('No se pudo cargar Google Identity.'));
     document.head.appendChild(script);
@@ -870,48 +905,151 @@ function loadGoogleIdentity() {
 
 async function connectGoogle() {
   try {
+    if (!googleClientId) throw new Error('Falta configurar VITE_GOOGLE_CLIENT_ID.');
     await loadGoogleIdentity();
-    const token = await new Promise((resolve, reject) => {
+    const response = await new Promise((resolve, reject) => {
       const client = google.accounts.oauth2.initTokenClient({
         client_id: googleClientId,
-        scope: 'https://www.googleapis.com/auth/drive.readonly',
-        callback: response => response.error ? reject(new Error(response.error)) : resolve(response.access_token)
+        scope: GOOGLE_DRIVE_SCOPE,
+        callback: tokenResponse => tokenResponse.error
+          ? reject(new Error(tokenResponse.error_description || tokenResponse.error))
+          : resolve(tokenResponse)
       });
-      client.requestAccessToken({ prompt: 'consent' });
+      client.requestAccessToken({ prompt: 'select_account' });
     });
-    state.googleToken = token;
+    state.googleToken = response.access_token;
+    const about = await driveJson('https://www.googleapis.com/drive/v3/about?fields=user(displayName,emailAddress,photoLink)');
+    state.googleUser = about.user || null;
     toast('Google Drive autorizado para esta sesión.');
-    await syncGoogleDrive();
+    await scanDriveInvoices();
   } catch (error) { toast(error.message, 'error'); }
+}
+
+function disconnectGoogle() {
+  const token = state.googleToken;
+  state.googleToken = '';
+  state.googleUser = null;
+  state.driveFiles = [];
+  state.driveFolders = {};
+  if (token && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(token, () => {});
+  toast('Google Drive desconectado de esta sesión.');
+  renderApp();
 }
 
 async function driveFetch(url) {
   const response = await fetch(url, { headers: { Authorization: `Bearer ${state.googleToken}` } });
-  if (!response.ok) throw new Error(`Google Drive respondió ${response.status}.`);
+  if (response.status === 401) {
+    state.googleToken = '';
+    state.googleUser = null;
+    throw new Error('La autorización de Google Drive ha caducado. Vuelve a autorizarla.');
+  }
+  if (!response.ok) {
+    let detail = '';
+    try { detail = (await response.json())?.error?.message || ''; } catch { /* respuesta sin JSON */ }
+    throw new Error(detail || `Google Drive respondió ${response.status}.`);
+  }
   return response;
+}
+
+async function driveJson(url) {
+  return (await driveFetch(url)).json();
+}
+
+async function listDriveFiles(folder, query = '') {
+  const files = [];
+  let pageToken = '';
+  do {
+    const filters = [`'${folder}' in parents`, 'trashed = false', query].filter(Boolean).join(' and ');
+    const params = new URLSearchParams({
+      q: filters,
+      fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime,md5Checksum,version,webViewLink)',
+      pageSize: '1000',
+      orderBy: 'modifiedTime desc',
+      supportsAllDrives: 'true',
+      includeItemsFromAllDrives: 'true'
+    });
+    if (pageToken) params.set('pageToken', pageToken);
+    const page = await driveJson(`https://www.googleapis.com/drive/v3/files?${params}`);
+    files.push(...(page.files || []));
+    pageToken = page.nextPageToken || '';
+  } while (pageToken);
+  return files;
+}
+
+async function getDriveFolder(id) {
+  const params = new URLSearchParams({
+    fields: 'id,name,mimeType,modifiedTime,webViewLink',
+    supportsAllDrives: 'true'
+  });
+  const folder = await driveJson(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?${params}`);
+  if (folder.mimeType !== 'application/vnd.google-apps.folder') throw new Error(`${folder.name || id} no es una carpeta de Drive.`);
+  return folder;
+}
+
+async function scanDriveInvoices() {
+  const source = state.driveSources[0];
+  if (!source?.source_folder_id || !source?.result_folder_id) return toast('Configura las carpetas de Drive.', 'error');
+  if (!state.googleToken) return connectGoogle();
+  state.driveBusy = true;
+  renderApp();
+  try {
+    const [sourceFolder, resultFolder, files] = await Promise.all([
+      getDriveFolder(source.source_folder_id),
+      getDriveFolder(source.result_folder_id),
+      listDriveFiles(source.source_folder_id)
+    ]);
+    if (sourceFolder.id === resultFolder.id) throw new Error('Origen e historial deben ser carpetas distintas.');
+    state.driveFolders = { source: sourceFolder, result: resultFolder };
+    state.driveFiles = files.filter(isSupportedInvoiceFile);
+    toast(`${state.driveFiles.length} facturas encontradas · ${state.driveFiles.filter(file => driveImportStatus(file.id, state.driveImports) === 'unprocessed').length} pendientes.`);
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    state.driveBusy = false;
+    renderApp();
+  }
 }
 
 async function syncGoogleDrive() {
   if (!state.driveSources[0]?.result_folder_id) return toast('Configura la carpeta de resultados.', 'error');
-  if (!state.googleToken) return connectGoogle();
+  if (!state.googleToken) {
+    await connectGoogle();
+    if (state.googleToken) return syncGoogleDrive();
+    return;
+  }
+  state.driveBusy = true;
+  renderApp();
   try {
     const folder = state.driveSources[0].result_folder_id;
-    const q = encodeURIComponent(`'${folder}' in parents and trashed = false and mimeType = 'application/json'`);
-    const list = await (await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime,md5Checksum)&pageSize=1000`)).json();
+    const resultFiles = await listDriveFiles(folder);
+    const jsonFiles = resultFiles.filter(file => file.mimeType === 'application/json' || /\.json$/i.test(file.name || ''));
+    const registeredResultIds = new Set(state.driveImports.map(item => item.source_file_id).filter(Boolean));
     let imported = 0, duplicates = 0, errors = 0;
-    for (const file of list.files || []) {
+    for (const file of jsonFiles.filter(item => !registeredResultIds.has(item.id))) {
+      let payload = null;
       try {
-        const payload = await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`)).json();
+        payload = await driveJson(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`);
         payload.drive_revision ||= file.modifiedTime;
         payload.checksum ||= file.md5Checksum;
+        payload.source_file_id ||= file.id;
         const result = await importSupplierJson(payload, file.id);
         result === 'duplicate' ? duplicates++ : imported++;
-      } catch (error) { errors++; console.warn(`[Drive] ${file.name}`, error); }
+      } catch (error) {
+        errors++;
+        console.warn(`[Drive] ${file.name}`, error);
+        await recordDriveImportError(payload, file, error, payload ? 'invalid' : 'error');
+      }
     }
     await state.client.from('accounting_drive_sources').update({ last_sync_at: new Date().toISOString() }).eq('id', state.driveSources[0].id);
-    toast(`${imported} nuevos · ${duplicates} ya procesados · ${errors} errores`, errors ? 'error' : '');
     await loadAll();
-  } catch (error) { toast(error.message, 'error'); }
+    await scanDriveInvoices();
+    toast(`${imported} nuevos · ${duplicates} duplicados · ${errors} errores`, errors ? 'error' : '');
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    state.driveBusy = false;
+    renderApp();
+  }
 }
 
 async function saveBusiness(event) {

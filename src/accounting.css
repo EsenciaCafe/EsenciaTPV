@@ -134,6 +134,15 @@ button { cursor: pointer; }
 .acc-empty strong { display: block; color: var(--ink); margin-bottom: 7px; }
 .acc-notice { border-radius: 12px; padding: 13px 15px; background: #fff7e7; color: #73501a; border: 1px solid #f0d8aa; line-height: 1.45; }
 .acc-success { background: var(--brand-soft); color: var(--brand-dark); border-color: #bcded2; }
+.acc-notice code { background: rgba(115,80,26,.09); border-radius: 5px; padding: 2px 5px; overflow-wrap: anywhere; }
+.drive-kpis { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.drive-folder-summary { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.drive-folder-summary > div { display: grid; gap: 4px; border: 1px solid var(--line); background: #f8fbfa; border-radius: 11px; padding: 12px; }
+.drive-folder-summary span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.drive-folder-summary strong { min-width: 0; overflow-wrap: anywhere; }
+.drive-folder-summary a { color: var(--brand); font-size: 12px; font-weight: 700; text-decoration: none; }
+.drive-error { display: inline-block; color: var(--danger); margin-top: 5px; max-width: 420px; }
+.acc-card-head > small { color: var(--muted); text-align: right; }
 
 .acc-modal-backdrop { position: fixed; inset: 0; background: rgba(10,31,27,.48); z-index: 20; display: grid; place-items: center; padding: 20px; }
 .acc-modal { width: min(760px,100%); max-height: 92vh; overflow: auto; background: white; border-radius: 18px; box-shadow: 0 35px 90px rgba(0,0,0,.25); }
@@ -157,6 +166,7 @@ button { cursor: pointer; }
 
 @media (max-width: 1050px) {
   .acc-kpis { grid-template-columns: repeat(2,1fr); }
+  .drive-kpis { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .acc-two { grid-template-columns: 1fr; }
 }
 @media (max-width: 760px) {
@@ -172,4 +182,5 @@ button { cursor: pointer; }
   .acc-kpi { padding: 15px; }
   .acc-kpi strong { font-size: 20px; }
   .acc-form-grid, .acc-form-grid.three { grid-template-columns: 1fr; }
+  .drive-kpis, .drive-folder-summary { grid-template-columns: 1fr; }
 }

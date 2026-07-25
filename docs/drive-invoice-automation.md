@@ -1,92 +1,61 @@
-# Automatización manual de facturas en Google Drive
+# Facturas de Google Drive
 
-Esta tarea se ejecuta bajo demanda desde Codex. No forma parte del navegador y
-no utiliza una clave de OpenAI o Gemini.
+La extracción se ejecuta manualmente desde Codex. La aplicación no llama a una
+API de inteligencia artificial y nunca contabiliza un documento sin revisión.
 
-## Configuración
+## Carpetas activas
 
-1. En Contabilidad → Google Drive, guardar:
-   - la carpeta de origen que contiene PDF o imágenes;
-   - la carpeta fija donde se conservarán todos los JSON generados.
-2. Conectar Google Drive a Codex.
-3. Al pedir «procesa las facturas nuevas de Drive», proporcionar la carpeta de
-   origen si se quiere sustituir temporalmente la configurada.
+- Origen actual: [Facturas de julio](https://drive.google.com/drive/folders/1Tzq-_IGm2dUue9USeQVCdz0URFdiL40x)
+- Historial fijo: [HISTORIAL CONTABILIDAD - JSON](https://drive.google.com/drive/folders/1cvMQ4L73EHFMpeocyWtweLmsJNgNVtO0)
 
-## Procedimiento de la tarea
+La configuración guardada en `accounting_drive_sources` es la fuente de verdad.
+El origen puede cambiar cada mes; el historial de JSON debe mantenerse fijo.
 
-1. Listar únicamente los hijos directos de la carpeta de origen.
-2. Admitir PDF, JPG, JPEG, PNG, WEBP y HEIC. No mover, renombrar ni editar los
-   originales.
-3. Listar la carpeta de resultados y construir el conjunto procesado usando
-   `drive_file_id`, `drive_revision` y `checksum`.
-4. Para cada original nuevo:
-   - leer todas sus páginas y corregir mentalmente la orientación;
-   - extraer emisor, NIF, número, fechas, moneda, pago, líneas, bases, IGIC,
-     retenciones y total;
-   - comprobar que la suma de líneas, impuestos y retenciones coincide con el
-     total, admitiendo como máximo 0,02 € de diferencia por redondeo;
-   - asignar confianza entre 0 y 1 por campo y añadir advertencias concretas;
-   - no inventar valores ilegibles: usar cadena vacía o `null` y advertirlo.
-5. Crear localmente un archivo JSON que valide contra
-   `supplier-document-v1.schema.json`.
-6. Subirlo a la carpeta fija con nombre:
-   `AAAA-MM-DD__NIF__NUMERO__<drive_file_id>.json`.
-7. Si un documento falla, crear un JSON de error separado con el ID del
-   original y continuar con el resto del lote.
-8. Volver a listar la carpeta de resultados y comprobar que todos los archivos
-   subidos existen antes de informar del resultado.
+## Preparar OAuth para la aplicación
 
-## Plantilla mínima
+1. Activar Google Drive API en un proyecto de Google Cloud.
+2. Configurar la pantalla de consentimiento.
+3. Crear un cliente OAuth 2.0 de tipo **Aplicación web**.
+4. Añadir como origen JavaScript autorizado:
+   `https://esenciacafe.github.io`
+5. Guardar el ID público del cliente en la variable de repositorio
+   `VITE_GOOGLE_CLIENT_ID`.
+6. Volver a desplegar GitHub Pages.
 
-```json
-{
-  "schema_version": "supplier-document/v1",
-  "drive_file_id": "ID_ORIGINAL",
-  "drive_revision": "REVISION_O_FECHA_MODIFICACION",
-  "checksum": "MD5_SI_DRIVE_LO_PROPORCIONA",
-  "source_url": "URL_ORIGINAL",
-  "supplier": {
-    "name": "Proveedor",
-    "legal_name": "Proveedor S.L.",
-    "tax_id": "B00000000"
-  },
-  "invoice": {
-    "number": "F-2026-001",
-    "issue_date": "2026-07-24",
-    "due_date": null,
-    "currency": "EUR",
-    "document_type": "invoice",
-    "payment_method": "transfer"
-  },
-  "lines": [
-    {
-      "description": "Compra",
-      "quantity": 1,
-      "unit_price": 100,
-      "taxable_base": 100,
-      "tax_rate": 7,
-      "tax_amount": 7,
-      "tax_scope": "taxable",
-      "withholding_rate": 0,
-      "withholding_amount": 0,
-      "account_code": "600"
-    }
-  ],
-  "totals": {
-    "taxable_base": 100,
-    "tax_amount": 7,
-    "withholding_amount": 0,
-    "total": 107
-  },
-  "suggestions": {
-    "category": "Compras",
-    "account_code": "600"
-  },
-  "confidence": {
-    "supplier.tax_id": 0.99,
-    "invoice.number": 0.98,
-    "totals.total": 1
-  },
-  "warnings": []
-}
-```
+La app solicita únicamente el alcance de lectura
+`https://www.googleapis.com/auth/drive.readonly`. El token es temporal, se
+mantiene solo en memoria y puede revocarse desde la propia pantalla.
+
+## Ejecutar una tanda con Codex
+
+Invocar la skill personal `process-esencia-drive-invoices` o pedir:
+
+> Procesa las facturas nuevas de Drive de Esencia.
+
+La tarea:
+
+1. Consulta las carpetas configuradas y lista solo hijos directos.
+2. Admite PDF, JPG, JPEG, PNG, WEBP, HEIC y HEIF.
+3. Compara Drive ID, revisión y checksum con el historial.
+4. Analiza visualmente todas las páginas sin modificar el original.
+5. Comprueba líneas, bases, IGIC, retenciones y total con tolerancia máxima de
+   0,02 €.
+6. Genera un JSON `supplier-document/v1` con confianza y advertencias.
+7. Lo sube al historial y verifica la subida.
+8. Registra cada error por separado y continúa con el resto del lote.
+
+El contrato exacto está en
+[`supplier-document-v1.schema.json`](supplier-document-v1.schema.json).
+
+## Sincronizar en Contabilidad
+
+En **Contabilidad → Google Drive**:
+
+1. Autorizar Google Drive.
+2. Pulsar **Buscar facturas** para ver pendientes y procesadas.
+3. Pulsar **Sincronizar análisis**.
+4. Revisar cada gasto importado antes de aprobarlo.
+
+La importación se realiza en una única transacción de base de datos. Un fallo en
+el proveedor, documento, líneas o historial revierte toda la operación y evita
+registros parciales.

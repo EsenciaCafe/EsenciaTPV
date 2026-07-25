@@ -3,7 +3,7 @@
   "$id": "https://esencia.local/schemas/supplier-document-v1.json",
   "title": "Supplier document extracted from Google Drive",
   "type": "object",
-  "required": ["schema_version", "drive_file_id", "supplier", "invoice", "lines", "totals"],
+  "required": ["schema_version", "drive_file_id", "supplier", "invoice", "lines", "totals", "confidence", "warnings"],
   "properties": {
     "schema_version": { "const": "supplier-document/v1" },
     "drive_file_id": { "type": "string", "minLength": 1 },
@@ -11,6 +11,9 @@
     "checksum": { "type": "string" },
     "source_file_id": { "type": "string" },
     "source_url": { "type": "string" },
+    "source_name": { "type": "string" },
+    "source_mime_type": { "type": "string" },
+    "source_modified_time": { "type": "string", "format": "date-time" },
     "supplier": {
       "type": "object",
       "required": ["name"],
@@ -79,6 +82,7 @@
     },
     "confidence": {
       "type": "object",
+      "minProperties": 1,
       "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 }
     },
     "warnings": {
