@@ -15,6 +15,7 @@ import {
   driveFileUrl,
   driveFolderUrl,
   driveImportStatus,
+  driveReviewStatus,
   folderId,
   isSupportedInvoiceFile,
   reviewableSupplierDocument,
@@ -239,7 +240,7 @@ async function loadAll() {
     query('accounting_tax_drafts', '*, accounting_tax_periods(year,quarter,starts_on,ends_on)', { column: 'generated_at', ascending: false }),
     query('accounting_tax_periods', '*', { column: 'starts_on', ascending: false }),
     query('accounting_drive_sources').limit(1),
-    query('accounting_drive_imports', '*, bookkeeping_documents(number,status,total_amount)', { column: 'created_at', ascending: false }).limit(500)
+    query('accounting_drive_imports', '*, bookkeeping_documents(number,status,total_amount,accounting_contacts(name))', { column: 'created_at', ascending: false }).limit(500)
   ]);
   const failed = results.find(result => result.error);
   if (failed) throw failed.error;
@@ -366,6 +367,7 @@ const STATUS_LABELS = {
   partially_paid: 'Pago parcial', paid: 'Pagada', overdue: 'Vencida',
   voided: 'Anulada', rectified: 'Rectificada', unprocessed: 'Pendiente de análisis',
   pending: 'Revisar', imported: 'Importado', duplicate: 'Duplicado',
+  reviewed: 'Revisada · falta aprobar',
   needs_correction: 'Pendiente de corrección', invalid: 'JSON inválido', error: 'Error'
 };
 
@@ -465,6 +467,8 @@ function renderDrive() {
   const resultFolder = state.driveFolders.result;
   const analyzed = state.driveFiles.filter(file => driveImportStatus(file.id, state.driveImports) !== 'unprocessed').length;
   const pending = Math.max(0, state.driveFiles.length - analyzed);
+  const reviewed = state.driveImports.filter(item => driveReviewStatus(item) === 'reviewed').length;
+  const needsCorrection = state.driveImports.filter(item => driveReviewStatus(item) === 'needs_correction').length;
   const connectedLabel = state.googleUser?.emailAddress || state.googleUser?.displayName || 'Google Drive conectado';
   const sourceUrl = driveFolderUrl(source.source_folder_id);
   const resultUrl = driveFolderUrl(source.result_folder_id);
@@ -472,7 +476,7 @@ function renderDrive() {
     <div class="acc-grid acc-kpis drive-kpis">
       <div class="acc-kpi"><span>Conexión</span><strong>${state.googleToken ? 'Activa' : 'Pendiente'}</strong><small>${escapeHtml(state.googleToken ? connectedLabel : googleClientId ? 'Autoriza tu cuenta de Google' : 'Falta el cliente OAuth')}</small></div>
       <div class="acc-kpi"><span>Facturas encontradas</span><strong>${state.driveFiles.length || '—'}</strong><small>${state.driveFiles.length ? `${pending} pendientes de análisis` : 'Pulsa Buscar facturas'}</small></div>
-      <div class="acc-kpi"><span>Análisis registrados</span><strong>${state.driveImports.length}</strong><small>${state.documents.filter(doc => doc.source_type === 'drive_json' && doc.status === 'needs_review').length} esperando revisión humana</small></div>
+      <div class="acc-kpi"><span>Análisis registrados</span><strong>${state.driveImports.length}</strong><small>${reviewed} revisadas pendientes de aprobar · ${needsCorrection} por corregir</small></div>
     </div>
     <div class="acc-grid acc-two">
       <section class="acc-card">
@@ -520,13 +524,17 @@ function renderDrive() {
           const payload = item.payload || {};
           const reviewPayload = payload.extracted || payload;
           const document = item.bookkeeping_documents;
-          const reviewStatus = item.status === 'pending' && item.error_message ? 'needs_correction' : item.status;
+          const reviewStatus = driveReviewStatus(item);
           const reviewButton = item.document_id
-            ? `<button class="btn btn-small" data-edit-document="${item.document_id}">Revisar</button>`
+            ? `<button class="btn btn-small" data-review-drive-document="${item.id}">${reviewStatus === 'reviewed' ? 'Continuar revisión' : ['approved','paid'].includes(reviewStatus) ? 'Ver' : 'Revisar'}</button>`
             : item.status === 'pending'
               ? `<button class="btn btn-small btn-primary" data-review-drive-import="${item.id}">Revisar</button>`
               : '';
-          return `<tr><td><strong>${escapeHtml(reviewPayload.supplier?.name || 'Resultado sin proveedor')}</strong><br><small>${escapeHtml(reviewPayload.invoice?.number || item.drive_file_id)}</small></td><td>${statusBadge(reviewStatus)}${item.error_message ? `<br><small class="drive-error">${escapeHtml(item.error_message)}</small>` : ''}</td><td class="num">${reviewPayload.totals?.total != null ? money(reviewPayload.totals.total) : document?.total_amount != null ? money(document.total_amount) : '—'}</td><td>${item.processed_at ? new Date(item.processed_at).toLocaleString('es-ES') : new Date(item.created_at).toLocaleString('es-ES')}</td><td>${reviewButton}</td></tr>`;
+          const showError = item.error_message && ['needs_correction','invalid','error'].includes(reviewStatus);
+          const supplierName = document?.accounting_contacts?.name || reviewPayload.supplier?.name || 'Resultado sin proveedor';
+          const documentNumber = document?.number || reviewPayload.invoice?.number || item.drive_file_id;
+          const total = document?.total_amount != null ? document.total_amount : reviewPayload.totals?.total;
+          return `<tr><td><strong>${escapeHtml(supplierName)}</strong><br><small>${escapeHtml(documentNumber)}</small></td><td>${statusBadge(reviewStatus)}${showError ? `<br><small class="drive-error">${escapeHtml(item.error_message)}</small>` : ''}</td><td class="num">${total != null ? money(total) : '—'}</td><td>${item.processed_at ? new Date(item.processed_at).toLocaleString('es-ES') : new Date(item.created_at).toLocaleString('es-ES')}</td><td>${reviewButton}</td></tr>`;
         }).join('')}
       </tbody></table></div>` : '<div class="acc-empty"><strong>Sin análisis importados</strong>Los JSON nuevos aparecerán aquí, incluidos duplicados y errores.</div>'}
     </section>
@@ -696,10 +704,12 @@ function renderDocumentModal(document = {}) {
       </div>
       <div class="field"><label>Notas</label><textarea id="doc-notes" ${readOnly ? 'disabled' : ''}>${escapeHtml(document.notes || '')}</textarea></div>
       ${state.modal.correctionError ? `<div class="acc-notice"><strong>Pendiente de corrección manual.</strong><br>${escapeHtml(state.modal.correctionError)}</div>` : ''}
-      ${document.status === 'needs_review' ? '<div class="acc-notice">Documento extraído automáticamente. Revisa todos los campos antes de aprobar.</div>' : ''}
+      ${state.modal.savedReview
+        ? '<div class="acc-notice acc-success"><strong>Revisión guardada.</strong><br>Las correcciones están registradas. Puedes seguir editando o pulsar “Aprobar y contabilizar”.</div>'
+        : document.status === 'needs_review' ? '<div class="acc-notice">Documento extraído automáticamente. Revisa todos los campos antes de aprobar.</div>' : ''}
       ${readOnly ? '<div class="acc-notice acc-success">Documento aprobado. Sus líneas se conservan sin cambios; cualquier corrección deberá hacerse mediante una rectificativa.</div>' : ''}
     </form>`,
-    `${originalButton}${document.id && !readOnly ? '<button class="btn" id="post-document-btn">Aprobar y contabilizar</button>' : ''}${!readOnly ? '<button class="btn btn-primary" type="submit" form="document-form">Guardar</button>' : '<button class="btn" data-close-modal>Cerrar</button>'}`,
+    `${originalButton}${document.id && !readOnly ? '<button class="btn" id="post-document-btn">Aprobar y contabilizar</button>' : ''}${!readOnly ? `<button class="btn btn-primary" type="submit" form="document-form">${state.modal.driveImportId ? 'Guardar revisión' : 'Guardar'}</button>` : '<button class="btn" data-close-modal>Cerrar</button>'}`,
     'acc-modal-wide');
 }
 
@@ -735,6 +745,10 @@ function wireEvents() {
   document.querySelectorAll('[data-review-drive-import]').forEach(button => button.addEventListener('click', () => {
     const item = state.driveImports.find(importItem => importItem.id === button.dataset.reviewDriveImport);
     if (item) openDriveImportReview(item);
+  }));
+  document.querySelectorAll('[data-review-drive-document]').forEach(button => button.addEventListener('click', () => {
+    const item = state.driveImports.find(importItem => importItem.id === button.dataset.reviewDriveDocument);
+    if (item) openDriveDocumentReview(item);
   }));
   document.querySelector('#import-bank-btn')?.addEventListener('click', () => openModal({ type: 'bank-import' }));
   document.querySelector('#new-bank-account-btn')?.addEventListener('click', () => openModal({ type: 'bank-account' }));
@@ -788,18 +802,19 @@ function wireModal() {
 
 function openModal(modal) { state.modal = modal; renderApp(); }
 function closeModal() { state.modal = null; renderApp(); }
-async function openDocument(document = {}, direction = document.direction || 'purchase') {
+async function openDocument(document = {}, direction = document.direction || 'purchase', context = {}) {
   if (!document.id) {
     openModal({
       type: 'document',
       document,
       direction,
       lines: [emptyDocumentLine(direction)],
-      priceHistory: []
+      priceHistory: [],
+      ...context
     });
     return;
   }
-  openModal({ type: 'document', document, direction, lines: [], priceHistory: [], loading: true });
+  openModal({ type: 'document', document, direction, lines: [], priceHistory: [], ...context, loading: true });
   const [linesResult, historyResult] = await Promise.all([
     state.client.from('bookkeeping_document_lines').select('*').eq('document_id', document.id).order('position'),
     state.client.rpc('accounting_purchase_price_history', { p_document_id: document.id })
@@ -822,9 +837,29 @@ async function openDocument(document = {}, direction = document.direction || 'pu
         }))
       : [emptyDocumentLine(direction)],
     priceHistory: historyResult.data || [],
+    ...context,
     loading: false
   };
   renderApp();
+}
+
+function openDriveDocumentReview(item) {
+  const document = state.documents.find(candidate => candidate.id === item.document_id);
+  if (!document) {
+    toast('No se encontró el documento guardado para esta factura.', 'error');
+    return;
+  }
+  const review = reviewableSupplierDocument(item.payload, {
+    drive_file_id: item.drive_file_id,
+    issue_date: document.issue_date,
+    number: document.number
+  });
+  openDocument(document, document.direction, {
+    driveImportId: item.id,
+    savedReview: driveReviewStatus(item) === 'reviewed',
+    sourceUrl: safeDriveUrl(document.attachment_url || review.source_url || driveFileUrl(review.drive_file_id)),
+    contactDefaults: review.supplier
+  });
 }
 
 function openDriveImportReview(item) {
@@ -842,7 +877,7 @@ function openDriveImportReview(item) {
   openModal({
     type: 'document',
     driveImportId: item.id,
-    correctionError: item.error_message || 'El análisis necesita una revisión manual.',
+    correctionError: item.error_message || '',
     sourceUrl,
     direction: 'purchase',
     priceHistory: [],
@@ -1109,7 +1144,7 @@ async function persistDocument({ closeAfter = true } = {}) {
     attachment_url: current.attachment_url || state.modal.sourceUrl || ''
   };
   try {
-    const documentId = state.modal.driveImportId && !current.id
+    const documentId = state.modal.driveImportId
       ? await rpc('accounting_save_drive_review', {
           p_import_id: state.modal.driveImportId,
           p_document: header,
@@ -1134,7 +1169,34 @@ async function persistDocument({ closeAfter = true } = {}) {
 
 async function saveDocument(event) {
   event.preventDefault();
-  await persistDocument();
+  const driveImportId = state.modal.driveImportId;
+  if (!driveImportId) {
+    await persistDocument();
+    return;
+  }
+
+  const context = {
+    driveImportId,
+    savedReview: true,
+    correctionError: '',
+    sourceUrl: state.modal.sourceUrl || '',
+    contactDefaults: state.modal.contactDefaults || {}
+  };
+  const documentId = await persistDocument({ closeAfter: false });
+  if (!documentId) return;
+  try {
+    await loadAll();
+    const document = state.documents.find(candidate => candidate.id === documentId);
+    if (!document) throw new Error('No se encontró el documento guardado.');
+    await openDocument(document, document.direction, context);
+    if (state.modal?.document?.id === documentId) {
+      toast('Revisión guardada. La factura queda pendiente de aprobar.');
+    }
+  } catch {
+    state.modal = null;
+    renderApp();
+    toast('La revisión se guardó, pero no se pudo actualizar la pantalla. Recarga la app.', 'error');
+  }
 }
 
 async function postDocument() {

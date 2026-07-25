@@ -216,3 +216,13 @@ export function driveImportStatus(fileId, imports = []) {
     .sort((a, b) => String(b.processed_at || b.created_at).localeCompare(String(a.processed_at || a.created_at)));
   return matches[0]?.status || 'unprocessed';
 }
+
+export function driveReviewStatus(item = {}) {
+  const documentStatus = item.bookkeeping_documents?.status;
+  if (item.document_id && documentStatus && documentStatus !== 'needs_review') {
+    return documentStatus;
+  }
+  if (item.document_id && item.status === 'pending') return 'reviewed';
+  if (item.status === 'pending' && item.error_message) return 'needs_correction';
+  return item.status || 'unprocessed';
+}

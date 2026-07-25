@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   driveImportStatus,
+  driveReviewStatus,
   folderId,
   reviewableSupplierDocument,
   validateSupplierDocument
@@ -123,4 +124,23 @@ test('crea una línea manual si el JSON no contiene detalle recuperable', () => 
   assert.equal(review.drive_file_id, 'result-json');
   assert.equal(review.lines.length, 1);
   assert.match(review.lines[0].description, /revisar/i);
+});
+
+test('distingue una factura corregida de otra todavía pendiente', () => {
+  assert.equal(driveReviewStatus({
+    status: 'pending',
+    document_id: 'doc-1',
+    error_message: 'Error antiguo',
+    bookkeeping_documents: { status: 'needs_review' }
+  }), 'reviewed');
+  assert.equal(driveReviewStatus({
+    status: 'pending',
+    document_id: null,
+    error_message: 'Falta corregir'
+  }), 'needs_correction');
+  assert.equal(driveReviewStatus({
+    status: 'pending',
+    document_id: 'doc-2',
+    bookkeeping_documents: { status: 'approved' }
+  }), 'approved');
 });
