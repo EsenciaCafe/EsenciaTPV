@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { unzipSync, strFromU8 } from 'fflate';
+import { mapBankRows, parseCsv, parseXlsx } from './bankStatement.js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -673,107 +673,6 @@ async function updateMatch(id, status) {
     }
   }
   await loadAll();
-}
-
-function normalizeHeader(value = '') {
-  return String(value).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '_');
-}
-
-function parseCsv(text) {
-  const firstLine = text.split(/\r?\n/)[0] || '';
-  const delimiter = firstLine.split(';').length > firstLine.split(',').length ? ';' : ',';
-  const rows = [];
-  let row = [], cell = '', quoted = false;
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i], next = text[i + 1];
-    if (char === '"' && quoted && next === '"') { cell += '"'; i++; }
-    else if (char === '"') quoted = !quoted;
-    else if (char === delimiter && !quoted) { row.push(cell); cell = ''; }
-    else if ((char === '\n' || char === '\r') && !quoted) {
-      if (char === '\r' && next === '\n') i++;
-      row.push(cell); if (row.some(value => value.trim())) rows.push(row); row = []; cell = '';
-    } else cell += char;
-  }
-  row.push(cell); if (row.some(value => value.trim())) rows.push(row);
-  return rows;
-}
-
-function parseXlsx(buffer) {
-  const files = unzipSync(new Uint8Array(buffer));
-  const sharedXml = files['xl/sharedStrings.xml'] ? strFromU8(files['xl/sharedStrings.xml']) : '';
-  const shared = sharedXml ? [...new DOMParser().parseFromString(sharedXml, 'text/xml').querySelectorAll('si')].map(si => si.textContent || '') : [];
-  const sheetName = Object.keys(files).filter(name => /^xl\/worksheets\/sheet\d+\.xml$/.test(name)).sort()[0];
-  if (!sheetName) throw new Error('El XLSX no contiene hojas reconocibles.');
-  const xml = new DOMParser().parseFromString(strFromU8(files[sheetName]), 'text/xml');
-  return [...xml.querySelectorAll('row')].map(row => {
-    const values = [];
-    row.querySelectorAll('c').forEach(cell => {
-      const ref = cell.getAttribute('r') || 'A1';
-      const letters = ref.replace(/\d/g, '');
-      let index = 0;
-      for (const letter of letters) index = index * 26 + letter.charCodeAt(0) - 64;
-      const raw = cell.querySelector('v')?.textContent || cell.querySelector('is')?.textContent || '';
-      values[index - 1] = cell.getAttribute('t') === 's' ? shared[Number(raw)] || '' : raw;
-    });
-    return values.map(value => value ?? '');
-  });
-}
-
-function parseSpanishNumber(value) {
-  if (typeof value === 'number') return value;
-  const clean = String(value ?? '').replace(/[€\s]/g, '');
-  if (!clean) return null;
-  const normalized = clean.includes(',') ? clean.replace(/\./g, '').replace(',', '.') : clean;
-  const number = Number(normalized);
-  return Number.isFinite(number) ? number : null;
-}
-
-function excelDate(value) {
-  if (/^\d{5}(\.\d+)?$/.test(String(value))) {
-    return isoDate(new Date(Date.UTC(1899, 11, 30) + Number(value) * 86400000));
-  }
-  const match = String(value).match(/(\d{1,4})[\/.-](\d{1,2})[\/.-](\d{1,4})/);
-  if (match) {
-    const yearFirst = match[1].length === 4;
-    const year = yearFirst ? match[1] : match[3];
-    const month = String(match[2]).padStart(2, '0');
-    const day = String(yearFirst ? match[3] : match[1]).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : isoDate(date);
-}
-
-function mapBankRows(rows) {
-  if (rows.length < 2) throw new Error('El extracto está vacío.');
-  const headers = rows[0].map(normalizeHeader);
-  const find = (...names) => headers.findIndex(header => names.includes(header));
-  const indexes = {
-    date: find('fecha','fecha_operacion','fecha_contable','date'),
-    valueDate: find('fecha_valor','value_date'),
-    description: find('concepto','descripcion','description'),
-    reference: find('referencia','reference','observaciones'),
-    amount: find('importe','amount'),
-    debit: find('debe','cargo','debit'),
-    credit: find('haber','abono','credit'),
-    balance: find('saldo','balance')
-  };
-  if (indexes.date < 0 || (indexes.amount < 0 && indexes.debit < 0 && indexes.credit < 0)) {
-    throw new Error('No se reconocen las columnas de fecha e importe.');
-  }
-  return rows.slice(1).map(row => {
-    const amount = indexes.amount >= 0
-      ? parseSpanishNumber(row[indexes.amount])
-      : (parseSpanishNumber(row[indexes.credit]) || 0) - (parseSpanishNumber(row[indexes.debit]) || 0);
-    return {
-      booked_on: excelDate(row[indexes.date]),
-      value_on: indexes.valueDate >= 0 ? excelDate(row[indexes.valueDate]) : null,
-      description: indexes.description >= 0 ? String(row[indexes.description] || '').trim() : '',
-      reference: indexes.reference >= 0 ? String(row[indexes.reference] || '').trim() : '',
-      amount,
-      balance: indexes.balance >= 0 ? parseSpanishNumber(row[indexes.balance]) : null
-    };
-  }).filter(row => row.booked_on && row.amount != null);
 }
 
 async function sha256(text) {
