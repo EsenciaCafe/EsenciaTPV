@@ -1,6 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 import { mapBankRows, parseCsv, parseXlsx } from './bankStatement.js';
 import {
+  IGIC_RATES,
+  calculateDocumentTotals,
+  calculatePriceVariation,
+  emptyDocumentLine
+} from './documentLines.js';
+import {
   GOOGLE_DRIVE_SCOPE,
   driveFileUrl,
   driveFolderUrl,
@@ -540,31 +546,93 @@ function renderModal() {
   return '';
 }
 
-function modalFrame(title, body, foot = '') {
-  return `<div class="acc-modal-backdrop"><div class="acc-modal"><div class="acc-modal-head"><h2>${title}</h2><button class="btn btn-small" data-close-modal>✕</button></div><div class="acc-modal-body">${body}</div>${foot ? `<div class="acc-modal-foot">${foot}</div>` : ''}</div></div>`;
+function modalFrame(title, body, foot = '', className = '') {
+  return `<div class="acc-modal-backdrop"><div class="acc-modal ${className}"><div class="acc-modal-head"><h2>${title}</h2><button class="btn btn-small" data-close-modal>✕</button></div><div class="acc-modal-body">${body}</div>${foot ? `<div class="acc-modal-foot">${foot}</div>` : ''}</div></div>`;
+}
+
+function documentHistoryFor(line) {
+  return state.modal.priceHistory?.find(item => item.line_id === line.id) || null;
+}
+
+function renderPriceHistory(line, readOnly = false) {
+  const history = documentHistoryFor(line);
+  if (!history?.previous_unit_price) {
+    return `<span class="line-price-history muted">${line.id ? 'Sin compras anteriores' : 'Se comparará al guardar'}</span>`;
+  }
+  const variation = calculatePriceVariation(line.unit_price, history.previous_unit_price);
+  const direction = variation?.percent > 0 ? 'up' : variation?.percent < 0 ? 'down' : 'same';
+  const variationText = variation ? `${variation.percent > 0 ? '+' : ''}${variation.percent.toFixed(2)} %` : '—';
+  return `<span class="line-price-history ${direction}" data-price-history data-previous-price="${history.previous_unit_price}">
+    Anterior: ${money(history.previous_unit_price)} · <strong>${variationText}</strong>
+    <small>${history.previous_issue_date ? new Date(`${history.previous_issue_date}T12:00:00`).toLocaleDateString('es-ES') : ''}${history.previous_document_number ? ` · ${escapeHtml(history.previous_document_number)}` : ''}</small>
+  </span>`;
+}
+
+function renderDocumentLine(line, index, readOnly) {
+  const scope = line.tax_scope || 'taxable';
+  const disabled = readOnly ? 'disabled' : '';
+  return `
+    <article class="document-line" data-line-index="${index}" data-line-id="${line.id || ''}">
+      <div class="document-line-head">
+        <strong>Artículo ${index + 1}</strong>
+        ${!readOnly ? `<button class="btn btn-small btn-danger" type="button" data-remove-line="${index}" ${state.modal.lines.length === 1 ? 'disabled' : ''}>Eliminar</button>` : ''}
+      </div>
+      <div class="document-line-grid">
+        <div class="field line-code"><label>Código proveedor</label><input data-line-field="supplier_item_code" value="${escapeHtml(line.supplier_item_code || '')}" placeholder="Opcional" ${disabled}></div>
+        <div class="field line-description"><label>Artículo / concepto</label><input data-line-field="description" value="${escapeHtml(line.description || '')}" required ${disabled}></div>
+        <div class="field"><label>Cantidad</label><input data-line-field="quantity" type="number" min=".001" step=".001" value="${Number(line.quantity ?? 1)}" required ${disabled}></div>
+        <div class="field"><label>Precio compra/unidad</label><input data-line-field="unit_price" type="number" min="0" step=".0001" value="${Number(line.unit_price ?? 0)}" required ${disabled}></div>
+        <div class="field"><label>Tratamiento</label><select data-line-field="tax_scope" ${disabled}>
+          <option value="taxable" ${scope === 'taxable' ? 'selected' : ''}>Gravado</option>
+          <option value="exempt" ${scope === 'exempt' ? 'selected' : ''}>Exento</option>
+          <option value="not_subject" ${scope === 'not_subject' ? 'selected' : ''}>No sujeto</option>
+        </select></div>
+        <div class="field"><label>IGIC</label><select data-line-field="tax_rate" ${scope !== 'taxable' || readOnly ? 'disabled' : ''}>${IGIC_RATES.map(value => `<option value="${value}" ${Number(line.tax_rate) === value ? 'selected' : ''}>${value}%</option>`).join('')}</select></div>
+        <div class="field"><label>Retención IRPF</label><input data-line-field="withholding_rate" type="number" min="0" max="100" step=".01" value="${Number(line.withholding_rate || 0)}" ${disabled}></div>
+        <div class="document-line-amounts">
+          <span>Base <strong data-line-base>${money(line.taxable_base)}</strong></span>
+          <span>IGIC <strong data-line-tax>${money(line.tax_amount)}</strong></span>
+        </div>
+      </div>
+      ${renderPriceHistory(line, readOnly)}
+    </article>`;
 }
 
 function renderDocumentModal(document = {}) {
   const isPurchase = (document.direction || state.modal.direction) === 'purchase';
-  const rate = Number(document.source_payload?.tax_rate ?? 7);
+  if (state.modal.loading) {
+    return modalFrame('Revisar documento', '<div class="acc-empty"><strong>Cargando líneas…</strong></div>', '', 'acc-modal-wide');
+  }
+  const readOnly = Boolean(document.id && !['draft', 'needs_review'].includes(document.status));
+  const totals = calculateDocumentTotals(state.modal.lines || []);
   return modalFrame(document.id ? 'Revisar documento' : isPurchase ? 'Nuevo gasto' : 'Nueva factura', `
     <form class="acc-form" id="document-form" data-id="${document.id || ''}">
       <input type="hidden" id="doc-direction" value="${isPurchase ? 'purchase' : 'sale'}">
       <div class="acc-form-grid three">
-        <div class="field"><label>Tipo</label><select id="doc-type">${(isPurchase ? ['invoice','ticket','expense','payroll','asset'] : ['invoice','credit_note']).map(type => `<option value="${type}" ${document.document_type===type?'selected':''}>${type}</option>`).join('')}</select></div>
-        <div class="field"><label>Número</label><input id="doc-number" value="${escapeHtml(document.number || '')}" required></div>
-        <div class="field"><label>Fecha</label><input type="date" id="doc-date" value="${document.issue_date || isoDate()}" required></div>
+        <div class="field"><label>Tipo</label><select id="doc-type" ${readOnly ? 'disabled' : ''}>${(isPurchase ? ['invoice','ticket','expense','payroll','asset'] : ['invoice','credit_note']).map(type => `<option value="${type}" ${document.document_type===type?'selected':''}>${type}</option>`).join('')}</select></div>
+        <div class="field"><label>Número</label><input id="doc-number" value="${escapeHtml(document.number || '')}" required ${readOnly ? 'disabled' : ''}></div>
+        <div class="field"><label>Fecha</label><input type="date" id="doc-date" value="${document.issue_date || isoDate()}" required ${readOnly ? 'disabled' : ''}></div>
       </div>
-      <div class="field"><label>${isPurchase ? 'Proveedor' : 'Cliente'}</label><select id="doc-contact"><option value="">Sin contacto</option>${state.contacts.filter(c => c.kind === (isPurchase?'supplier':'customer') || c.kind === 'both').map(c => `<option value="${c.id}" ${document.contact_id===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
-      <div class="acc-form-grid three">
-        <div class="field"><label>Base imponible</label><input type="number" step=".01" id="doc-subtotal" value="${document.subtotal ?? ''}" required></div>
-        <div class="field"><label>Tipo IGIC</label><select id="doc-tax-rate">${[0,3,7,9.5,15].map(value => `<option value="${value}" ${rate===value?'selected':''}>${value}%</option>`).join('')}</select></div>
-        <div class="field"><label>Retención</label><input type="number" step=".01" id="doc-withholding" value="${document.withholding_amount || 0}"></div>
+      <div class="field"><label>${isPurchase ? 'Proveedor' : 'Cliente'}</label><select id="doc-contact" ${readOnly ? 'disabled' : ''}><option value="">Sin contacto</option>${state.contacts.filter(c => c.kind === (isPurchase?'supplier':'customer') || c.kind === 'both').map(c => `<option value="${c.id}" ${document.contact_id===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
+      <section class="document-lines-section">
+        <div class="document-lines-title">
+          <div><h3>Líneas de artículos</h3><p>El precio y el IGIC se guardan por artículo.</p></div>
+          ${!readOnly ? '<button class="btn btn-small" id="add-document-line" type="button">+ Añadir artículo</button>' : ''}
+        </div>
+        <div class="document-lines">${(state.modal.lines || []).map((line, index) => renderDocumentLine(line, index, readOnly)).join('')}</div>
+      </section>
+      <div class="document-totals">
+        <div><span>Base imponible</span><strong id="doc-total-base">${money(totals.subtotal)}</strong></div>
+        <div><span>IGIC total</span><strong id="doc-total-tax">${money(totals.taxAmount)}</strong></div>
+        <div><span>Retención IRPF</span><strong id="doc-total-withholding">${money(totals.withholdingAmount)}</strong></div>
+        <div class="grand-total"><span>Total factura</span><strong id="doc-total-amount">${money(totals.totalAmount)}</strong></div>
       </div>
-      <div class="field"><label>Descripción</label><textarea id="doc-notes">${escapeHtml(document.notes || '')}</textarea></div>
+      <div class="field"><label>Notas</label><textarea id="doc-notes" ${readOnly ? 'disabled' : ''}>${escapeHtml(document.notes || '')}</textarea></div>
       ${document.status === 'needs_review' ? '<div class="acc-notice">Documento extraído automáticamente. Revisa todos los campos antes de aprobar.</div>' : ''}
+      ${readOnly ? '<div class="acc-notice acc-success">Documento aprobado. Sus líneas se conservan sin cambios; cualquier corrección deberá hacerse mediante una rectificativa.</div>' : ''}
     </form>`,
-    `${document.id && !['approved','paid'].includes(document.status) ? '<button class="btn" id="post-document-btn">Aprobar y contabilizar</button>' : ''}<button class="btn btn-primary" type="submit" form="document-form">Guardar</button>`);
+    `${document.id && !readOnly ? '<button class="btn" id="post-document-btn">Aprobar y contabilizar</button>' : ''}${!readOnly ? '<button class="btn btn-primary" type="submit" form="document-form">Guardar</button>' : '<button class="btn" data-close-modal>Cerrar</button>'}`,
+    'acc-modal-wide');
 }
 
 function renderBankImportModal() {
@@ -625,6 +693,12 @@ function wireModal() {
   });
   document.querySelector('#document-form')?.addEventListener('submit', saveDocument);
   document.querySelector('#post-document-btn')?.addEventListener('click', postDocument);
+  document.querySelector('#add-document-line')?.addEventListener('click', addDocumentLine);
+  document.querySelectorAll('[data-remove-line]').forEach(button => button.addEventListener('click', () => removeDocumentLine(Number(button.dataset.removeLine))));
+  document.querySelectorAll('[data-line-field]').forEach(input => {
+    input.addEventListener('input', refreshDocumentCalculations);
+    input.addEventListener('change', refreshDocumentCalculations);
+  });
   document.querySelector('#bank-import-form')?.addEventListener('submit', importBankFile);
   document.querySelector('#bank-account-form')?.addEventListener('submit', saveBankAccount);
   document.querySelector('#tax-form')?.addEventListener('submit', generateTaxDraft);
@@ -633,7 +707,38 @@ function wireModal() {
 
 function openModal(modal) { state.modal = modal; renderApp(); }
 function closeModal() { state.modal = null; renderApp(); }
-function openDocument(document = {}, direction = document.direction || 'purchase') { openModal({ type: 'document', document, direction }); }
+async function openDocument(document = {}, direction = document.direction || 'purchase') {
+  if (!document.id) {
+    openModal({
+      type: 'document',
+      document,
+      direction,
+      lines: [emptyDocumentLine(direction)],
+      priceHistory: []
+    });
+    return;
+  }
+  openModal({ type: 'document', document, direction, lines: [], priceHistory: [], loading: true });
+  const [linesResult, historyResult] = await Promise.all([
+    state.client.from('bookkeeping_document_lines').select('*').eq('document_id', document.id).order('position'),
+    state.client.rpc('accounting_purchase_price_history', { p_document_id: document.id })
+  ]);
+  if (linesResult.error || historyResult.error) {
+    state.modal = null;
+    renderApp();
+    toast((linesResult.error || historyResult.error).message, 'error');
+    return;
+  }
+  state.modal = {
+    type: 'document',
+    document,
+    direction,
+    lines: linesResult.data?.length ? linesResult.data : [emptyDocumentLine(direction)],
+    priceHistory: historyResult.data || [],
+    loading: false
+  };
+  renderApp();
+}
 
 async function syncTpv() {
   try {
@@ -644,57 +749,125 @@ async function syncTpv() {
   } catch (error) { toast(error.message, 'error'); }
 }
 
-async function saveDocument(event) {
-  event.preventDefault();
+function readDocumentLines() {
+  return [...document.querySelectorAll('.document-line')].map(row => ({
+    id: row.dataset.lineId || '',
+    supplier_item_code: row.querySelector('[data-line-field="supplier_item_code"]')?.value.trim() || '',
+    description: row.querySelector('[data-line-field="description"]')?.value.trim() || '',
+    quantity: Number(row.querySelector('[data-line-field="quantity"]')?.value || 0),
+    unit_price: Number(row.querySelector('[data-line-field="unit_price"]')?.value || 0),
+    tax_scope: row.querySelector('[data-line-field="tax_scope"]')?.value || 'taxable',
+    tax_rate: Number(row.querySelector('[data-line-field="tax_rate"]')?.value || 0),
+    withholding_rate: Number(row.querySelector('[data-line-field="withholding_rate"]')?.value || 0),
+    account_code: state.modal.direction === 'sale' ? '700' : '600'
+  }));
+}
+
+function refreshDocumentCalculations() {
+  if (state.modal?.type !== 'document') return;
+  const totals = calculateDocumentTotals(readDocumentLines());
+  state.modal.lines = totals.lines;
+  document.querySelectorAll('.document-line').forEach((row, index) => {
+    const line = totals.lines[index];
+    row.querySelector('[data-line-base]').textContent = money(line.taxable_base);
+    row.querySelector('[data-line-tax]').textContent = money(line.tax_amount);
+    const rateSelect = row.querySelector('[data-line-field="tax_rate"]');
+    if (rateSelect) {
+      rateSelect.disabled = line.tax_scope !== 'taxable';
+      if (line.tax_scope !== 'taxable') rateSelect.value = '0';
+    }
+    const historyNode = row.querySelector('[data-price-history]');
+    if (historyNode) {
+      const variation = calculatePriceVariation(line.unit_price, Number(historyNode.dataset.previousPrice));
+      historyNode.classList.remove('up', 'down', 'same');
+      historyNode.classList.add(variation?.percent > 0 ? 'up' : variation?.percent < 0 ? 'down' : 'same');
+      const strong = historyNode.querySelector('strong');
+      if (strong) strong.textContent = variation ? `${variation.percent > 0 ? '+' : ''}${variation.percent.toFixed(2)} %` : '—';
+    }
+  });
+  document.querySelector('#doc-total-base').textContent = money(totals.subtotal);
+  document.querySelector('#doc-total-tax').textContent = money(totals.taxAmount);
+  document.querySelector('#doc-total-withholding').textContent = money(totals.withholdingAmount);
+  document.querySelector('#doc-total-amount').textContent = money(totals.totalAmount);
+}
+
+function captureDocumentHeader() {
   const current = state.modal.document || {};
-  const subtotal = Number(document.querySelector('#doc-subtotal').value || 0);
-  const rate = Number(document.querySelector('#doc-tax-rate').value || 0);
-  const tax = Math.round(subtotal * rate) / 100;
-  const withholding = Number(document.querySelector('#doc-withholding').value || 0);
-  const row = {
-    business_id: state.business.id,
+  state.modal.document = {
+    ...current,
+    direction: document.querySelector('#doc-direction')?.value || state.modal.direction,
+    document_type: document.querySelector('#doc-type')?.value || current.document_type,
+    number: document.querySelector('#doc-number')?.value || '',
+    issue_date: document.querySelector('#doc-date')?.value || current.issue_date,
+    contact_id: document.querySelector('#doc-contact')?.value || null,
+    notes: document.querySelector('#doc-notes')?.value || ''
+  };
+}
+
+function addDocumentLine() {
+  captureDocumentHeader();
+  state.modal.lines = readDocumentLines();
+  state.modal.lines.push(emptyDocumentLine(state.modal.direction));
+  renderApp();
+}
+
+function removeDocumentLine(index) {
+  captureDocumentHeader();
+  const lines = readDocumentLines();
+  if (lines.length <= 1) return;
+  lines.splice(index, 1);
+  state.modal.lines = lines;
+  renderApp();
+}
+
+async function persistDocument({ closeAfter = true } = {}) {
+  const form = document.querySelector('#document-form');
+  if (!form?.reportValidity()) return null;
+  const current = state.modal.document || {};
+  const lines = readDocumentLines();
+  if (!lines.length || lines.some(line => !line.description || line.quantity <= 0 || line.unit_price < 0)) {
+    toast('Revisa la descripción, cantidad y precio de cada artículo.', 'error');
+    return null;
+  }
+  const header = {
     contact_id: document.querySelector('#doc-contact').value || null,
     source_type: current.source_type || 'manual',
     source_id: current.source_id || `manual-${uuid()}`,
-    direction: document.querySelector('#doc-direction').value,
+    direction: document.querySelector('#doc-direction').value || state.modal.direction,
     document_type: document.querySelector('#doc-type').value,
-    status: current.status || 'draft',
     number: document.querySelector('#doc-number').value.trim(),
     issue_date: document.querySelector('#doc-date').value,
-    subtotal, tax_amount: tax, withholding_amount: withholding,
-    total_amount: Math.round((subtotal + tax - withholding) * 100) / 100,
     notes: document.querySelector('#doc-notes').value,
-    source_payload: { ...(current.source_payload || {}), tax_rate: rate },
-    updated_at: new Date().toISOString()
+    source_payload: current.source_payload || {}
   };
-  const request = current.id
-    ? state.client.from('bookkeeping_documents').update(row).eq('id', current.id).select('id').single()
-    : state.client.from('bookkeeping_documents').insert(row).select('id').single();
-  const { data: savedDocument, error } = await request;
-  if (error) return toast(error.message, 'error');
-  const documentId = savedDocument.id;
-  if (!current.id) {
-    const { error: lineError } = await state.client.from('bookkeeping_document_lines').insert({
-      business_id: state.business.id,
-      document_id: documentId,
-      position: 1,
-      description: document.querySelector('#doc-notes').value || document.querySelector('#doc-number').value.trim(),
-      quantity: 1,
-      unit_price: subtotal,
-      taxable_base: subtotal,
-      tax_rate: rate,
-      tax_amount: tax,
-      withholding_amount: withholding,
-      account_code: row.direction === 'sale' ? '700' : '600'
+  try {
+    const documentId = await rpc('accounting_save_document_with_lines', {
+      p_document_id: current.id || null,
+      p_document: header,
+      p_lines: lines
     });
-    if (lineError) return toast(lineError.message, 'error');
+    if (closeAfter) {
+      state.modal = null;
+      toast('Documento y artículos guardados.');
+      await loadAll();
+    }
+    return documentId;
+  } catch (error) {
+    toast(error.message, 'error');
+    return null;
   }
-  state.modal = null; toast('Documento guardado.'); await loadAll();
+}
+
+async function saveDocument(event) {
+  event.preventDefault();
+  await persistDocument();
 }
 
 async function postDocument() {
   try {
-    await rpc('accounting_post_document', { p_document_id: state.modal.document.id });
+    const documentId = await persistDocument({ closeAfter: false });
+    if (!documentId) return;
+    await rpc('accounting_post_document', { p_document_id: documentId });
     state.modal = null; toast('Documento aprobado y contabilizado.'); await loadAll();
   } catch (error) { toast(error.message, 'error'); }
 }

@@ -146,10 +146,42 @@ button { cursor: pointer; }
 
 .acc-modal-backdrop { position: fixed; inset: 0; background: rgba(10,31,27,.48); z-index: 20; display: grid; place-items: center; padding: 20px; }
 .acc-modal { width: min(760px,100%); max-height: 92vh; overflow: auto; background: white; border-radius: 18px; box-shadow: 0 35px 90px rgba(0,0,0,.25); }
+.acc-modal.acc-modal-wide { width: min(1180px,100%); }
 .acc-modal-head { padding: 19px 22px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; }
 .acc-modal-head h2 { margin: 0; font-size: 18px; }
 .acc-modal-body { padding: 22px; }
 .acc-modal-foot { padding: 16px 22px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px; }
+
+.document-lines-section { display: grid; gap: 12px; }
+.document-lines-title { display: flex; justify-content: space-between; align-items: end; gap: 16px; }
+.document-lines-title h3 { margin: 0; font-size: 16px; }
+.document-lines-title p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.document-lines { display: grid; gap: 10px; }
+.document-line { border: 1px solid var(--line); border-radius: 13px; padding: 14px; background: #fbfcfb; }
+.document-line-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 11px; }
+.document-line-head strong { font-size: 13px; }
+.document-line-grid {
+  display: grid;
+  grid-template-columns: .75fr 2.4fr .65fr .9fr .8fr .65fr .75fr 1.1fr;
+  gap: 10px;
+  align-items: end;
+}
+.document-line-grid .field input,
+.document-line-grid .field select { min-height: 39px; padding: 7px 9px; }
+.document-line-amounts { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; align-self: stretch; }
+.document-line-amounts span { display: grid; gap: 3px; align-content: center; border-radius: 8px; background: white; border: 1px solid var(--line); padding: 6px 8px; color: var(--muted); font-size: 10px; }
+.document-line-amounts strong { color: var(--ink); font-size: 12px; white-space: nowrap; }
+.line-price-history { display: inline-flex; gap: 5px; align-items: baseline; flex-wrap: wrap; margin-top: 9px; border-radius: 8px; padding: 6px 9px; font-size: 11px; background: #eef1f0; color: var(--muted); }
+.line-price-history small { width: 100%; }
+.line-price-history.up { background: #fff0e8; color: #a74b23; }
+.line-price-history.down { background: var(--brand-soft); color: var(--brand); }
+.line-price-history.same { background: #eef1f0; color: var(--muted); }
+.document-totals { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; }
+.document-totals > div { display: grid; gap: 5px; border: 1px solid var(--line); border-radius: 11px; padding: 12px; background: #f8fbfa; }
+.document-totals span { color: var(--muted); font-size: 11px; }
+.document-totals strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.document-totals .grand-total { background: var(--brand-dark); border-color: var(--brand-dark); color: white; }
+.document-totals .grand-total span { color: #bdd4cc; }
 
 .tax-breakdown { display: grid; gap: 10px; }
 .tax-row { display: grid; grid-template-columns: 70px 1fr 1fr; gap: 10px; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--line); }
@@ -168,6 +200,9 @@ button { cursor: pointer; }
   .acc-kpis { grid-template-columns: repeat(2,1fr); }
   .drive-kpis { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .acc-two { grid-template-columns: 1fr; }
+  .document-line-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
+  .document-line-grid .line-description { grid-column: span 2; }
+  .document-line-amounts { grid-column: span 2; }
 }
 @media (max-width: 760px) {
   .acc-shell { display: block; padding-bottom: 72px; }
@@ -183,4 +218,14 @@ button { cursor: pointer; }
   .acc-kpi strong { font-size: 20px; }
   .acc-form-grid, .acc-form-grid.three { grid-template-columns: 1fr; }
   .drive-kpis, .drive-folder-summary { grid-template-columns: 1fr; }
+  .acc-modal-backdrop { padding: 0; align-items: end; }
+  .acc-modal, .acc-modal.acc-modal-wide { border-radius: 18px 18px 0 0; max-height: 96vh; }
+  .acc-modal-body { padding: 16px; }
+  .acc-modal-foot { position: sticky; bottom: 0; background: white; flex-wrap: wrap; }
+  .document-lines-title { align-items: start; }
+  .document-line-grid { grid-template-columns: 1fr 1fr; }
+  .document-line-grid .line-code,
+  .document-line-grid .line-description,
+  .document-line-amounts { grid-column: 1 / -1; }
+  .document-totals { grid-template-columns: 1fr 1fr; }
 }

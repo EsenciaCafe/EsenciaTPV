@@ -38,11 +38,14 @@ La tarea:
 2. Admite PDF, JPG, JPEG, PNG, WEBP, HEIC y HEIF.
 3. Compara Drive ID, revisión y checksum con el historial.
 4. Analiza visualmente todas las páginas sin modificar el original.
-5. Comprueba líneas, bases, IGIC, retenciones y total con tolerancia máxima de
+5. Conserva una línea por cada artículo impreso (sin agrupar por tipo fiscal),
+   incluyendo código de proveedor cuando exista, cantidad, precio unitario,
+   base e IGIC propios.
+6. Comprueba líneas, bases, IGIC, retenciones y total con tolerancia máxima de
    0,02 €.
-6. Genera un JSON `supplier-document/v1` con confianza y advertencias.
-7. Lo sube al historial y verifica la subida.
-8. Registra cada error por separado y continúa con el resto del lote.
+7. Genera un JSON `supplier-document/v1` con confianza y advertencias.
+8. Lo sube al historial y verifica la subida.
+9. Registra cada error por separado y continúa con el resto del lote.
 
 El contrato exacto está en
 [`supplier-document-v1.schema.json`](supplier-document-v1.schema.json).
