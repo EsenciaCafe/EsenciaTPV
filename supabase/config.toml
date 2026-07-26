@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.watch-sales-summary]
 verify_jwt = false
+
+[functions.telegram-sales-bot]
+verify_jwt = false

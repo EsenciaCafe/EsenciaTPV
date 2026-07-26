@@ -23,6 +23,7 @@ import {
   deleteStaffProfile as dbDeleteStaffProfile
 } from './db.js';
 import { supabase } from './supabase.js';
+import { notifyTelegramTicketCleared } from './telegramEmptyOrders.js';
 
 
 const DINING_STATE_STORAGE_KEY = 'tpv-dining-state-v1';
@@ -2519,7 +2520,31 @@ class Store {
     return transaction;
   }
 
-  clearActiveTicket() {
+  async clearActiveTicket() {
+    const activeItems = this.getActiveItems();
+    if (activeItems.length > 0) {
+      const selectedTable = this.getSelectedTable();
+      const occurredAt = new Date().toISOString();
+      const snapshot = {
+        eventId: `EMPTY-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+        occurredAt,
+        orderName: selectedTable?.name || 'Venta Directa',
+        orderType: selectedTable?.type || 'direct',
+        staffName: this.state.auth.profile?.display_name || '',
+        total: parseFloat(this.getActiveTicketTotal().toFixed(2)),
+        items: activeItems.map(item => ({
+          name: item.name || 'Artículo',
+          quantity: Number(item.qty || 0),
+          total: parseFloat(this.getItemTotal(item).toFixed(2)),
+          selectedOptions: (item.selectedOptions || []).map(option => ({
+            name: option.name || '',
+            quantity: Number(option.qty || 0)
+          }))
+        }))
+      };
+      await notifyTelegramTicketCleared(snapshot);
+    }
+
     if (this.state.selectedTableId !== null) {
       const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
       if (tableIndex > -1) {
@@ -2534,6 +2559,7 @@ class Store {
       this.state.directSaleTicket = { items: [] };
     }
     this.notify({ flushRemote: this.state.selectedTableId !== null });
+    return true;
   }
 
   getSelectedTable() {

@@ -3816,9 +3816,14 @@ function setupTicketOnlyEventListeners(container) {
       showConfirm(
         'Vaciar Pedido',
         '¿Seguro que deseas vaciar el pedido actual?',
-        () => {
-          store.clearActiveTicket();
-          isDrawerOpen = false;
+        async () => {
+          try {
+            await store.clearActiveTicket();
+            showToast('Pedido vaciado y enviado a Telegram.', 'success');
+            isDrawerOpen = false;
+          } catch (error) {
+            showToast(`No se vació el pedido: ${error.message || 'Telegram no respondió.'}`, 'error');
+          }
         },
         null,
         true
@@ -3858,8 +3863,13 @@ function setupTicketOnlyEventListeners(container) {
   const splitClear = container.querySelector('#split-clear-btn');
   if (splitClear) {
     splitClear.addEventListener('click', () => {
-      showConfirm('Vaciar Pedido', '¿Seguro que deseas vaciar el pedido actual?', () => {
-        store.clearActiveTicket();
+      showConfirm('Vaciar Pedido', '¿Seguro que deseas vaciar el pedido actual?', async () => {
+        try {
+          await store.clearActiveTicket();
+          showToast('Pedido vaciado y enviado a Telegram.', 'success');
+        } catch (error) {
+          showToast(`No se vació el pedido: ${error.message || 'Telegram no respondió.'}`, 'error');
+        }
       }, null, true);
     });
   }
@@ -7876,9 +7886,14 @@ function setupEventListeners(container) {
       showConfirm(
         'Vaciar Pedido',
         '¿Seguro que deseas vaciar el pedido actual?',
-        () => {
-          store.clearActiveTicket();
-          isDrawerOpen = false;
+        async () => {
+          try {
+            await store.clearActiveTicket();
+            showToast('Pedido vaciado y enviado a Telegram.', 'success');
+            isDrawerOpen = false;
+          } catch (error) {
+            showToast(`No se vació el pedido: ${error.message || 'Telegram no respondió.'}`, 'error');
+          }
         },
         null,
         true // isDanger
@@ -7929,8 +7944,13 @@ function setupEventListeners(container) {
       showConfirm(
         'Vaciar Pedido',
         '¿Seguro que deseas vaciar el pedido actual?',
-        () => {
-          store.clearActiveTicket();
+        async () => {
+          try {
+            await store.clearActiveTicket();
+            showToast('Pedido vaciado y enviado a Telegram.', 'success');
+          } catch (error) {
+            showToast(`No se vació el pedido: ${error.message || 'Telegram no respondió.'}`, 'error');
+          }
         },
         null,
         true // isDanger
@@ -9846,8 +9866,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register(new URL('sw.js', document.baseURI), { scope: './' }).catch((error) => {
-      console.warn('No se pudo registrar el service worker:', error);
-    });
+    navigator.serviceWorker
+      .register(new URL('sw.js', document.baseURI), { scope: './' })
+      .then(registration => registration.update())
+      .catch((error) => {
+        console.warn('No se pudo registrar el service worker:', error);
+      });
   }
 });
