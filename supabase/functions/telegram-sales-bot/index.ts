@@ -46,7 +46,7 @@ function jsonResponse(body: unknown, status = 200) {
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-telegram-bot-api-secret-token',
+      'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-telegram-bot-api-secret-token',
       'Access-Control-Allow-Methods': 'POST, OPTIONS'
     }
   });
