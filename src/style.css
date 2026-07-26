@@ -2002,6 +2002,11 @@ body.light-theme .btn-quick-pay {
 }
 
 /* Menu Manager */
+.menu-manager-view {
+  height: auto;
+  min-height: 100%;
+  padding-bottom: max(24px, var(--safe-area-bottom));
+}
 .menu-manager-heading, .menu-manager-toolbar, .menu-manager-header-actions,
 .menu-manager-actions, .menu-promo-status-row {
   display: flex;
@@ -2142,6 +2147,7 @@ body.light-theme .btn-quick-pay {
   background: var(--bg-panel);
   padding: 16px;
 }
+.menu-promo-gallery-wrap { flex-shrink: 0; }
 .menu-section-card.is-muted, .menu-entity-row.is-muted { opacity: .62; }
 .menu-section-card > header {
   display: flex;
@@ -2290,6 +2296,9 @@ body.light-theme .btn-quick-pay {
   .menu-manager-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .menu-manager-toolbar input { grid-column: 1 / -1; }
   .menu-manager-quick-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .menu-promo-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .menu-promo-thumb img { height: 180px; object-fit: contain; background: #111; }
+  .menu-promo-thumb span { padding: 10px; }
 }
 
 /* Active Ticket Drawer Modal Overlay */
