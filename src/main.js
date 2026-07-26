@@ -26,6 +26,13 @@ import {
   normalizeSquareGiftCardCode,
   redeemSquareGiftCard
 } from './squareGiftCards.js';
+import {
+  bindMenuManager,
+  initMenuManager,
+  renderMenuAvailability,
+  renderMenuManagerHome,
+  renderMenuPromos
+} from './menuManager.js';
 
 // SVG Icons
 const ICONS = {
@@ -1529,6 +1536,7 @@ function renderAjustesView(state) {
   const firstPath = path[0];
   const restrictedSettingsPath =
     (firstPath === 'articulos' && !store.canManageCatalog()) ||
+    (firstPath === 'menu-manager' && !store.canManageCatalog()) ||
     (firstPath === 'legal' && !store.canManageAccounting()) ||
     (firstPath === 'fidelidad' && !store.canManageLoyalty()) ||
     (firstPath === 'informes' && !store.canViewReports()) ||
@@ -1566,6 +1574,14 @@ function renderAjustesView(state) {
       store.canManageCatalog() ? `
           <button class="settings-tree-item" id="settings-to-articulos">
             <span>Art&iacute;culos</span>
+            ${chevron}
+          </button>` : '',
+      store.canManageCatalog() ? `
+          <button class="settings-tree-item" id="settings-to-menu-manager">
+            <span>
+              <strong>Menu Manager</strong>
+              <small>Disponibilidad y promociones del men&uacute; de clientes</small>
+            </span>
             ${chevron}
           </button>` : '',
       store.canManageAccounting() ? `
@@ -1692,6 +1708,18 @@ function renderAjustesView(state) {
         </div>
       </div>
     `;
+  }
+
+  if (path.length === 1 && path[0] === 'menu-manager') {
+    return renderMenuManagerHome(chevron);
+  }
+
+  if (path.length === 2 && path[0] === 'menu-manager' && path[1] === 'disponibilidad') {
+    return renderMenuAvailability();
+  }
+
+  if (path.length === 2 && path[0] === 'menu-manager' && path[1] === 'promos') {
+    return renderMenuPromos();
   }
 
   if (path.length === 1 && path[0] === 'fidelidad') {
@@ -7421,6 +7449,11 @@ function downloadReportPDF(title, headers, rows, legal, filename) {
 
 // Event bindings
 function setupEventListeners(container) {
+  if (store.state.settingsPath?.[0] === 'menu-manager') {
+    initMenuManager(() => store.notify(), showToast);
+  }
+  bindMenuManager(container, path => store.navigateSettings(path));
+
   const staffSessionBtn = container.querySelector('#staff-session-btn');
   if (staffSessionBtn) {
     staffSessionBtn.addEventListener('click', () => {
@@ -8091,6 +8124,13 @@ function setupEventListeners(container) {
   if (toCierreBtn) {
     toCierreBtn.addEventListener('click', () => {
       store.navigateSettings(['cierre']);
+    });
+  }
+
+  const toMenuManagerBtn = container.querySelector('#settings-to-menu-manager');
+  if (toMenuManagerBtn) {
+    toMenuManagerBtn.addEventListener('click', () => {
+      store.navigateSettings(['menu-manager']);
     });
   }
 
