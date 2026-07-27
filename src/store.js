@@ -2533,6 +2533,7 @@ class Store {
         staffName: this.state.auth.profile?.display_name || '',
         total: parseFloat(this.getActiveTicketTotal().toFixed(2)),
         items: activeItems.map(item => ({
+          itemId: String(item.id || ''),
           name: item.name || 'Artículo',
           quantity: Number(item.qty || 0),
           total: parseFloat(this.getItemTotal(item).toFixed(2)),

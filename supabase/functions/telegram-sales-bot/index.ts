@@ -2,6 +2,8 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
 const SUPABASE_PUBLISHABLE_KEYS = Deno.env.get('SUPABASE_PUBLISHABLE_KEYS') || '';
+const AUDIT_SUPABASE_URL = Deno.env.get('AUDIT_SUPABASE_URL') || '';
+const AUDIT_SUPABASE_SECRET_KEY = Deno.env.get('AUDIT_SUPABASE_SECRET_KEY') || '';
 const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN') || '';
 const TELEGRAM_WEBHOOK_SECRET = Deno.env.get('TELEGRAM_WEBHOOK_SECRET') || '';
 const TELEGRAM_ALLOWED_USER_IDS = new Set(
@@ -13,15 +15,9 @@ const TELEGRAM_ALLOWED_USER_IDS = new Set(
 
 const BUSINESS_TIME_ZONE = 'Atlantic/Canary';
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
-const VOID_LEDGER_MARKER = 'TPV_VOID_LEDGER_V1:';
 
 type JsonRecord = Record<string, unknown>;
 type Period = 'today' | 'yesterday' | 'month';
-type VoidLedger = {
-  version: 1;
-  days: Record<string, { count: number; amount: number; units: number }>;
-  eventIds: string[];
-};
 
 const quickKeyboard = {
   inline_keyboard: [
@@ -109,6 +105,16 @@ function belongsToPeriod(value: string, period: Period) {
   return rowKey === today;
 }
 
+function periodDateRange(period: Period) {
+  const today = localDateKey(new Date());
+  if (period === 'yesterday') {
+    const yesterday = shiftDateKey(today, -1);
+    return { from: yesterday, to: yesterday };
+  }
+  if (period === 'month') return { from: `${today.slice(0, 7)}-01`, to: today };
+  return { from: today, to: today };
+}
+
 function money(value: number) {
   return new Intl.NumberFormat('es-ES', {
     style: 'currency',
@@ -149,6 +155,64 @@ async function rest(path: string, params: Record<string, string>) {
     throw new Error('No se pudieron consultar las ventas.');
   }
   return await response.json() as JsonRecord[];
+}
+
+async function auditRest(
+  path: string,
+  params: Record<string, string> = {},
+  init: RequestInit = {}
+) {
+  const url = new URL(`${AUDIT_SUPABASE_URL}/rest/v1/${path}`);
+  Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      apikey: AUDIT_SUPABASE_SECRET_KEY,
+      Authorization: `Bearer ${AUDIT_SUPABASE_SECRET_KEY}`,
+      'Content-Type': 'application/json',
+      ...(init.headers || {})
+    }
+  });
+  if (!response.ok) {
+    console.error('[telegram-sales-bot] Auditoría', response.status, await response.text());
+    throw new Error('No se pudo consultar el registro de auditoría.');
+  }
+  if (response.status === 204) return null;
+  return await response.json();
+}
+
+async function loadVoidOrders(period: Period) {
+  const { from, to } = periodDateRange(period);
+  return await auditRest('voided_orders', {
+    select: 'event_id,total_amount,item_units,business_date',
+    business_date: from === to ? `eq.${from}` : `gte.${from}`,
+    ...(from === to ? {} : { and: `(business_date.lte.${to})` }),
+    order: 'occurred_at.desc',
+    limit: '5000'
+  }) as JsonRecord[];
+}
+
+async function loadVoidLines(period: Period) {
+  const orders = await loadVoidOrders(period);
+  const eventIds = orders.map(row => String(row.event_id)).filter(Boolean);
+  if (eventIds.length === 0) return [];
+  const chunks: string[][] = [];
+  for (let index = 0; index < eventIds.length; index += 100) {
+    chunks.push(eventIds.slice(index, index + 100));
+  }
+  const results = await Promise.all(chunks.map(ids => auditRest('voided_order_lines', {
+    select: 'event_id,item_id,product_key,name,quantity,total_amount',
+    event_id: `in.(${ids.map(id => `"${id.replaceAll('"', '')}"`).join(',')})`,
+    limit: '10000'
+  }) as Promise<JsonRecord[]>));
+  return results.flat();
+}
+
+async function recordVoidEvent(event: JsonRecord) {
+  return await auditRest('rpc/record_voided_order', {}, {
+    method: 'POST',
+    body: JSON.stringify({ p_event: event })
+  }) as JsonRecord;
 }
 
 async function loadSales(period: Period) {
@@ -294,6 +358,22 @@ function productRows(sales: JsonRecord[], lines: JsonRecord[]) {
   return [...grouped.values()].sort((a, b) => b.quantity - a.quantity);
 }
 
+function voidProductRows(lines: JsonRecord[]) {
+  const grouped = new Map<string, { name: string; quantity: number; total: number }>();
+  lines.forEach(line => {
+    const key = String(line.product_key || normalize(String(line.name || 'Artículo')));
+    const current = grouped.get(key) || {
+      name: String(line.name || 'Artículo'),
+      quantity: 0,
+      total: 0
+    };
+    current.quantity += Number(line.quantity || 0);
+    current.total += Number(line.total_amount || 0);
+    grouped.set(key, current);
+  });
+  return [...grouped.values()].sort((a, b) => b.quantity - a.quantity);
+}
+
 function topMessage(period: Period, sales: JsonRecord[], lines: JsonRecord[]) {
   const rows = productRows(sales, lines).filter(row => row.quantity !== 0).slice(0, 10);
   if (!rows.length) return `No hay artículos vendidos ${periodLabel(period)}.`;
@@ -306,24 +386,42 @@ function topMessage(period: Period, sales: JsonRecord[], lines: JsonRecord[]) {
   ].join('\n');
 }
 
-function productMessage(query: string, period: Period, sales: JsonRecord[], lines: JsonRecord[]) {
+function matchingProducts(
+  query: string,
+  rows: Array<{ name: string; quantity: number; total: number }>
+) {
   const words = normalize(query).split(' ').filter(word => word.length > 1);
-  const matches = productRows(sales, lines).filter(row => {
+  return rows.filter(row => {
     const name = normalize(row.name);
     return words.every(word => name.includes(word));
   });
-  if (!matches.length) {
-    return `No encontré ventas de “${escapeHtml(query)}” ${periodLabel(period)}. Prueba con una parte más corta del nombre.`;
+}
+
+function productMessage(
+  query: string,
+  period: Period,
+  sales: JsonRecord[],
+  lines: JsonRecord[],
+  voidLines: JsonRecord[]
+) {
+  const saleMatches = matchingProducts(query, productRows(sales, lines));
+  const voidMatches = matchingProducts(query, voidProductRows(voidLines));
+  if (!saleMatches.length && !voidMatches.length) {
+    return `No encontré ventas ni vaciados de “${escapeHtml(query)}” ${periodLabel(period)}. Prueba con una parte más corta del nombre.`;
   }
-  const quantity = matches.reduce((sum, row) => sum + row.quantity, 0);
-  const total = matches.reduce((sum, row) => sum + row.total, 0);
+  const soldQuantity = saleMatches.reduce((sum, row) => sum + row.quantity, 0);
+  const soldTotal = saleMatches.reduce((sum, row) => sum + row.total, 0);
+  const voidQuantity = voidMatches.reduce((sum, row) => sum + row.quantity, 0);
+  const voidTotal = voidMatches.reduce((sum, row) => sum + row.total, 0);
+  const names = [...new Set([...saleMatches, ...voidMatches].map(row => row.name))];
   return [
     `🔎 <b>${escapeHtml(query)}</b> · ${periodLabel(period)}`,
     '',
-    `Unidades: <b>${quantity.toLocaleString('es-ES')}</b>`,
-    `Importe: <b>${money(total)}</b>`,
-    matches.length > 1
-      ? `Coincidencias: ${matches.slice(0, 5).map(row => escapeHtml(row.name)).join(', ')}`
+    `Ventas cobradas: <b>${soldQuantity.toLocaleString('es-ES')} uds.</b> · <b>${money(soldTotal)}</b>`,
+    `Vaciados: <b>${voidQuantity.toLocaleString('es-ES')} uds.</b> · <b>${money(voidTotal)}</b>`,
+    `Total registrado: <b>${(soldQuantity + voidQuantity).toLocaleString('es-ES')} uds.</b> · <b>${money(soldTotal + voidTotal)}</b>`,
+    names.length > 1
+      ? `Coincidencias: ${names.slice(0, 5).map(name => escapeHtml(name)).join(', ')}`
       : ''
   ].filter(Boolean).join('\n');
 }
@@ -402,120 +500,17 @@ async function answer(chatId: number, text: string) {
   });
 }
 
-function emptyVoidLedger(): VoidLedger {
-  return { version: 1, days: {}, eventIds: [] };
-}
-
-function encodeLedger(ledger: VoidLedger) {
-  return btoa(JSON.stringify(ledger));
-}
-
-function decodeLedger(text: string): VoidLedger | null {
-  const markerIndex = text.indexOf(VOID_LEDGER_MARKER);
-  if (markerIndex < 0) return null;
-  try {
-    const encoded = text.slice(markerIndex + VOID_LEDGER_MARKER.length).trim();
-    const parsed = JSON.parse(atob(encoded)) as VoidLedger;
-    if (parsed.version !== 1 || !parsed.days || !Array.isArray(parsed.eventIds)) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function ledgerMessage(ledger: VoidLedger) {
-  const recentDays = Object.entries(ledger.days)
-    .sort(([a], [b]) => b.localeCompare(a))
-    .slice(0, 7);
-  const readable = recentDays.length
-    ? recentDays.map(([date, row]) =>
-      `${date}: ${row.count} vaciado${row.count === 1 ? '' : 's'} · ${money(row.amount)}`
-    ).join('\n')
-    : 'Todavía no hay pedidos vaciados.';
-  return [
-    '📌 Registro privado de vaciados del TPV',
-    'No borres ni desfijes este mensaje: el bot lo utiliza para responder consultas.',
-    '',
-    readable,
-    '',
-    `${VOID_LEDGER_MARKER}${encodeLedger(ledger)}`
-  ].join('\n');
-}
-
-async function loadVoidLedger(chatId: number) {
-  const chat = await telegram('getChat', { chat_id: chatId }) as JsonRecord;
-  const pinned = chat.pinned_message as JsonRecord | undefined;
-  const text = String(pinned?.text || '');
-  return {
-    ledger: decodeLedger(text),
-    messageId: Number(pinned?.message_id || 0)
-  };
-}
-
-async function saveVoidEvent(chatId: number, event: {
-  eventId: string;
-  occurredAt: string;
-  total: number;
-  units: number;
-}) {
-  const current = await loadVoidLedger(chatId);
-  const ledger = current.ledger || emptyVoidLedger();
-  if (ledger.eventIds.includes(event.eventId)) return false;
-
-  const dateKey = localDateKey(event.occurredAt);
-  const day = ledger.days[dateKey] || { count: 0, amount: 0, units: 0 };
-  ledger.days[dateKey] = {
-    count: day.count + 1,
-    amount: round(day.amount + event.total),
-    units: round(day.units + event.units)
-  };
-  ledger.eventIds = [...ledger.eventIds, event.eventId].slice(-120);
-
-  const cutoff = shiftDateKey(localDateKey(new Date()), -92);
-  Object.keys(ledger.days).forEach(key => {
-    if (key < cutoff) delete ledger.days[key];
-  });
-
-  const text = ledgerMessage(ledger);
-  if (current.messageId) {
-    await telegram('editMessageText', {
-      chat_id: chatId,
-      message_id: current.messageId,
-      text
-    });
-  } else {
-    const message = await telegram('sendMessage', {
-      chat_id: chatId,
-      text,
-      disable_notification: true
-    }) as JsonRecord;
-    await telegram('pinChatMessage', {
-      chat_id: chatId,
-      message_id: message.message_id,
-      disable_notification: true
-    });
-  }
-  return true;
-}
-
-async function voidsMessage(chatId: number, period: Period) {
-  const { ledger } = await loadVoidLedger(chatId);
-  const today = localDateKey(new Date());
-  const keys = period === 'month'
-    ? Object.keys(ledger?.days || {}).filter(key => key.slice(0, 7) === today.slice(0, 7))
-    : [period === 'yesterday' ? shiftDateKey(today, -1) : today];
-  const totals = keys.reduce((result, key) => {
-    const day = ledger?.days?.[key];
-    if (!day) return result;
-    result.count += Number(day.count || 0);
-    result.amount += Number(day.amount || 0);
-    result.units += Number(day.units || 0);
+async function voidsMessage(period: Period) {
+  const orders = await loadVoidOrders(period);
+  const totals = orders.reduce((result, order) => {
+    result.amount += Number(order.total_amount || 0);
+    result.units += Number(order.item_units || 0);
     return result;
-  }, { count: 0, amount: 0, units: 0 });
+  }, { amount: 0, units: 0 });
   return [
     `🗑️ <b>Pedidos vaciados ${periodLabel(period)}</b>`,
     '',
-    `Vaciados: <b>${totals.count}</b>`,
+    `Vaciados: <b>${orders.length}</b>`,
     `Importe: <b>${money(totals.amount)}</b>`,
     `Artículos: <b>${totals.units.toLocaleString('es-ES')}</b>`
   ].join('\n');
@@ -569,47 +564,69 @@ async function handleTicketCleared(body: JsonRecord) {
   }
 
   const cleanItems = items.map(item => ({
+    itemId: String(item.itemId || '').slice(0, 120),
+    productKey: normalize(String(item.name || 'Artículo')).slice(0, 180),
     name: String(item.name || 'Artículo').slice(0, 120),
     quantity: Math.max(0, Number(item.quantity || 0)),
-    total: round(Math.max(0, Number(item.total || 0)))
+    total: round(Math.max(0, Number(item.total || 0))),
+    selectedOptions: Array.isArray(item.selectedOptions)
+      ? (item.selectedOptions as JsonRecord[]).slice(0, 30).map(option => ({
+        name: String(option.name || '').slice(0, 120),
+        quantity: Math.max(0, Number(option.quantity || 0))
+      }))
+      : []
   })).filter(item => item.quantity > 0);
   if (cleanItems.length === 0) {
     return jsonResponse({ ok: false, error: 'El pedido no contiene artículos válidos.' }, 400);
   }
 
-  const units = cleanItems.reduce((sum, item) => sum + item.quantity, 0);
   const itemLines = cleanItems.slice(0, 40).map(item =>
     `• ${escapeHtml(item.name)} × ${item.quantity.toLocaleString('es-ES')} — ${money(item.total)}`
   );
   if (cleanItems.length > 40) itemLines.push(`• …y ${cleanItems.length - 40} líneas más`);
 
+  const auditResult = await recordVoidEvent({
+    eventId,
+    occurredAt,
+    orderName,
+    orderType: String(body.orderType || 'direct').slice(0, 40),
+    staffName,
+    total,
+    items: cleanItems
+  });
+  if (auditResult.inserted !== true) {
+    return jsonResponse({ ok: true, duplicate: true, notificationMessageIds: [] });
+  }
+
   const notificationMessageIds: Array<{ chatId: number; messageId: number }> = [];
   for (const userId of TELEGRAM_ALLOWED_USER_IDS) {
     const chatId = Number(userId);
     if (!chatId) continue;
-    const isNew = await saveVoidEvent(chatId, { eventId, occurredAt, total, units });
-    if (!isNew) continue;
-    const notification = await telegram('sendMessage', {
-      chat_id: chatId,
-      text: [
-        '🗑️ <b>Pedido vaciado en el TPV</b>',
-        '',
-        `<b>${escapeHtml(orderName)}</b> · ${money(total)}`,
-        staffName ? `Empleado: ${escapeHtml(staffName)}` : '',
-        `Hora: ${new Intl.DateTimeFormat('es-ES', {
-          timeZone: BUSINESS_TIME_ZONE,
-          dateStyle: 'short',
-          timeStyle: 'short'
-        }).format(new Date(occurredAt))}`,
-        '',
-        ...itemLines
-      ].filter(Boolean).join('\n'),
-      parse_mode: 'HTML'
-    }) as JsonRecord;
-    notificationMessageIds.push({
-      chatId,
-      messageId: Number(notification.message_id || 0)
-    });
+    try {
+      const notification = await telegram('sendMessage', {
+        chat_id: chatId,
+        text: [
+          '🗑️ <b>Pedido vaciado en el TPV</b>',
+          '',
+          `<b>${escapeHtml(orderName)}</b> · ${money(total)}`,
+          staffName ? `Empleado: ${escapeHtml(staffName)}` : '',
+          `Hora: ${new Intl.DateTimeFormat('es-ES', {
+            timeZone: BUSINESS_TIME_ZONE,
+            dateStyle: 'short',
+            timeStyle: 'short'
+          }).format(new Date(occurredAt))}`,
+          '',
+          ...itemLines
+        ].filter(Boolean).join('\n'),
+        parse_mode: 'HTML'
+      }) as JsonRecord;
+      notificationMessageIds.push({
+        chatId,
+        messageId: Number(notification.message_id || 0)
+      });
+    } catch (error) {
+      console.error(`[telegram-sales-bot] Auditoría guardada, pero falló el aviso a ${chatId}`, error);
+    }
   }
   return jsonResponse({ ok: true, notificationMessageIds });
 }
@@ -617,7 +634,8 @@ async function handleTicketCleared(body: JsonRecord) {
 Deno.serve(async request => {
   if (request.method === 'OPTIONS') return jsonResponse({ ok: true });
   if (request.method !== 'POST') return jsonResponse({ error: 'Método no permitido.' }, 405);
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !TELEGRAM_BOT_TOKEN ||
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY ||
+      !AUDIT_SUPABASE_URL || !AUDIT_SUPABASE_SECRET_KEY || !TELEGRAM_BOT_TOKEN ||
       !TELEGRAM_WEBHOOK_SECRET || TELEGRAM_ALLOWED_USER_IDS.size === 0) {
     console.error('[telegram-sales-bot] Faltan secretos obligatorios.');
     return jsonResponse({ error: 'Bot no configurado.' }, 503);
@@ -635,8 +653,8 @@ Deno.serve(async request => {
     try {
       return await handleTicketCleared(body);
     } catch (error) {
-      console.error('[telegram-sales-bot] No se pudo notificar el vaciado', error);
-      return jsonResponse({ ok: false, error: 'Telegram no confirmó el vaciado.' }, 502);
+      console.error('[telegram-sales-bot] No se pudo registrar o notificar el vaciado', error);
+      return jsonResponse({ ok: false, error: 'No se pudo registrar el vaciado.' }, 502);
     }
   }
 
@@ -680,7 +698,7 @@ Deno.serve(async request => {
     } else if (intent === 'summary') {
       reply = summaryMessage(period, await loadSales(period));
     } else if (intent === 'voids') {
-      reply = await voidsMessage(chatId, period);
+      reply = await voidsMessage(period);
     } else {
       const { sales, lines, payments } = await loadDetails(period);
       if (intent === 'cash') reply = cashMessage(period, sales, payments);
@@ -688,7 +706,7 @@ Deno.serve(async request => {
       if (intent === 'product') {
         const query = inferProductQuery(text);
         reply = query
-          ? productMessage(query, period, sales, lines)
+          ? productMessage(query, period, sales, lines, await loadVoidLines(period))
           : 'Indica el artículo. Por ejemplo: <code>/producto minipancakes</code>';
       }
     }
