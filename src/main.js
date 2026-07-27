@@ -3990,6 +3990,9 @@ function getScrollViewKey(state = store.state) {
 function captureScrollState(state = store.state) {
   const positions = [];
   const seen = new Set();
+  const openMenuToppingSections = Array.from(
+    document.querySelectorAll('details[data-menu-toppings-section][open]')
+  ).map(element => element.dataset.menuToppingsSection);
 
   SCROLL_PRESERVE_SELECTORS.forEach(selector => {
     document.querySelectorAll(selector).forEach((el, index) => {
@@ -4030,7 +4033,8 @@ function captureScrollState(state = store.state) {
     key: getScrollViewKey(state),
     windowX: window.scrollX || 0,
     windowY: window.scrollY || 0,
-    positions
+    positions,
+    openMenuToppingSections
   };
 }
 
@@ -4042,6 +4046,13 @@ function restoreScrollState(snapshot, state = store.state) {
     if (!el) return;
     el.scrollTop = pos.top;
     el.scrollLeft = pos.left;
+  });
+
+  (snapshot.openMenuToppingSections || []).forEach(sectionId => {
+    const details = document.querySelector(
+      `details[data-menu-toppings-section="${CSS.escape(sectionId)}"]`
+    );
+    if (details) details.open = true;
   });
 
   if (snapshot.windowX || snapshot.windowY) {
@@ -4103,7 +4114,7 @@ function isCashClosureViewActive(state = store.state) {
 function isCatalogManagerViewActive(state = store.state) {
   return state.activeTab === 'ajustes' &&
     Array.isArray(state.settingsPath) &&
-    state.settingsPath[0] === 'articulos';
+    ['articulos', 'menu-manager'].includes(state.settingsPath[0]);
 }
 
 function isEditableControlFocused() {

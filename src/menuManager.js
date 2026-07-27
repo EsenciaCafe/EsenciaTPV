@@ -215,7 +215,7 @@ export function renderMenuAvailability() {
             ${entityActions('item', section.id, item)}
           </div>`).join('') || '<p class="menu-manager-empty">Sin artículos.</p>'}
       </div>
-      <details class="menu-toppings-details">
+      <details class="menu-toppings-details" data-menu-toppings-section="${escapeHtml(section.id)}">
         <summary>Toppings (${section.toppings?.length || 0})</summary>
         <div class="menu-manager-subheading"><span>Opciones adicionales</span><button class="btn btn-secondary" data-menu-add="topping" data-section-id="${escapeHtml(section.id)}">+ Añadir</button></div>
         <div class="menu-entity-list">
