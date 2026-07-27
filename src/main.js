@@ -3819,10 +3819,11 @@ function setupTicketOnlyEventListeners(container) {
         async () => {
           try {
             await store.clearActiveTicket();
-            showToast('Pedido vaciado y enviado a Telegram.', 'success');
+            showToast('Pedido vaciado.', 'success');
             isDrawerOpen = false;
           } catch (error) {
-            showToast(`No se vació el pedido: ${error.message || 'Telegram no respondió.'}`, 'error');
+            console.error('[TPV] No se pudo confirmar el vaciado.', error);
+            showToast('No se vació el pedido. Comprueba la conexión e inténtalo de nuevo.', 'error');
           }
         },
         null,
@@ -3866,9 +3867,10 @@ function setupTicketOnlyEventListeners(container) {
       showConfirm('Vaciar Pedido', '¿Seguro que deseas vaciar el pedido actual?', async () => {
         try {
           await store.clearActiveTicket();
-          showToast('Pedido vaciado y enviado a Telegram.', 'success');
+          showToast('Pedido vaciado.', 'success');
         } catch (error) {
-          showToast(`No se vació el pedido: ${error.message || 'Telegram no respondió.'}`, 'error');
+          console.error('[TPV] No se pudo confirmar el vaciado.', error);
+          showToast('No se vació el pedido. Comprueba la conexión e inténtalo de nuevo.', 'error');
         }
       }, null, true);
     });
@@ -7900,10 +7902,11 @@ function setupEventListeners(container) {
         async () => {
           try {
             await store.clearActiveTicket();
-            showToast('Pedido vaciado y enviado a Telegram.', 'success');
+            showToast('Pedido vaciado.', 'success');
             isDrawerOpen = false;
           } catch (error) {
-            showToast(`No se vació el pedido: ${error.message || 'Telegram no respondió.'}`, 'error');
+            console.error('[TPV] No se pudo confirmar el vaciado.', error);
+            showToast('No se vació el pedido. Comprueba la conexión e inténtalo de nuevo.', 'error');
           }
         },
         null,
@@ -7958,9 +7961,10 @@ function setupEventListeners(container) {
         async () => {
           try {
             await store.clearActiveTicket();
-            showToast('Pedido vaciado y enviado a Telegram.', 'success');
+            showToast('Pedido vaciado.', 'success');
           } catch (error) {
-            showToast(`No se vació el pedido: ${error.message || 'Telegram no respondió.'}`, 'error');
+            console.error('[TPV] No se pudo confirmar el vaciado.', error);
+            showToast('No se vació el pedido. Comprueba la conexión e inténtalo de nuevo.', 'error');
           }
         },
         null,
