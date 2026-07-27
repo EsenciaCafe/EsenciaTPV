@@ -24,6 +24,7 @@ import {
 } from './db.js';
 import { supabase } from './supabase.js';
 import { notifyTelegramTicketCleared } from './telegramEmptyOrders.js';
+import { notifyTelegramCashClosure } from './telegramCashClosures.js';
 
 
 const DINING_STATE_STORAGE_KEY = 'tpv-dining-state-v1';
@@ -1412,6 +1413,11 @@ class Store {
 
     await upsertCashClosure(closure);
     await this.loadCashClosures();
+    try {
+      await notifyTelegramCashClosure(closure);
+    } catch (error) {
+      console.warn('[Cierre] Guardado, pero no se pudo enviar el resumen privado.', error);
+    }
     this.notify();
     return true;
   }
