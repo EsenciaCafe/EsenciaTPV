@@ -25,7 +25,10 @@ import {
 import { supabase } from './supabase.js';
 import { notifyTelegramTicketCleared } from './telegramEmptyOrders.js';
 import { notifyTelegramCashClosure } from './telegramCashClosures.js';
-import { getSignedPaymentAmount } from './paymentAccounting.js';
+import {
+  getSignedChargedPaymentAmount,
+  getSignedPaymentAmount
+} from './paymentAccounting.js';
 
 
 const DINING_STATE_STORAGE_KEY = 'tpv-dining-state-v1';
@@ -1572,16 +1575,16 @@ class Store {
 
       this.getPaymentBreakdownForTransaction(tx).forEach(payment => {
         const method = (payment.method || '').toLowerCase();
-        const amount = getSignedPaymentAmount(tx, payment);
+        const saleAmount = getSignedPaymentAmount(tx, payment);
         if (method.includes('regalo') || method.includes('gift')) {
-          acc.otherPayments += amount;
+          acc.otherPayments += saleAmount;
         } else if (method.includes('efectivo')) {
-          acc.cashPayments += amount;
-          acc.expectedCash += amount;
+          acc.cashPayments += saleAmount;
+          acc.expectedCash += saleAmount;
         } else if (method.includes('tarjeta')) {
-          acc.expectedCard += amount;
+          acc.expectedCard += getSignedChargedPaymentAmount(tx, payment);
         } else {
-          acc.otherPayments += amount;
+          acc.otherPayments += saleAmount;
         }
       });
       acc.expectedCash -= tipAmount;

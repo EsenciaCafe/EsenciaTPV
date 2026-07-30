@@ -34,10 +34,9 @@ import {
   renderMenuPromos
 } from './menuManager.js';
 import {
-  addPaymentToBuckets,
-  getSignedPaymentAmount,
-  reconcileTransactionPayments
-} from './paymentAccounting.js';
+  buildSalesReport,
+  REPORT_PAYMENT_METHODS
+} from './salesReporting.js';
 
 // SVG Icons
 const ICONS = {
@@ -216,33 +215,6 @@ function summarizePayments(tx = {}) {
     summary: count > 1 ? `${count} pagos: ${parts.join(' · ')}` : (payments[0]?.method || tx.paymentMethod || ''),
     rows: payments
   };
-}
-
-function normalizePaymentBucket(method = '') {
-  const key = String(method || '').toLowerCase();
-  if (key.includes('efectivo')) return 'Efectivo';
-  if (key.includes('regalo') || key.includes('gift')) return 'Tarjeta Regalo';
-  if (key.includes('tarjeta') || key.includes('card') || key.includes('bbva')) return 'Tarjeta';
-  return 'Tarjeta';
-}
-
-function applyTransactionPaymentsToBuckets(tx = {}, buckets = {}) {
-  getPaymentBreakdown(tx).forEach(payment => {
-    addPaymentToBuckets(tx, payment, buckets, normalizePaymentBucket);
-  });
-  return buckets;
-}
-
-function getTransactionPaymentTotals(tx = {}) {
-  return applyTransactionPaymentsToBuckets(tx, {
-    Efectivo: 0,
-    Tarjeta: 0,
-    'Tarjeta Regalo': 0
-  });
-}
-
-function getReportPaymentReconciliation(transactions = []) {
-  return reconcileTransactionPayments(transactions, getPaymentBreakdown);
 }
 
 function renderPaymentReconciliationNotice(reconciliation) {
@@ -2342,33 +2314,26 @@ function renderAjustesView(state) {
     const selectedDate = state.selectedReportDate || new Date().toISOString().slice(0, 10);
     const dayTx = state.transactions.filter(tx => getTxDateKey(tx) === selectedDate);
 
-    // Calculate daily figures
-    let totalGross = 0;
-    let totalRefunds = 0;
-    let totalDiscounts = 0;
-    let totalTips = 0;
-    const paymentMethods = {
-      'Efectivo': 0,
-      'Tarjeta': 0,
-      'Tarjeta Regalo': 0
-    };
-
-    dayTx.forEach(tx => {
-      const val = Number(tx.total || 0);
-
-      if (tx.type === 'refund') {
-        totalRefunds += Math.abs(val);
-      } else {
-        const discount = Number(tx.discountTotal || 0);
-        totalDiscounts += discount;
-        totalGross += Number(tx.grossTotal ?? (val + discount));
-        totalTips += Math.max(0, Number(tx.tipAmount || 0));
-      }
-      applyTransactionPaymentsToBuckets(tx, paymentMethods);
+    const dailyReport = buildSalesReport(dayTx, {
+      getTransactionDate: getTxDate,
+      getPayments: getPaymentBreakdown
     });
-
-    const totalNet = totalGross - totalDiscounts - totalRefunds;
-    const paymentReconciliation = getReportPaymentReconciliation(dayTx);
+    const totalGross = dailyReport.grossSales;
+    const totalRefunds = dailyReport.refunds;
+    const totalDiscounts = dailyReport.discounts;
+    const totalTips = dailyReport.tips;
+    const totalNet = dailyReport.netSales;
+    const paymentMethods = {
+      Efectivo: dailyReport.paymentMethods[REPORT_PAYMENT_METHODS.CASH],
+      Tarjeta: dailyReport.paymentMethods[REPORT_PAYMENT_METHODS.CARD],
+      'Tarjeta Regalo': dailyReport.paymentMethods[REPORT_PAYMENT_METHODS.GIFT_CARD]
+    };
+    const paymentReconciliation = {
+      transactionNet: dailyReport.netSales,
+      paymentNet: dailyReport.paymentNet,
+      difference: dailyReport.paymentDifference,
+      isBalanced: dailyReport.isPaymentBalanced
+    };
 
     // El informe es el libro vivo de ventas; los cierres son fotografias inmutables
     // que deben conciliar con la parte ya cerrada de ese libro.
@@ -2651,64 +2616,29 @@ function renderAjustesView(state) {
     const selectedMonth = state.selectedReportMonth || new Date().toISOString().slice(0, 7);
     const monthTx = state.transactions.filter(tx => getTxMonthKey(tx) === selectedMonth);
 
-    // Calculate monthly figures
-    let totalGross = 0;
-    let totalRefunds = 0;
-    let totalDiscounts = 0;
-    let totalTips = 0;
-    let cashSales = 0;
-    let cardSales = 0;
-    const txCount = monthTx.filter(t => t.type !== 'refund').length;
-
-    const dailyAgg = {};
-    monthTx.forEach(tx => {
-      const d = getTxDate(tx);
-      const day = d.getDate();
-      const dateStr = d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
-      
-      if (!dailyAgg[day]) {
-        dailyAgg[day] = {
-          day,
-          dateStr,
-          count: 0,
-          gross: 0,
-          discounts: 0,
-          refunds: 0,
-          net: 0,
-          cash: 0,
-          card: 0,
-          tips: 0
-        };
-      }
-
-      const val = Number(tx.total || 0);
-      const paymentTotals = getTransactionPaymentTotals(tx);
-
-      if (tx.type === 'refund') {
-        totalRefunds += Math.abs(val);
-        dailyAgg[day].refunds += Math.abs(val);
-        dailyAgg[day].net += val; // negative
-      } else {
-        const discount = Number(tx.discountTotal || 0);
-        totalDiscounts += discount;
-        totalGross += Number(tx.grossTotal ?? (val + discount));
-        dailyAgg[day].count += 1;
-        dailyAgg[day].gross += Number(tx.grossTotal ?? (val + discount));
-        dailyAgg[day].discounts += discount;
-        dailyAgg[day].net += val; // positive
-        const tipAmount = Math.max(0, Number(tx.tipAmount || 0));
-        totalTips += tipAmount;
-        dailyAgg[day].tips += tipAmount;
-      }
-      cashSales += paymentTotals.Efectivo;
-      cardSales += paymentTotals.Tarjeta;
-      dailyAgg[day].cash += paymentTotals.Efectivo;
-      dailyAgg[day].card += paymentTotals.Tarjeta;
+    const monthlyReport = buildSalesReport(monthTx, {
+      getTransactionDate: getTxDate,
+      getPayments: getPaymentBreakdown
     });
-
-    const totalNet = totalGross - totalDiscounts - totalRefunds;
-    const paymentReconciliation = getReportPaymentReconciliation(monthTx);
-    const sortedDays = Object.values(dailyAgg).sort((a, b) => a.day - b.day);
+    const totalGross = monthlyReport.grossSales;
+    const totalRefunds = monthlyReport.refunds;
+    const totalDiscounts = monthlyReport.discounts;
+    const totalTips = monthlyReport.tips;
+    const totalNet = monthlyReport.netSales;
+    const txCount = monthlyReport.ticketCount;
+    const cashSales = monthlyReport.paymentMethods[REPORT_PAYMENT_METHODS.CASH];
+    const cardSales = monthlyReport.paymentMethods[REPORT_PAYMENT_METHODS.CARD];
+    const giftCardSales = monthlyReport.paymentMethods[REPORT_PAYMENT_METHODS.GIFT_CARD];
+    const paymentReconciliation = {
+      transactionNet: monthlyReport.netSales,
+      paymentNet: monthlyReport.paymentNet,
+      difference: monthlyReport.paymentDifference,
+      isBalanced: monthlyReport.isPaymentBalanced
+    };
+    const sortedDays = monthlyReport.days.map(day => ({
+      ...day,
+      dateStr: day.date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })
+    }));
 
     // Month name display
     const [yearPart, monthPart] = selectedMonth.split('-');
@@ -2721,13 +2651,14 @@ function renderAjustesView(state) {
     const tableRowsHTML = sortedDays.map(day => `
       <tr>
         <td style="font-weight: 600;">${day.dateStr}</td>
-        <td style="text-align: right;">${day.count}</td>
-        <td style="text-align: right; color: #f59e0b;">${day.cash.toFixed(2)}€</td>
-        <td style="text-align: right; color: #3b82f6;">${day.card.toFixed(2)}€</td>
+        <td style="text-align: right;">${day.ticketCount}</td>
+        <td style="text-align: right; color: #f59e0b;">${day.paymentMethods[REPORT_PAYMENT_METHODS.CASH].toFixed(2)}€</td>
+        <td style="text-align: right; color: #3b82f6;">${day.paymentMethods[REPORT_PAYMENT_METHODS.CARD].toFixed(2)}€</td>
+        <td style="text-align: right; color: var(--secondary);">${day.paymentMethods[REPORT_PAYMENT_METHODS.GIFT_CARD].toFixed(2)}€</td>
         <td style="text-align: right; color: var(--secondary);">${day.tips.toFixed(2)}€</td>
         <td style="text-align: right; color: var(--danger); font-size: 0.85rem;">${day.refunds > 0 ? `-${day.refunds.toFixed(2)}€` : '0.00€'}</td>
         <td style="text-align: right; color: var(--secondary); font-size: 0.85rem;">${day.discounts > 0 ? `-${day.discounts.toFixed(2)}€` : '0.00€'}</td>
-        <td style="text-align: right; font-weight: 700; color: ${day.net >= 0 ? 'var(--secondary)' : 'var(--danger)'};">${day.net.toFixed(2)}€</td>
+        <td style="text-align: right; font-weight: 700; color: ${day.netSales >= 0 ? 'var(--secondary)' : 'var(--danger)'};">${day.netSales.toFixed(2)}€</td>
       </tr>
     `).join('');
 
@@ -2765,8 +2696,12 @@ function renderAjustesView(state) {
               <span class="reports-kpi-val" style="color:#f59e0b;">${cashSales.toFixed(2)}€</span>
             </div>
             <div class="reports-kpi-card kpi-card-pay">
-              <span class="reports-kpi-label">Tarjeta (Neto)</span>
+              <span class="reports-kpi-label">Tarjeta bancaria (Neto)</span>
               <span class="reports-kpi-val" style="color:#3b82f6;">${cardSales.toFixed(2)}€</span>
+            </div>
+            <div class="reports-kpi-card">
+              <span class="reports-kpi-label">Tarjeta regalo (Neto)</span>
+              <span class="reports-kpi-val" style="color:var(--secondary);">${giftCardSales.toFixed(2)}€</span>
             </div>
             <div class="reports-kpi-card">
               <span class="reports-kpi-label">Descuentos / Invitaciones</span>
@@ -2775,6 +2710,7 @@ function renderAjustesView(state) {
             <div class="reports-kpi-card">
               <span class="reports-kpi-label">Propinas tarjeta</span>
               <span class="reports-kpi-val" style="color:var(--secondary);">${totalTips.toFixed(2)}€</span>
+              <span style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">Fuera de ventas · retirada del cajón</span>
             </div>
           </div>
           ${renderPaymentReconciliationNotice(paymentReconciliation)}
@@ -2799,7 +2735,8 @@ function renderAjustesView(state) {
                     <th style="padding: 10px 8px;">Día</th>
                     <th style="padding: 10px 8px; text-align: right;">Pedidos</th>
                     <th style="padding: 10px 8px; text-align: right;">Efectivo</th>
-                    <th style="padding: 10px 8px; text-align: right;">Tarjeta</th>
+                    <th style="padding: 10px 8px; text-align: right;">Tarjeta bancaria</th>
+                    <th style="padding: 10px 8px; text-align: right;">Tarjeta regalo</th>
                     <th style="padding: 10px 8px; text-align: right;">Propinas</th>
                     <th style="padding: 10px 8px; text-align: right;">Devoluciones</th>
                     <th style="padding: 10px 8px; text-align: right;">Descuentos</th>
@@ -2807,7 +2744,7 @@ function renderAjustesView(state) {
                   </tr>
                 </thead>
                 <tbody>
-                  ${tableRowsHTML ? tableRowsHTML : `<tr><td colspan="8" style="text-align: center; padding: 20px; color: var(--text-muted);">No hay ventas este mes</td></tr>`}
+                  ${tableRowsHTML ? tableRowsHTML : `<tr><td colspan="9" style="text-align: center; padding: 20px; color: var(--text-muted);">No hay ventas este mes</td></tr>`}
                 </tbody>
                 ${sortedDays.length > 0 ? `
                   <tfoot>
@@ -2816,6 +2753,7 @@ function renderAjustesView(state) {
                       <td style="padding: 10px 8px; text-align: right;">${txCount}</td>
                       <td style="padding: 10px 8px; text-align: right; color: #f59e0b;">${cashSales.toFixed(2)}€</td>
                       <td style="padding: 10px 8px; text-align: right; color: #3b82f6;">${cardSales.toFixed(2)}€</td>
+                      <td style="padding: 10px 8px; text-align: right; color: var(--secondary);">${giftCardSales.toFixed(2)}€</td>
                       <td style="padding: 10px 8px; text-align: right; color: var(--secondary);">${totalTips.toFixed(2)}€</td>
                       <td style="padding: 10px 8px; text-align: right; color: var(--danger); font-size: 0.85rem;">-${totalRefunds.toFixed(2)}€</td>
                       <td style="padding: 10px 8px; text-align: right; color: var(--secondary); font-size: 0.85rem;">-${totalDiscounts.toFixed(2)}€</td>
@@ -6563,110 +6501,6 @@ function showPaymentModal(totalAmount) {
   document.body.appendChild(modal);
 }
 
-// Helper functions for sales reports export
-function aggregateDailyData(transactions, getTxDate) {
-  const groups = {};
-  transactions.forEach(tx => {
-    const d = getTxDate(tx);
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    const key = `${yyyy}-${mm}-${dd}`;
-    
-    if (!groups[key]) {
-      groups[key] = {
-        dateStr: `${dd}/${mm}/${yyyy}`,
-        count: 0,
-        base: 0,
-        tax: 0,
-        cash: 0,
-        card: 0,
-        total: 0
-      };
-    }
-    
-    const total = Number(tx.total || 0);
-    const legal = tx.legalData || { taxRate: 7 };
-    const rate = Number(legal.taxRate || 0);
-    const base = total / (1 + (rate / 100));
-    const tax = total - base;
-    
-    groups[key].count += 1;
-    groups[key].base += base;
-    groups[key].tax += tax;
-    groups[key].total += total;
-    
-    const paymentTotals = getTransactionPaymentTotals(tx);
-    groups[key].cash += paymentTotals.Efectivo;
-    groups[key].card += paymentTotals.Tarjeta;
-  });
-  
-  return Object.keys(groups).sort().map(k => groups[k]);
-}
-
-function aggregateMonthlyData(transactions, getTxDate) {
-  const groups = {};
-  transactions.forEach(tx => {
-    const d = getTxDate(tx);
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const key = `${yyyy}-${mm}`;
-    
-    if (!groups[key]) {
-      const monthLabel = d.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
-      groups[key] = {
-        monthStr: monthLabel,
-        count: 0,
-        base: 0,
-        tax: 0,
-        cash: 0,
-        card: 0,
-        total: 0
-      };
-    }
-    
-    const total = Number(tx.total || 0);
-    const legal = tx.legalData || { taxRate: 7 };
-    const rate = Number(legal.taxRate || 0);
-    const base = total / (1 + (rate / 100));
-    const tax = total - base;
-    
-    groups[key].count += 1;
-    groups[key].base += base;
-    groups[key].tax += tax;
-    groups[key].total += total;
-    
-    const paymentTotals = getTransactionPaymentTotals(tx);
-    groups[key].cash += paymentTotals.Efectivo;
-    groups[key].card += paymentTotals.Tarjeta;
-  });
-  
-  return Object.keys(groups).sort().map(k => groups[k]);
-}
-
-function triggerCSVDownload(filename, headers, rows) {
-  const csvRows = [headers.join(';')];
-  rows.forEach(row => {
-    const formattedRow = row.map(val => {
-      if (typeof val === 'number') {
-        return val.toFixed(2).replace('.', ',');
-      }
-      return `"${String(val).replace(/"/g, '""')}"`;
-    });
-    csvRows.push(formattedRow.join(';'));
-  });
-  
-  const csvContent = '\ufeff' + csvRows.join('\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.setAttribute('download', filename);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-}
-
 function downloadCashClosuresExcel(selectedMonth, closures, legal) {
   const sortedClosures = [...closures].sort((a, b) => String(a.businessDate).localeCompare(String(b.businessDate)));
   const totals = sortedClosures.reduce((acc, closure) => {
@@ -6818,72 +6652,15 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
 
   const moneyCell = value => Number(value || 0).toFixed(2);
   const escapeCell = value => escapeHtml(value ?? '');
-  const paymentBreakdown = (tx) => {
-    if (Array.isArray(tx.payments) && tx.payments.length > 0) {
-      return tx.payments.map(payment => ({
-        method: payment.method || tx.paymentMethod || '',
-        amount: Number(payment.amount || 0),
-        saleAmount: Number(payment.saleAmount ?? payment.amount ?? 0),
-        tipAmount: Number(payment.tipAmount || 0),
-        provider: payment.provider || ''
-      }));
-    }
-    return [{
-      method: tx.paymentMethod || '',
-      amount: Number(tx.totalCharged ?? (Number(tx.total || 0) + Math.max(0, Number(tx.tipAmount || 0)))),
-      saleAmount: Number(tx.total || 0),
-      tipAmount: Math.max(0, Number(tx.tipAmount || 0)),
-      provider: String(tx.paymentMethod || '').toLowerCase().includes('tarjeta') ? 'BBVA' : ''
-    }];
-  };
 
   const sortedTx = [...transactions].sort((a, b) => getTxDate(a) - getTxDate(b));
-  const daily = {};
-  const paymentTotals = {};
+  const report = buildSalesReport(sortedTx, {
+    getTransactionDate: getTxDate,
+    getPayments: getPaymentBreakdown
+  });
   const itemTotals = {};
-  let grossSales = 0;
-  let discountSales = 0;
-  let refunds = 0;
-  let ticketCount = 0;
-  let totalTips = 0;
 
   sortedTx.forEach(tx => {
-    const d = getTxDate(tx);
-    const dayKey = getLocalDateKey(d);
-    if (!daily[dayKey]) {
-      daily[dayKey] = { date: dayKey, tickets: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cash: 0, card: 0, other: 0, tips: 0 };
-    }
-
-    const total = Number(tx.total || 0);
-    const isRefund = tx.type === 'refund';
-    if (isRefund) {
-      refunds += Math.abs(total);
-      daily[dayKey].refunds += Math.abs(total);
-    } else {
-      const discount = Number(tx.discountTotal || 0);
-      const gross = Number(tx.grossTotal ?? (total + discount));
-      grossSales += gross;
-      discountSales += discount;
-      ticketCount += 1;
-      daily[dayKey].tickets += 1;
-      daily[dayKey].gross += gross;
-      daily[dayKey].discounts += discount;
-      const tipAmount = Math.max(0, Number(tx.tipAmount || 0));
-      totalTips += tipAmount;
-      daily[dayKey].tips += tipAmount;
-    }
-    daily[dayKey].net += total;
-
-    paymentBreakdown(tx).forEach(payment => {
-      const method = payment.method || 'Sin metodo';
-      const amount = getSignedPaymentAmount(tx, payment);
-      paymentTotals[method] = (paymentTotals[method] || 0) + amount;
-      const methodKey = method.toLowerCase();
-      if (methodKey.includes('efectivo')) daily[dayKey].cash += amount;
-      else if (methodKey.includes('tarjeta')) daily[dayKey].card += amount;
-      else daily[dayKey].other += amount;
-    });
-
     (tx.items || []).forEach(item => {
       const key = item.name || 'Articulo';
       if (!itemTotals[key]) itemTotals[key] = { name: key, qty: 0, total: 0 };
@@ -6892,24 +6669,24 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
     });
   });
 
-  const dailyRows = Object.values(daily).sort((a, b) => a.date.localeCompare(b.date)).map(day => `
+  const dailyRows = report.days.map(day => `
     <tr>
-      <td>${formatIsoDateEs(day.date)}</td>
-      <td>${day.tickets}</td>
-      <td>${moneyCell(day.gross)}</td>
+      <td>${formatIsoDateEs(day.key)}</td>
+      <td>${day.ticketCount}</td>
+      <td>${moneyCell(day.grossSales)}</td>
       <td>${moneyCell(day.discounts)}</td>
       <td>${moneyCell(day.refunds)}</td>
-      <td>${moneyCell(day.cash)}</td>
-      <td>${moneyCell(day.card)}</td>
+      <td>${moneyCell(day.paymentMethods[REPORT_PAYMENT_METHODS.CASH])}</td>
+      <td>${moneyCell(day.paymentMethods[REPORT_PAYMENT_METHODS.CARD])}</td>
+      <td>${moneyCell(day.paymentMethods[REPORT_PAYMENT_METHODS.GIFT_CARD])}</td>
       <td>${moneyCell(day.tips)}</td>
-      <td>${moneyCell(day.other)}</td>
-      <td>${moneyCell(day.net)}</td>
+      <td>${moneyCell(day.netSales)}</td>
     </tr>
   `).join('');
 
   const txRows = sortedTx.map(tx => {
     const d = getTxDate(tx);
-    const payments = paymentBreakdown(tx);
+    const payments = getPaymentBreakdown(tx);
     return `
       <tr>
         <td>${formatIsoDateEs(getLocalDateKey(d))}</td>
@@ -6940,8 +6717,12 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
       </tr>
     `).join('');
 
-  const paymentRows = Object.entries(paymentTotals)
-    .sort((a, b) => b[1] - a[1])
+  const paymentRows = [
+    REPORT_PAYMENT_METHODS.CASH,
+    REPORT_PAYMENT_METHODS.CARD,
+    REPORT_PAYMENT_METHODS.GIFT_CARD
+  ]
+    .map(method => [method, report.paymentMethods[method]])
     .map(([method, total]) => `
       <tr>
         <td>${escapeCell(method)}</td>
@@ -6949,7 +6730,6 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
       </tr>
     `).join('');
 
-  const netSales = grossSales - discountSales - refunds;
   const html = `<!doctype html>
 <html>
 <head>
@@ -6970,12 +6750,12 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
   <h2>Resumen</h2>
   <table>
     <tr><th>Tickets</th><th>Ventas brutas</th><th>Descuentos</th><th>Devoluciones</th><th>Ventas netas</th><th>Propinas tarjeta</th></tr>
-    <tr><td>${ticketCount}</td><td>${moneyCell(grossSales)}</td><td>${moneyCell(discountSales)}</td><td>${moneyCell(refunds)}</td><td>${moneyCell(netSales)}</td><td>${moneyCell(totalTips)}</td></tr>
+    <tr><td>${report.ticketCount}</td><td>${moneyCell(report.grossSales)}</td><td>${moneyCell(report.discounts)}</td><td>${moneyCell(report.refunds)}</td><td>${moneyCell(report.netSales)}</td><td>${moneyCell(report.tips)}</td></tr>
   </table>
 
   <h2>Resumen por dia</h2>
   <table>
-    <thead><tr><th>Fecha</th><th>Tickets</th><th>Ventas brutas</th><th>Descuentos</th><th>Devoluciones</th><th>Efectivo</th><th>Tarjeta</th><th>Propinas</th><th>Otros</th><th>Neto</th></tr></thead>
+    <thead><tr><th>Fecha</th><th>Tickets</th><th>Ventas brutas</th><th>Descuentos</th><th>Devoluciones</th><th>Efectivo</th><th>Tarjeta bancaria</th><th>Tarjeta regalo</th><th>Propinas tarjeta</th><th>Neto</th></tr></thead>
     <tbody>${dailyRows || '<tr><td colspan="10">Sin ventas</td></tr>'}</tbody>
   </table>
 
@@ -7045,27 +6825,20 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
     doc.text(`NIF: ${legal.nif || 'B-87654321'}`, rightX, 17, { align: 'right' });
     doc.text(legal.address || 'Santa Cruz de Tenerife', rightX, 22, { align: 'right' });
 
-    // Calculate figures
-    let totalGross = 0;
-    let totalRefunds = 0;
-    let totalDiscounts = 0;
-    let totalTips = 0;
-    const paymentMethods = { 'Efectivo': 0, 'Tarjeta': 0, 'Tarjeta Regalo': 0 };
-
-    dayTx.forEach(tx => {
-      const val = Number(tx.total || 0);
-      
-      if (tx.type === 'refund') {
-        totalRefunds += Math.abs(val);
-      } else {
-        const discount = Number(tx.discountTotal || 0);
-        totalDiscounts += discount;
-        totalGross += Number(tx.grossTotal ?? (val + discount));
-        totalTips += Math.max(0, Number(tx.tipAmount || 0));
-      }
-      applyTransactionPaymentsToBuckets(tx, paymentMethods);
+    const report = buildSalesReport(dayTx, {
+      getTransactionDate: getTransactionDateObject,
+      getPayments: getPaymentBreakdown
     });
-    const totalNet = totalGross - totalDiscounts - totalRefunds;
+    const totalGross = report.grossSales;
+    const totalRefunds = report.refunds;
+    const totalDiscounts = report.discounts;
+    const totalTips = report.tips;
+    const totalNet = report.netSales;
+    const paymentMethods = {
+      Efectivo: report.paymentMethods[REPORT_PAYMENT_METHODS.CASH],
+      Tarjeta: report.paymentMethods[REPORT_PAYMENT_METHODS.CARD],
+      'Tarjeta Regalo': report.paymentMethods[REPORT_PAYMENT_METHODS.GIFT_CARD]
+    };
 
     // Draw KPI Summary boxes
     doc.setFillColor(248, 250, 252);
@@ -7099,7 +6872,7 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
     doc.text(`Efectivo: ${paymentMethods['Efectivo'].toFixed(2)} €`, margin + 95 + 5, 55);
     doc.text(`Tarjeta Bancaria: ${paymentMethods['Tarjeta'].toFixed(2)} €`, margin + 95 + 5, 60);
     doc.text(`Tarjeta Regalo: ${paymentMethods['Tarjeta Regalo'].toFixed(2)} €`, margin + 95 + 5, 65);
-    doc.text(`Propinas BBVA: +${totalTips.toFixed(2)} €`, margin + 95 + 5, 70);
+    doc.text(`Propinas tarjeta (aparte): +${totalTips.toFixed(2)} €`, margin + 95 + 5, 70);
 
     // Draw transaction table
     const headers = ['Ticket ID', 'Hora', 'Mesa / Concepto', 'Método Pago', 'Artículos', 'Importe'];
@@ -7183,7 +6956,7 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
   }
 }
 
-function downloadMonthlyReportPDF(selectedMonth, sortedDays, legal, filename) {
+function downloadMonthlyReportPDF(selectedMonth, report, legal, filename) {
   try {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
@@ -7218,25 +6991,15 @@ function downloadMonthlyReportPDF(selectedMonth, sortedDays, legal, filename) {
     doc.text(`NIF: ${legal.nif || 'B-87654321'}`, rightX, 17, { align: 'right' });
     doc.text(legal.address || 'Santa Cruz de Tenerife', rightX, 22, { align: 'right' });
 
-    // Calculate figures
-    let totalGross = 0;
-    let totalRefunds = 0;
-    let totalDiscounts = 0;
-    let totalCash = 0;
-    let totalCard = 0;
-    let totalTips = 0;
-    let totalOrders = 0;
-
-    sortedDays.forEach(day => {
-      totalGross += day.gross;
-      totalRefunds += day.refunds;
-      totalDiscounts += day.discounts || 0;
-      totalCash += day.cash;
-      totalCard += day.card;
-      totalTips += day.tips || 0;
-      totalOrders += day.count;
-    });
-    const totalNet = totalGross - totalDiscounts - totalRefunds;
+    const totalGross = report.grossSales;
+    const totalRefunds = report.refunds;
+    const totalDiscounts = report.discounts;
+    const totalCash = report.paymentMethods[REPORT_PAYMENT_METHODS.CASH];
+    const totalCard = report.paymentMethods[REPORT_PAYMENT_METHODS.CARD];
+    const totalGiftCard = report.paymentMethods[REPORT_PAYMENT_METHODS.GIFT_CARD];
+    const totalTips = report.tips;
+    const totalOrders = report.ticketCount;
+    const totalNet = report.netSales;
 
     // Draw KPI Summary boxes
     doc.setFillColor(248, 250, 252);
@@ -7270,29 +7033,32 @@ function downloadMonthlyReportPDF(selectedMonth, sortedDays, legal, filename) {
     doc.setFontSize(8);
     doc.text(`Efectivo: ${totalCash.toFixed(2)} €`, margin + 95 + 5, 55);
     doc.text(`Tarjeta Bancaria: ${totalCard.toFixed(2)} €`, margin + 95 + 5, 60);
-    doc.text(`Propinas BBVA: +${totalTips.toFixed(2)} €`, margin + 95 + 5, 65);
+    doc.text(`Tarjeta Regalo: ${totalGiftCard.toFixed(2)} €`, margin + 95 + 5, 65);
+    doc.text(`Propinas tarjeta (aparte): +${totalTips.toFixed(2)} €`, margin + 95 + 5, 70);
 
     // Draw breakdown table
-    const headers = ['Día', 'Pedidos', 'Efectivo', 'Tarjeta', 'Devoluciones', 'Descuentos', 'Total Neto'];
-    const tableBody = sortedDays.map(day => [
-      day.dateStr,
-      String(day.count),
-      `${day.cash.toFixed(2)} €`,
-      `${day.card.toFixed(2)} €`,
-      day.refunds > 0 ? `-${day.refunds.toFixed(2)} €` : '0.00 €',
-      day.discounts > 0 ? `-${day.discounts.toFixed(2)} €` : '0.00 €',
-      `${day.net.toFixed(2)} €`
+    const headers = ['Día', 'Pedidos', 'Efectivo', 'Tarjeta bancaria', 'Tarjeta regalo', 'Devoluciones', 'Descuentos', 'Total Neto'];
+    const tableBody = report.days.map(day => [
+      day.date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }),
+      String(day.ticketCount),
+      `${day.paymentMethods[REPORT_PAYMENT_METHODS.CASH].toFixed(2)}€`,
+      `${day.paymentMethods[REPORT_PAYMENT_METHODS.CARD].toFixed(2)}€`,
+      `${day.paymentMethods[REPORT_PAYMENT_METHODS.GIFT_CARD].toFixed(2)}€`,
+      day.refunds > 0 ? `-${day.refunds.toFixed(2)}€` : '0.00€',
+      day.discounts > 0 ? `-${day.discounts.toFixed(2)}€` : '0.00€',
+      `${day.netSales.toFixed(2)}€`
     ]);
 
     // Add totals row
     tableBody.push([
       'TOTAL MENSUAL',
       String(totalOrders),
-      `${totalCash.toFixed(2)} €`,
-      `${totalCard.toFixed(2)} €`,
-      `-${totalRefunds.toFixed(2)} €`,
-      `-${totalDiscounts.toFixed(2)} €`,
-      `${totalNet.toFixed(2)} €`
+      `${totalCash.toFixed(2)}€`,
+      `${totalCard.toFixed(2)}€`,
+      `${totalGiftCard.toFixed(2)}€`,
+      `-${totalRefunds.toFixed(2)}€`,
+      `-${totalDiscounts.toFixed(2)}€`,
+      `${totalNet.toFixed(2)}€`
     ]);
 
     const totalRowIndex = tableBody.length - 1;
@@ -7324,13 +7090,14 @@ function downloadMonthlyReportPDF(selectedMonth, sortedDays, legal, filename) {
         3: { halign: 'right' },
         4: { halign: 'right' },
         5: { halign: 'right' },
-        6: { halign: 'right', cellWidth: 27 }
+        6: { halign: 'right' },
+        7: { halign: 'right', cellWidth: 25 }
       },
       didParseCell: (data) => {
         if (data.section === 'body' && data.row.index === totalRowIndex) {
           data.cell.styles.fontStyle = 'bold';
           data.cell.styles.fillColor = [241, 245, 249];
-          if (data.column.index === 6) {
+          if (data.column.index === 7) {
             data.cell.styles.textColor = totalNet >= 0 ? [5, 150, 105] : [220, 38, 38];
           } else {
             data.cell.styles.textColor = [15, 23, 42];
@@ -8829,46 +8596,13 @@ function setupEventListeners(container) {
       const selectedMonth = store.state.selectedReportMonth || new Date().toISOString().slice(0, 7);
       const monthTx = store.state.transactions.filter(tx => getTxMonthKey(tx) === selectedMonth);
 
-      const dailyAgg = {};
-      monthTx.forEach(tx => {
-        const d = getTxDate(tx);
-        const day = d.getDate();
-        const dateStr = d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
-        
-        if (!dailyAgg[day]) {
-          dailyAgg[day] = {
-            day,
-            dateStr,
-            count: 0,
-            gross: 0,
-            refunds: 0,
-            net: 0,
-            cash: 0,
-            card: 0,
-            tips: 0
-          };
-        }
-
-        const val = Number(tx.total || 0);
-        const paymentTotals = getTransactionPaymentTotals(tx);
-
-        if (tx.type === 'refund') {
-          dailyAgg[day].refunds += Math.abs(val);
-          dailyAgg[day].net += val;
-        } else {
-          dailyAgg[day].count += 1;
-          dailyAgg[day].gross += val;
-          dailyAgg[day].net += val;
-          dailyAgg[day].tips += Math.max(0, Number(tx.tipAmount || 0));
-        }
-        dailyAgg[day].cash += paymentTotals.Efectivo;
-        dailyAgg[day].card += paymentTotals.Tarjeta;
+      const report = buildSalesReport(monthTx, {
+        getTransactionDate: getTxDate,
+        getPayments: getPaymentBreakdown
       });
-
-      const sortedDays = Object.values(dailyAgg).sort((a, b) => a.day - b.day);
       const filename = `Informe-Mensual-${selectedMonth}.pdf`;
 
-      downloadMonthlyReportPDF(selectedMonth, sortedDays, store.state.legal, filename);
+      downloadMonthlyReportPDF(selectedMonth, report, store.state.legal, filename);
     });
   }
 

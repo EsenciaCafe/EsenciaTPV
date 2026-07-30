@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   addPaymentToBuckets,
+  getSignedChargedPaymentAmount,
   getSignedPaymentAmount,
   reconcileTransactionPayments
 } from '../src/paymentAccounting.js';
@@ -33,6 +34,19 @@ test('una devolucion antigua con pago positivo tambien se contabiliza en negativ
     ),
     -7.5
   );
+});
+
+test('el importe del datafono incluye la propina pero la venta no', () => {
+  const transaction = { type: 'sale' };
+  const payment = {
+    method: 'Tarjeta',
+    saleAmount: 20,
+    tipAmount: 5,
+    amount: 25
+  };
+
+  assert.equal(getSignedPaymentAmount(transaction, payment), 20);
+  assert.equal(getSignedChargedPaymentAmount(transaction, payment), 25);
 });
 
 test('una devolucion parcial resta solo el importe devuelto', () => {

@@ -4,6 +4,12 @@ export function getSignedPaymentAmount(transaction = {}, payment = {}) {
   return transaction.type === 'refund' ? -Math.abs(rawAmount) : rawAmount;
 }
 
+export function getSignedChargedPaymentAmount(transaction = {}, payment = {}) {
+  const rawAmount = Number(payment.amount ?? payment.saleAmount ?? 0);
+  if (!Number.isFinite(rawAmount)) return 0;
+  return transaction.type === 'refund' ? -Math.abs(rawAmount) : rawAmount;
+}
+
 export function addPaymentToBuckets(transaction = {}, payment = {}, buckets = {}, resolveBucket) {
   const bucket = resolveBucket(payment.method || transaction.paymentMethod || '');
   if (!(bucket in buckets)) buckets[bucket] = 0;
