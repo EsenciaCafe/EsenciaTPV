@@ -116,6 +116,10 @@ Deno.serve(async (request: Request) => {
       if (type === 'refund') {
         result.refunds += Math.abs(total);
         result.net += total > 0 ? -total : total;
+        salePayments(sale).forEach(payment => {
+          const amount = Number(payment.saleAmount ?? payment.amount ?? 0);
+          result.payments[paymentBucket(String(payment.method || ''))] -= Math.abs(amount);
+        });
         return result;
       }
 

@@ -25,6 +25,7 @@ import {
 import { supabase } from './supabase.js';
 import { notifyTelegramTicketCleared } from './telegramEmptyOrders.js';
 import { notifyTelegramCashClosure } from './telegramCashClosures.js';
+import { getSignedPaymentAmount } from './paymentAccounting.js';
 
 
 const DINING_STATE_STORAGE_KEY = 'tpv-dining-state-v1';
@@ -1435,6 +1436,34 @@ class Store {
     }];
   }
 
+  getRefundsForTransaction(transactionId) {
+    return this.state.transactions.filter(transaction => (
+      transaction.type === 'refund' && transaction.parentId === transactionId
+    ));
+  }
+
+  getRefundedAmountForTransaction(transactionId) {
+    const linkedRefunds = this.getRefundsForTransaction(transactionId);
+    if (linkedRefunds.length > 0) {
+      return Number(linkedRefunds.reduce((sum, refund) => (
+        sum + Math.abs(Number(refund.total || 0))
+      ), 0).toFixed(2));
+    }
+    const transaction = this.state.transactions.find(item => item.id === transactionId);
+    return Number(Math.abs(Number(transaction?.refundAmount || 0)).toFixed(2));
+  }
+
+  hasRefundForTransaction(transactionId) {
+    const transaction = this.state.transactions.find(item => item.id === transactionId);
+    return transaction?.hasRefund === true || this.getRefundsForTransaction(transactionId).length > 0;
+  }
+
+  canRefundTransaction(transaction) {
+    return Boolean(transaction) &&
+      transaction.type !== 'refund' &&
+      !this.hasRefundForTransaction(transaction.id);
+  }
+
   isTransactionPaymentCorrectionLocked(transaction) {
     if (!transaction) return true;
     const businessDate = this.getTransactionDateKey(transaction);
@@ -1447,7 +1476,7 @@ class Store {
   }
 
   canCorrectTransactionPayment(transaction) {
-    if (!transaction || transaction.type === 'refund' || transaction.hasRefund) return false;
+    if (!transaction || transaction.type === 'refund' || this.hasRefundForTransaction(transaction.id)) return false;
     const payments = this.getPaymentBreakdownForTransaction(transaction);
     const hasExternalGiftCardPayment = payments.some(payment => {
       const method = String(payment.method || '').toLowerCase();
@@ -1543,7 +1572,7 @@ class Store {
 
       this.getPaymentBreakdownForTransaction(tx).forEach(payment => {
         const method = (payment.method || '').toLowerCase();
-        const amount = Number(payment.amount || 0);
+        const amount = getSignedPaymentAmount(tx, payment);
         if (method.includes('regalo') || method.includes('gift')) {
           acc.otherPayments += amount;
         } else if (method.includes('efectivo')) {
@@ -2856,7 +2885,7 @@ class Store {
     if (!this.canIssueRefunds()) return null;
 
     const parent = this.state.transactions.find(t => t.id === parentTransactionId);
-    if (!parent) return null;
+    if (!this.canRefundTransaction(parent)) return null;
 
     const refundAmount = parseFloat(amount);
     if (isNaN(refundAmount) || refundAmount <= 0) return null;

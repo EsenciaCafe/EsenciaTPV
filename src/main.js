@@ -33,6 +33,11 @@ import {
   renderMenuManagerHome,
   renderMenuPromos
 } from './menuManager.js';
+import {
+  addPaymentToBuckets,
+  getSignedPaymentAmount,
+  reconcileTransactionPayments
+} from './paymentAccounting.js';
 
 // SVG Icons
 const ICONS = {
@@ -222,11 +227,8 @@ function normalizePaymentBucket(method = '') {
 }
 
 function applyTransactionPaymentsToBuckets(tx = {}, buckets = {}) {
-  const sign = tx.type === 'refund' ? -1 : 1;
   getPaymentBreakdown(tx).forEach(payment => {
-    const bucket = normalizePaymentBucket(payment.method);
-    if (!(bucket in buckets)) buckets[bucket] = 0;
-    buckets[bucket] += Number(payment.saleAmount ?? payment.amount ?? 0) * sign;
+    addPaymentToBuckets(tx, payment, buckets, normalizePaymentBucket);
   });
   return buckets;
 }
@@ -237,6 +239,28 @@ function getTransactionPaymentTotals(tx = {}) {
     Tarjeta: 0,
     'Tarjeta Regalo': 0
   });
+}
+
+function getReportPaymentReconciliation(transactions = []) {
+  return reconcileTransactionPayments(transactions, getPaymentBreakdown);
+}
+
+function renderPaymentReconciliationNotice(reconciliation) {
+  if (reconciliation.isBalanced) {
+    return `
+      <div class="gemini-muted" style="margin:0 16px 16px; padding:12px; border:1px solid var(--secondary); border-radius:var(--border-radius-md); background:var(--bg-item);">
+        <strong style="color:var(--secondary);">Metodos de pago conciliados</strong><br>
+        Los cobros netos coinciden con las ventas netas: ${reconciliation.transactionNet.toFixed(2)}&euro;.
+      </div>
+    `;
+  }
+  return `
+    <div class="gemini-muted needs-review" style="margin:0 16px 16px; padding:12px; border:1px solid var(--danger); border-radius:var(--border-radius-md); background:var(--bg-item);">
+      <strong>Informe bloqueado por descuadre</strong><br>
+      Ventas netas: ${reconciliation.transactionNet.toFixed(2)}&euro;. Metodos de pago: ${reconciliation.paymentNet.toFixed(2)}&euro;.
+      Diferencia: ${reconciliation.difference.toFixed(2)}&euro;. No exportes este informe hasta revisarlo.
+    </div>
+  `;
 }
 
 const TRANSACTION_PAYMENT_FILTERS = [
@@ -1183,11 +1207,12 @@ function showTransactionDetailModal(transactionId) {
         ${tx.reason ? `<span>Motivo: ${tx.reason}</span>` : ''}
       </div>
     `;
-  } else if (tx.hasRefund) {
+  } else if (store.hasRefundForTransaction(tx.id)) {
+    const refundedAmount = store.getRefundedAmountForTransaction(tx.id);
     refundStatusHTML = `
       <div style="background-color: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); border-radius: var(--border-radius-sm); padding: 10px; margin-bottom: 12px; font-size: 0.85rem; color: #f59e0b;">
         <strong>Estado: Devuelto</strong><br>
-        <span>Importe devuelto: ${tx.refundAmount.toFixed(2)}€</span>
+        <span>Importe devuelto: ${refundedAmount.toFixed(2)}€</span>
       </div>
     `;
   }
@@ -1288,7 +1313,7 @@ function showTransactionDetailModal(transactionId) {
               Corregir método de pago
             </button>
           ` : ''}
-          ${(!tx.hasRefund && tx.type !== 'refund' && store.canIssueRefunds()) ? `
+          ${(store.canRefundTransaction(tx) && store.canIssueRefunds()) ? `
             <button class="pay-btn-opt danger tx-detail-refund-btn" id="tx-detail-refund-btn" style="height: 40px; font-size: 0.9rem; margin: 0;">
               Registrar Devolución
             </button>
@@ -2343,6 +2368,7 @@ function renderAjustesView(state) {
     });
 
     const totalNet = totalGross - totalDiscounts - totalRefunds;
+    const paymentReconciliation = getReportPaymentReconciliation(dayTx);
 
     // El informe es el libro vivo de ventas; los cierres son fotografias inmutables
     // que deben conciliar con la parte ya cerrada de ese libro.
@@ -2574,10 +2600,11 @@ function renderAjustesView(state) {
               ` : ''}
             </div>
           </div>
+          ${renderPaymentReconciliationNotice(paymentReconciliation)}
 
           <!-- Export Action -->
           <div style="padding: 0 16px 16px 16px;">
-            <button class="btn btn-primary btn-full" id="btn-export-diario" style="height: 44px; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; background-color: var(--secondary); color: white;">
+            <button class="btn btn-primary btn-full" id="btn-export-diario" style="height: 44px; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; background-color: var(--secondary); color: white;" ${paymentReconciliation.isBalanced ? '' : 'disabled'}>
               📄 Exportar Diario (PDF)
             </button>
           </div>
@@ -2680,6 +2707,7 @@ function renderAjustesView(state) {
     });
 
     const totalNet = totalGross - totalDiscounts - totalRefunds;
+    const paymentReconciliation = getReportPaymentReconciliation(monthTx);
     const sortedDays = Object.values(dailyAgg).sort((a, b) => a.day - b.day);
 
     // Month name display
@@ -2749,13 +2777,14 @@ function renderAjustesView(state) {
               <span class="reports-kpi-val" style="color:var(--secondary);">${totalTips.toFixed(2)}€</span>
             </div>
           </div>
+          ${renderPaymentReconciliationNotice(paymentReconciliation)}
 
           <!-- Export Action -->
           <div style="padding: 0 16px 16px 16px; display:grid; gap:10px;">
-            <button class="btn btn-primary btn-full" id="btn-export-mensual" style="height: 44px; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; background-color: var(--secondary); color: white;">
+            <button class="btn btn-primary btn-full" id="btn-export-mensual" style="height: 44px; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; background-color: var(--secondary); color: white;" ${paymentReconciliation.isBalanced ? '' : 'disabled'}>
               📅 Exportar Mensual (PDF)
             </button>
-            <button class="btn btn-secondary btn-full" id="btn-export-mensual-excel" style="height: 44px; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px;">
+            <button class="btn btn-secondary btn-full" id="btn-export-mensual-excel" style="height: 44px; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px;" ${paymentReconciliation.isBalanced ? '' : 'disabled'}>
               Exportar Mensual Excel
             </button>
           </div>
@@ -6847,7 +6876,7 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
 
     paymentBreakdown(tx).forEach(payment => {
       const method = payment.method || 'Sin metodo';
-      const amount = Number(payment.saleAmount ?? payment.amount ?? 0);
+      const amount = getSignedPaymentAmount(tx, payment);
       paymentTotals[method] = (paymentTotals[method] || 0) + amount;
       const methodKey = method.toLowerCase();
       if (methodKey.includes('efectivo')) daily[dayKey].cash += amount;
