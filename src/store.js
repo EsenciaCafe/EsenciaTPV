@@ -30,6 +30,7 @@ import { notifyTelegramCashClosure } from './telegramCashClosures.js';
 const DINING_STATE_STORAGE_KEY = 'tpv-dining-state-v1';
 const STAFF_SESSION_STORAGE_KEY = 'tpv-staff-session-v1';
 const SYNC_CLIENT_STORAGE_KEY = 'tpv-sync-client-id-v1';
+const RECENT_SALES_SYNC_LIMIT = 100;
 const DEFAULT_ROLE_PERMISSIONS = {
   admin: {
     accessSettings: true,
@@ -160,6 +161,7 @@ class Store {
     this.pendingRemotePersist = null;
     this.remotePersistTimer = null;
     this.resumeSyncTimer = null;
+    this.resumeSyncNeedsSales = false;
     this.realtimeReconnectTimer = null;
     this.salesRefreshTimer = null;
     this.saleRefreshTimers = new Map();
@@ -544,8 +546,7 @@ class Store {
     try {
       const transaction = await loadSaleById(saleId);
       if (!transaction) {
-        this.scheduleSalesRefresh(350);
-        return false;
+        return this.removeSyncedTransaction(saleId);
       }
       return this.upsertSyncedTransaction(transaction);
     } catch (err) {
@@ -555,16 +556,28 @@ class Store {
     }
   }
 
-  async refreshSalesFromSupabase() {
+  removeSyncedTransaction(saleId) {
+    const nextTransactions = this.state.transactions.filter(transaction => transaction.id !== saleId);
+    if (nextTransactions.length === this.state.transactions.length) return false;
+    this.state.transactions = nextTransactions;
+    this.persistDiningState({ remote: false });
+    this.emitChange({ source: 'sales-realtime' });
+    return true;
+  }
+
+  async refreshSalesFromSupabase(limit = RECENT_SALES_SYNC_LIMIT) {
     if (!this.salesPersistenceReady) return false;
     try {
-      const normalizedSales = await loadSales();
+      const normalizedSales = await loadSales(limit);
       if (!Array.isArray(normalizedSales)) return false;
       const currentSales = new Map(this.state.transactions.map(transaction => [transaction.id, transaction]));
-      const mergedSales = new Map(normalizedSales.map(transaction => [
-        transaction.id,
-        this.preserveCompleteTransaction(currentSales.get(transaction.id), transaction)
-      ]));
+      const mergedSales = new Map(currentSales);
+      normalizedSales.forEach(transaction => {
+        mergedSales.set(
+          transaction.id,
+          this.preserveCompleteTransaction(currentSales.get(transaction.id), transaction)
+        );
+      });
       this.state.transactions.forEach(transaction => {
         if (this.pendingSaleWrites.has(transaction.id)) {
           mergedSales.set(transaction.id, transaction);
@@ -830,6 +843,7 @@ class Store {
         this.salesPersistenceReady = Array.isArray(normalizedSales);
         if (Array.isArray(normalizedSales)) {
           this.state.transactions = normalizedSales;
+          this.resumeSyncNeedsSales = false;
         }
       } catch (err) {
         this.salesPersistenceReady = false;
@@ -962,13 +976,18 @@ class Store {
     }
   }
 
-  scheduleResumeSync(delay = 250) {
+  scheduleResumeSync(delay = 250, { refreshSales = false } = {}) {
     if (typeof window === 'undefined') return;
+    this.resumeSyncNeedsSales = this.resumeSyncNeedsSales || refreshSales;
     if (this.resumeSyncTimer) clearTimeout(this.resumeSyncTimer);
     this.resumeSyncTimer = setTimeout(() => {
       this.resumeSyncTimer = null;
+      const shouldRefreshSales = this.resumeSyncNeedsSales;
+      this.resumeSyncNeedsSales = false;
       void this.refreshSharedStateFromSupabase();
-      this.scheduleSalesRefresh(50);
+      if (shouldRefreshSales) {
+        this.scheduleSalesRefresh(50);
+      }
     }, delay);
   }
 
@@ -977,22 +996,34 @@ class Store {
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
-        this.scheduleResumeSync(150);
+        this.scheduleResumeSync(150, { refreshSales: true });
       }
     });
-    window.addEventListener('focus', () => this.scheduleResumeSync(200));
     window.addEventListener('online', () => {
+      this.resumeSyncNeedsSales = true;
       this.subscribeToRealtime();
-      this.scheduleResumeSync(250);
+      this.scheduleResumeSync(250, { refreshSales: true });
     });
   }
 
   subscribeToRealtime() {
-    if (this.realtimeChannel) {
-      this.realtimeChannel.unsubscribe();
+    if (this.realtimeChannel && ['CONNECTING', 'SUBSCRIBED'].includes(this.realtimeStatus)) {
+      return;
     }
 
-    this.realtimeChannel = supabase
+    if (this.realtimeReconnectTimer) {
+      clearTimeout(this.realtimeReconnectTimer);
+      this.realtimeReconnectTimer = null;
+    }
+
+    const previousChannel = this.realtimeChannel;
+    this.realtimeChannel = null;
+    this.realtimeStatus = 'CONNECTING';
+    if (previousChannel) {
+      void supabase.removeChannel(previousChannel);
+    }
+
+    const channel = supabase
       .channel('tpv-state-changes')
       .on(
         'broadcast',
@@ -1041,26 +1072,40 @@ class Store {
         },
         (payload) => {
           const saleId = payload.new?.id || payload.old?.id;
-          this.scheduleSalesRefresh(220, saleId || null);
+          if (!saleId) return;
+          if (payload.eventType === 'DELETE') {
+            this.removeSyncedTransaction(saleId);
+            return;
+          }
+          this.scheduleSalesRefresh(220, saleId);
         }
-      )
-      .subscribe((status) => {
-        this.realtimeStatus = status;
-        if (status === 'SUBSCRIBED') {
-          this.scheduleResumeSync(50);
-          this.scheduleSalesRefresh(80);
-          return;
-        }
+      );
 
-        if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status)) {
-          if (this.realtimeReconnectTimer) clearTimeout(this.realtimeReconnectTimer);
-          this.realtimeReconnectTimer = setTimeout(() => {
-            this.realtimeReconnectTimer = null;
-            this.subscribeToRealtime();
-            this.scheduleResumeSync(200);
-          }, 2000);
+    this.realtimeChannel = channel;
+    channel.subscribe((status) => {
+      if (this.realtimeChannel !== channel) return;
+      this.realtimeStatus = status;
+      if (status === 'SUBSCRIBED') {
+        if (this.realtimeReconnectTimer) {
+          clearTimeout(this.realtimeReconnectTimer);
+          this.realtimeReconnectTimer = null;
         }
-      });
+        if (this.resumeSyncNeedsSales) {
+          this.scheduleResumeSync(50, { refreshSales: true });
+        }
+        return;
+      }
+
+      if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status)) {
+        this.resumeSyncNeedsSales = true;
+        if (this.realtimeReconnectTimer) clearTimeout(this.realtimeReconnectTimer);
+        this.realtimeReconnectTimer = setTimeout(() => {
+          if (this.realtimeChannel !== channel) return;
+          this.realtimeReconnectTimer = null;
+          this.subscribeToRealtime();
+        }, 2000);
+      }
+    });
   }
 
   // Action Methods

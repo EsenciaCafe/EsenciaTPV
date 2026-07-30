@@ -454,7 +454,7 @@ export async function loadSaleById(saleId) {
 
   if (saleError) {
     console.warn('[DB] Error loading normalized sale:', saleError.message);
-    return null;
+    throw saleError;
   }
   if (!sale || sale.payload?.voided === true) return null;
 
@@ -475,11 +475,11 @@ export async function loadSaleById(saleId) {
 
   if (linesError) {
     console.warn('[DB] Error loading sale lines:', linesError.message);
-    return null;
+    throw linesError;
   }
   if (paymentsError) {
     console.warn('[DB] Error loading sale payments:', paymentsError.message);
-    return null;
+    throw paymentsError;
   }
   if (fiscalError && !['42P01', 'PGRST205'].includes(fiscalError.code)) {
     console.warn('[DB] Error loading fiscal document:', fiscalError.message);
