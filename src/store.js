@@ -10,7 +10,7 @@ import {
   loadTPVState,
   saveTPVState,
   upsertReceiptTicket,
-  loadSales,
+  loadSalesByDateRange,
   loadSaleById,
   upsertSaleRecord,
   createFiscalDocumentForSale,
@@ -30,7 +30,21 @@ import { notifyTelegramCashClosure } from './telegramCashClosures.js';
 const DINING_STATE_STORAGE_KEY = 'tpv-dining-state-v1';
 const STAFF_SESSION_STORAGE_KEY = 'tpv-staff-session-v1';
 const SYNC_CLIENT_STORAGE_KEY = 'tpv-sync-client-id-v1';
-const RECENT_SALES_SYNC_LIMIT = 100;
+
+function formatLocalDateKey(date = new Date()) {
+  const value = new Date(date);
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function shiftDateKey(dateKey, days) {
+  const [year, month, day] = String(dateKey || '').split('-').map(Number);
+  const value = new Date(year, (month || 1) - 1, (day || 1) + days, 12, 0, 0, 0);
+  return formatLocalDateKey(value);
+}
+
 const DEFAULT_ROLE_PERMISSIONS = {
   admin: {
     accessSettings: true,
@@ -114,8 +128,10 @@ class Store {
         items: []
       },
 
-      // Completed transactions history (in-memory, not persisted)
+      // Completed transactions loaded for the operational or selected date ranges.
       transactions: [],
+      selectedTransactionDate: formatLocalDateKey(),
+      salesHistoryLoading: false,
 
       // Fiscal / Legal Details (Default to Tenerife IGIC 7%)
       legal: {
@@ -139,7 +155,7 @@ class Store {
 
       // ── REPORT NAVIGATION ─────────────────────────────────────
       // ISO date string YYYY-MM-DD (default = today)
-      selectedReportDate: new Date().toISOString().slice(0, 10),
+      selectedReportDate: formatLocalDateKey(),
       // Month string YYYY-MM (default = current month)
       selectedReportMonth: new Date().toISOString().slice(0, 7),
 
@@ -166,6 +182,9 @@ class Store {
     this.salesRefreshTimer = null;
     this.saleRefreshTimers = new Map();
     this.pendingSaleWrites = new Map();
+    this.salesRangeRequests = new Map();
+    this.loadedSalesRanges = [];
+    this.salesRangeLoadCount = 0;
     this.realtimeStatus = 'CLOSED';
     this.listeners = [];
     this.setupResumeSync();
@@ -565,34 +584,157 @@ class Store {
     return true;
   }
 
-  async refreshSalesFromSupabase(limit = RECENT_SALES_SYNC_LIMIT) {
-    if (!this.salesPersistenceReady) return false;
-    try {
-      const normalizedSales = await loadSales(limit);
-      if (!Array.isArray(normalizedSales)) return false;
-      const currentSales = new Map(this.state.transactions.map(transaction => [transaction.id, transaction]));
-      const mergedSales = new Map(currentSales);
-      normalizedSales.forEach(transaction => {
-        mergedSales.set(
-          transaction.id,
-          this.preserveCompleteTransaction(currentSales.get(transaction.id), transaction)
-        );
-      });
+  getOperationalSalesRange(referenceDate = new Date()) {
+    const today = formatLocalDateKey(referenceDate);
+    return {
+      startDate: shiftDateKey(today, -1),
+      endDate: shiftDateKey(today, 1)
+    };
+  }
+
+  isSalesRangeLoaded(startDate, endDate) {
+    return this.loadedSalesRanges.some(range => (
+      range.startDate <= startDate && range.endDate >= endDate
+    ));
+  }
+
+  markSalesRangeLoaded(startDate, endDate) {
+    let mergedStart = startDate;
+    let mergedEnd = endDate;
+    const separateRanges = this.loadedSalesRanges.filter(range => {
+      const isSeparate = range.endDate < mergedStart || range.startDate > mergedEnd;
+      if (!isSeparate) {
+        mergedStart = range.startDate < mergedStart ? range.startDate : mergedStart;
+        mergedEnd = range.endDate > mergedEnd ? range.endDate : mergedEnd;
+      }
+      return isSeparate;
+    });
+    this.loadedSalesRanges = [...separateRanges, {
+      startDate: mergedStart,
+      endDate: mergedEnd
+    }].sort((a, b) => a.startDate.localeCompare(b.startDate));
+  }
+
+  replaceSalesRange(normalizedSales, startDate, endDate, { replaceAll = false } = {}) {
+    const currentSales = new Map(this.state.transactions.map(transaction => [transaction.id, transaction]));
+    const nextSales = new Map();
+
+    if (!replaceAll) {
       this.state.transactions.forEach(transaction => {
-        if (this.pendingSaleWrites.has(transaction.id)) {
-          mergedSales.set(transaction.id, transaction);
+        const dateKey = this.getTransactionDateKey(transaction);
+        if (dateKey < startDate || dateKey >= endDate || this.pendingSaleWrites.has(transaction.id)) {
+          nextSales.set(transaction.id, transaction);
         }
       });
-      const nextTransactions = this.sortTransactions([...mergedSales.values()]);
-      if (JSON.stringify(this.state.transactions) === JSON.stringify(nextTransactions)) return false;
-      this.state.transactions = nextTransactions;
-      this.persistDiningState({ remote: false });
-      this.emitChange({ source: 'sales-realtime' });
-      return true;
-    } catch (err) {
-      console.warn('[Store] No se pudieron refrescar las ventas normalizadas.', err);
-      return false;
     }
+
+    normalizedSales.forEach(transaction => {
+      nextSales.set(
+        transaction.id,
+        this.preserveCompleteTransaction(currentSales.get(transaction.id), transaction)
+      );
+    });
+
+    this.state.transactions.forEach(transaction => {
+      if (this.pendingSaleWrites.has(transaction.id)) {
+        nextSales.set(transaction.id, transaction);
+      }
+    });
+
+    const nextTransactions = this.sortTransactions([...nextSales.values()]);
+    if (JSON.stringify(this.state.transactions) === JSON.stringify(nextTransactions)) return false;
+    this.state.transactions = nextTransactions;
+    return true;
+  }
+
+  async loadSalesRange(startDate, endDate, options = {}) {
+    const {
+      force = false,
+      notify = true,
+      showLoading = false,
+      replaceAll = false,
+      source = 'sales-range'
+    } = options;
+    if (!startDate || !endDate || startDate >= endDate) return false;
+    if (!force && this.isSalesRangeLoaded(startDate, endDate)) {
+      if (notify) this.emitChange({ source });
+      return true;
+    }
+
+    const requestKey = `${startDate}:${endDate}`;
+    if (this.salesRangeRequests.has(requestKey)) {
+      return this.salesRangeRequests.get(requestKey);
+    }
+
+    const request = (async () => {
+      this.salesRangeLoadCount += 1;
+      if (showLoading) {
+        this.state.salesHistoryLoading = true;
+        if (notify) this.emitChange({ source: 'sales-range-loading' });
+      }
+
+      let loaded = false;
+      let changed = false;
+      try {
+        const normalizedSales = await loadSalesByDateRange(startDate, endDate);
+        if (!Array.isArray(normalizedSales)) return false;
+        changed = this.replaceSalesRange(normalizedSales, startDate, endDate, { replaceAll });
+        this.markSalesRangeLoaded(startDate, endDate);
+        this.salesPersistenceReady = true;
+        loaded = true;
+        if (changed) this.persistDiningState({ remote: false });
+        return true;
+      } catch (err) {
+        console.warn(`[Store] No se pudieron cargar las ventas entre ${startDate} y ${endDate}.`, err);
+        return false;
+      } finally {
+        this.salesRangeLoadCount = Math.max(0, this.salesRangeLoadCount - 1);
+        this.state.salesHistoryLoading = this.salesRangeLoadCount > 0;
+        if (notify && (loaded || showLoading || changed)) {
+          this.emitChange({ source });
+        }
+      }
+    })();
+
+    this.salesRangeRequests.set(requestKey, request);
+    try {
+      return await request;
+    } finally {
+      this.salesRangeRequests.delete(requestKey);
+    }
+  }
+
+  loadSalesForDate(date, options = {}) {
+    return this.loadSalesRange(date, shiftDateKey(date, 1), options);
+  }
+
+  loadSalesForMonth(month, options = {}) {
+    const [year, monthNumber] = String(month || '').split('-').map(Number);
+    if (!year || !monthNumber) return Promise.resolve(false);
+    const startDate = `${year}-${String(monthNumber).padStart(2, '0')}-01`;
+    const nextMonth = new Date(year, monthNumber, 1, 12, 0, 0, 0);
+    const endDate = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+    return this.loadSalesRange(startDate, endDate, options);
+  }
+
+  async selectTransactionDate(date) {
+    if (!date) return false;
+    this.state.selectedTransactionDate = date;
+    return this.loadSalesForDate(date, {
+      notify: true,
+      showLoading: true,
+      source: 'sales-range'
+    });
+  }
+
+  async refreshSalesFromSupabase() {
+    if (!this.salesPersistenceReady) return false;
+    const { startDate, endDate } = this.getOperationalSalesRange();
+    return this.loadSalesRange(startDate, endDate, {
+      force: true,
+      notify: true,
+      source: 'sales-realtime'
+    });
   }
 
   async loadSquareGiftCardEvents() {
@@ -839,10 +981,13 @@ class Store {
       }
 
       try {
-        const normalizedSales = await loadSales();
-        this.salesPersistenceReady = Array.isArray(normalizedSales);
-        if (Array.isArray(normalizedSales)) {
-          this.state.transactions = normalizedSales;
+        const { startDate, endDate } = this.getOperationalSalesRange();
+        const loaded = await this.loadSalesRange(startDate, endDate, {
+          notify: false,
+          replaceAll: true
+        });
+        this.salesPersistenceReady = loaded;
+        if (loaded) {
           this.resumeSyncNeedsSales = false;
         }
       } catch (err) {
@@ -1139,6 +1284,14 @@ class Store {
     if (tab === 'inicio') {
       this.state.gridPath = ['root'];
     }
+    if (tab === 'transacciones') {
+      this.state.selectedTransactionDate = this.state.selectedTransactionDate || formatLocalDateKey();
+      void this.loadSalesForDate(this.state.selectedTransactionDate, {
+        notify: true,
+        showLoading: true,
+        source: 'sales-range'
+      });
+    }
     this.state.settingsPath = [];
     this.notify();
   }
@@ -1429,6 +1582,11 @@ class Store {
 
   async saveCashClosure(data) {
     if (!this.canCloseCash() || !this.cashClosurePersistenceReady) return false;
+    const salesLoaded = await this.loadSalesForDate(data.businessDate, {
+      force: true,
+      notify: false
+    });
+    if (!salesLoaded) return false;
     const lastClosure = this.getLatestCashClosure(data.businessDate);
     const shiftStartAt = lastClosure?.closedAt || null;
     const sinceTime = shiftStartAt ? new Date(shiftStartAt).getTime() : 0;

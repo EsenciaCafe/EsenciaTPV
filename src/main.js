@@ -127,6 +127,15 @@ function formatIsoDateEs(value = '') {
   return `${day}/${month}/${year}`;
 }
 
+function shiftIsoDateKey(value, days) {
+  const [year, month, day] = String(value || '').split('-').map(Number);
+  const date = new Date(year, (month || 1) - 1, (day || 1) + days, 12, 0, 0, 0);
+  const nextYear = date.getFullYear();
+  const nextMonth = String(date.getMonth() + 1).padStart(2, '0');
+  const nextDay = String(date.getDate()).padStart(2, '0');
+  return `${nextYear}-${nextMonth}-${nextDay}`;
+}
+
 function getTransactionDateObject(tx = {}) {
   if (tx.createdAt) {
     const parsed = new Date(tx.createdAt);
@@ -940,7 +949,10 @@ function renderTablesView(state) {
 function renderTransaccionesView(state) {
   const activeFilter = transactionsPaymentFilter || 'all';
   const filterLabel = TRANSACTION_PAYMENT_FILTERS.find(item => item.id === activeFilter)?.label || 'Todos';
+  const todayKey = getTransactionDayKey({ createdAt: new Date().toISOString() });
+  const selectedDate = state.selectedTransactionDate || todayKey;
   const filteredTransactions = (state.transactions || [])
+    .filter(tx => getTransactionDayKey(tx) === selectedDate)
     .filter(tx => transactionMatchesPaymentFilter(tx, activeFilter));
   const filtersHtml = transactionsFiltersOpen ? `
     <div class="tx-filter-panel">
@@ -1013,40 +1025,22 @@ function renderTransaccionesView(state) {
           ${activeFilter !== 'all' ? `<span>${escapeHtml(filterLabel)}</span>` : ''}
         </button>
       </div>
+      <div class="tx-date-selector" aria-label="Seleccionar día de transacciones">
+        <button class="tx-date-step" id="tx-date-prev" type="button" aria-label="Día anterior" title="Día anterior">
+          <span aria-hidden="true">&larr;</span>
+        </button>
+        <input id="tx-date-input" type="date" value="${selectedDate}" max="${todayKey}" aria-label="Fecha de transacciones">
+        <button class="tx-date-step" id="tx-date-next" type="button" aria-label="Día siguiente" title="Día siguiente" ${selectedDate >= todayKey ? 'disabled' : ''}>
+          <span aria-hidden="true">&rarr;</span>
+        </button>
+      </div>
       ${filtersHtml}
       <div class="tx-history-list">
-        ${daySections.length > 0 ? daySections : '<p style="text-align:center; padding: 40px; color: var(--text-muted);">Aún no hay transacciones cobradas</p>'}
-      </div>
-    </div>
-  `;
-
-  const rows = state.transactions.map(tx => {
-    const isRefund = tx.type === 'refund';
-    const badge = isRefund
-      ? `<span class="badge badge--danger" style="margin-left: 8px;">Devolución</span>`
-      : tx.hasRefund
-      ? `<span class="badge badge--warning" style="margin-left: 8px;">Devuelta parcial</span>`
-      : '';
-
-    return `
-      <button class="tx-card" data-transaction-id="${tx.id}">
-        <div class="tx-meta">
-          <span class="tx-table-name">${tx.table} ${badge}</span>
-          <span class="tx-date-method">${tx.date} • ${tx.paymentMethod}</span>
-        </div>
-        <div class="tx-financial">
-          <span class="tx-amount ${isRefund ? 'text-danger' : ''}" style="${isRefund ? 'color: var(--danger); font-weight: 700;' : ''}">${tx.total.toFixed(2)}€</span>
-          <div class="tx-qty">${tx.itemsCount} art.</div>
-        </div>
-      </button>
-    `;
-  }).join('');
-
-  return `
-    <div class="tx-list-container">
-      <h2 class="tx-header">Historial de Ventas</h2>
-      <div class="tx-history-list">
-        ${rows.length > 0 ? rows : '<p style="text-align:center; padding: 40px; color: var(--text-muted);">Aún no hay transacciones cobradas hoy</p>'}
+        ${state.salesHistoryLoading
+          ? '<p class="tx-empty-state">Cargando transacciones...</p>'
+          : daySections.length > 0
+            ? daySections
+            : '<p class="tx-empty-state">No hay transacciones cobradas este día</p>'}
       </div>
     </div>
   `;
@@ -2084,7 +2078,7 @@ function renderAjustesView(state) {
               <label class="editor-form-label">Notas</label>
               <textarea class="editor-form-input" id="closure-notes" rows="3" placeholder="Descuadres, incidencias, observaciones..." ${disabledAttr}></textarea>
             </div>
-            <button type="submit" class="btn btn-primary" style="height:48px; background-color:var(--secondary);" ${store.cashClosurePersistenceReady && store.canCloseCash() ? '' : 'disabled'}>
+            <button type="submit" class="btn btn-primary" style="height:48px; background-color:var(--secondary);" ${store.cashClosurePersistenceReady && store.canCloseCash() && !state.salesHistoryLoading ? '' : 'disabled'}>
               Guardar cierre de turno
             </button>
             ${lastClosureForDate ? `<p class="gemini-muted">Ultimo cierre de este dia: ${new Date(lastClosureForDate.closedAt).toLocaleString('es-ES')}</p>` : ''}
@@ -7581,6 +7575,31 @@ function setupEventListeners(container) {
     });
   });
 
+  const txDateInput = container.querySelector('#tx-date-input');
+  if (txDateInput) {
+    txDateInput.addEventListener('change', () => {
+      const date = txDateInput.value || getTransactionDayKey({ createdAt: new Date().toISOString() });
+      void store.selectTransactionDate(date);
+    });
+  }
+
+  const txDatePrev = container.querySelector('#tx-date-prev');
+  if (txDatePrev) {
+    txDatePrev.addEventListener('click', () => {
+      const date = store.state.selectedTransactionDate || getTransactionDayKey({ createdAt: new Date().toISOString() });
+      void store.selectTransactionDate(shiftIsoDateKey(date, -1));
+    });
+  }
+
+  const txDateNext = container.querySelector('#tx-date-next');
+  if (txDateNext) {
+    txDateNext.addEventListener('click', () => {
+      const today = getTransactionDayKey({ createdAt: new Date().toISOString() });
+      const date = store.state.selectedTransactionDate || today;
+      if (date < today) void store.selectTransactionDate(shiftIsoDateKey(date, 1));
+    });
+  }
+
   // TPV Subtabs switching
   container.querySelectorAll('[data-pos-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -8157,7 +8176,15 @@ function setupEventListeners(container) {
 
   const toCierreBtn = container.querySelector('#settings-to-cierre');
   if (toCierreBtn) {
-    toCierreBtn.addEventListener('click', () => {
+    toCierreBtn.addEventListener('click', async () => {
+      toCierreBtn.disabled = true;
+      const month = store.state.selectedReportMonth || getTransactionDayKey({ createdAt: new Date().toISOString() }).slice(0, 7);
+      const loaded = await store.loadSalesForMonth(month, { notify: false });
+      if (!loaded) {
+        toCierreBtn.disabled = false;
+        showToast('No se pudieron cargar las ventas del mes. Revisa la conexion antes de hacer el cierre.', 'error');
+        return;
+      }
       store.navigateSettings(['cierre']);
     });
   }
@@ -8200,8 +8227,15 @@ function setupEventListeners(container) {
 
   const pendingClosureBtn = container.querySelector('[data-open-cash-closure-date]');
   if (pendingClosureBtn) {
-    pendingClosureBtn.addEventListener('click', () => {
+    pendingClosureBtn.addEventListener('click', async () => {
       const date = pendingClosureBtn.dataset.openCashClosureDate || new Date().toISOString().slice(0, 10);
+      pendingClosureBtn.disabled = true;
+      const loaded = await store.loadSalesForMonth(date.slice(0, 7), { notify: false });
+      if (!loaded) {
+        pendingClosureBtn.disabled = false;
+        showToast('No se pudieron cargar las ventas pendientes de cierre.', 'error');
+        return;
+      }
       store.state.selectedReportDate = date;
       store.state.selectedReportMonth = date.slice(0, 7);
       store.state.activeTab = 'ajustes';
@@ -8336,9 +8370,13 @@ function setupEventListeners(container) {
 
   const closureExportMonthInput = container.querySelector('#cash-closure-export-month-input');
   if (closureExportMonthInput) {
-    closureExportMonthInput.addEventListener('change', (e) => {
+    closureExportMonthInput.addEventListener('change', async (e) => {
       store.state.selectedReportMonth = e.target.value || new Date().toISOString().slice(0, 7);
-      store.notify();
+      await store.loadSalesForMonth(store.state.selectedReportMonth, {
+        notify: true,
+        showLoading: true,
+        source: 'sales-range'
+      });
     });
   }
 
@@ -8357,10 +8395,14 @@ function setupEventListeners(container) {
 
   const closureDateInput = container.querySelector('#cash-closure-date-input');
   if (closureDateInput) {
-    closureDateInput.addEventListener('change', (e) => {
+    closureDateInput.addEventListener('change', async (e) => {
       store.state.selectedReportDate = e.target.value || new Date().toISOString().slice(0, 10);
       store.state.selectedReportMonth = store.state.selectedReportDate.slice(0, 7);
-      store.notify();
+      await store.loadSalesForDate(store.state.selectedReportDate, {
+        notify: true,
+        showLoading: true,
+        source: 'sales-range'
+      });
     });
   }
 
@@ -8561,14 +8603,30 @@ function setupEventListeners(container) {
 
   const toDiarioBtn = container.querySelector('#settings-to-informes-diario');
   if (toDiarioBtn) {
-    toDiarioBtn.addEventListener('click', () => {
+    toDiarioBtn.addEventListener('click', async () => {
+      toDiarioBtn.disabled = true;
+      const date = store.state.selectedReportDate || getTransactionDayKey({ createdAt: new Date().toISOString() });
+      const loaded = await store.loadSalesForDate(date, { notify: false });
+      if (!loaded) {
+        toDiarioBtn.disabled = false;
+        showToast('No se pudieron cargar las ventas del dia.', 'error');
+        return;
+      }
       store.navigateSettings(['informes', 'diario']);
     });
   }
 
   const toMensualBtn = container.querySelector('#settings-to-informes-mensual');
   if (toMensualBtn) {
-    toMensualBtn.addEventListener('click', () => {
+    toMensualBtn.addEventListener('click', async () => {
+      toMensualBtn.disabled = true;
+      const month = store.state.selectedReportMonth || getTransactionDayKey({ createdAt: new Date().toISOString() }).slice(0, 7);
+      const loaded = await store.loadSalesForMonth(month, { notify: false });
+      if (!loaded) {
+        toMensualBtn.disabled = false;
+        showToast('No se pudieron cargar las ventas del mes.', 'error');
+        return;
+      }
       store.navigateSettings(['informes', 'mensual']);
     });
   }
@@ -8576,15 +8634,19 @@ function setupEventListeners(container) {
   // Date picker events
   const dateInput = container.querySelector('#report-date-input');
   if (dateInput) {
-    dateInput.addEventListener('change', (e) => {
+    dateInput.addEventListener('change', async (e) => {
       store.state.selectedReportDate = e.target.value;
-      store.notify();
+      await store.loadSalesForDate(store.state.selectedReportDate, {
+        notify: true,
+        showLoading: true,
+        source: 'sales-range'
+      });
     });
   }
 
   const datePrev = container.querySelector('#report-date-prev');
   if (datePrev) {
-    datePrev.addEventListener('click', () => {
+    datePrev.addEventListener('click', async () => {
       const parts = store.state.selectedReportDate.split('-');
       const y = parseInt(parts[0], 10);
       const m = parseInt(parts[1], 10) - 1;
@@ -8597,13 +8659,17 @@ function setupEventListeners(container) {
       const resD = String(dateObj.getDate()).padStart(2, '0');
       
       store.state.selectedReportDate = `${resY}-${resM}-${resD}`;
-      store.notify();
+      await store.loadSalesForDate(store.state.selectedReportDate, {
+        notify: true,
+        showLoading: true,
+        source: 'sales-range'
+      });
     });
   }
 
   const dateNext = container.querySelector('#report-date-next');
   if (dateNext) {
-    dateNext.addEventListener('click', () => {
+    dateNext.addEventListener('click', async () => {
       const parts = store.state.selectedReportDate.split('-');
       const y = parseInt(parts[0], 10);
       const m = parseInt(parts[1], 10) - 1;
@@ -8616,22 +8682,30 @@ function setupEventListeners(container) {
       const resD = String(dateObj.getDate()).padStart(2, '0');
       
       store.state.selectedReportDate = `${resY}-${resM}-${resD}`;
-      store.notify();
+      await store.loadSalesForDate(store.state.selectedReportDate, {
+        notify: true,
+        showLoading: true,
+        source: 'sales-range'
+      });
     });
   }
 
   // Month picker events
   const monthInput = container.querySelector('#report-month-input');
   if (monthInput) {
-    monthInput.addEventListener('change', (e) => {
+    monthInput.addEventListener('change', async (e) => {
       store.state.selectedReportMonth = e.target.value;
-      store.notify();
+      await store.loadSalesForMonth(store.state.selectedReportMonth, {
+        notify: true,
+        showLoading: true,
+        source: 'sales-range'
+      });
     });
   }
 
   const monthPrev = container.querySelector('#report-month-prev');
   if (monthPrev) {
-    monthPrev.addEventListener('click', () => {
+    monthPrev.addEventListener('click', async () => {
       const parts = store.state.selectedReportMonth.split('-');
       const y = parseInt(parts[0], 10);
       const m = parseInt(parts[1], 10) - 1;
@@ -8642,13 +8716,17 @@ function setupEventListeners(container) {
       const resM = String(dateObj.getMonth() + 1).padStart(2, '0');
       
       store.state.selectedReportMonth = `${resY}-${resM}`;
-      store.notify();
+      await store.loadSalesForMonth(store.state.selectedReportMonth, {
+        notify: true,
+        showLoading: true,
+        source: 'sales-range'
+      });
     });
   }
 
   const monthNext = container.querySelector('#report-month-next');
   if (monthNext) {
-    monthNext.addEventListener('click', () => {
+    monthNext.addEventListener('click', async () => {
       const parts = store.state.selectedReportMonth.split('-');
       const y = parseInt(parts[0], 10);
       const m = parseInt(parts[1], 10) - 1;
@@ -8659,7 +8737,11 @@ function setupEventListeners(container) {
       const resM = String(dateObj.getMonth() + 1).padStart(2, '0');
       
       store.state.selectedReportMonth = `${resY}-${resM}`;
-      store.notify();
+      await store.loadSalesForMonth(store.state.selectedReportMonth, {
+        notify: true,
+        showLoading: true,
+        source: 'sales-range'
+      });
     });
   }
 

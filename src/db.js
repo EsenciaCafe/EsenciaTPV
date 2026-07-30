@@ -380,13 +380,8 @@ async function loadSaleDetailRows(table, saleIds) {
   };
 }
 
-export async function loadSales(limit = 1000) {
-  const { data: sales, error: salesError } = await supabase
-    .from('sales')
-    .select('*')
-    .order('closed_at', { ascending: false })
-    .limit(limit);
-
+async function hydrateSalesQuery(query) {
+  const { data: sales, error: salesError } = await query;
   if (salesError) {
     console.warn('[DB] Error loading normalized sales:', salesError.message);
     return null;
@@ -441,6 +436,27 @@ export async function loadSales(limit = 1000) {
     paymentsBySale.get(row.id) || [],
     fiscalBySale.get(row.id) || null
   ));
+}
+
+function localDateBoundary(dateKey) {
+  const [year, month, day] = String(dateKey || '').split('-').map(Number);
+  const boundary = new Date(year, (month || 1) - 1, day || 1, 0, 0, 0, 0);
+  if (Number.isNaN(boundary.getTime())) {
+    throw new Error(`Invalid sales date boundary: ${dateKey}`);
+  }
+  return boundary.toISOString();
+}
+
+export async function loadSalesByDateRange(startDate, endDate) {
+  if (!startDate || !endDate || startDate >= endDate) return [];
+  return hydrateSalesQuery(
+    supabase
+      .from('sales')
+      .select('*')
+      .gte('closed_at', localDateBoundary(startDate))
+      .lt('closed_at', localDateBoundary(endDate))
+      .order('closed_at', { ascending: false })
+  );
 }
 
 export async function loadSaleById(saleId) {
