@@ -102,6 +102,7 @@ let productSearchText = '';
 let isDrawerOpen = false;
 let dbStatus = 'loading'; // 'loading' | 'connected' | 'fallback' | 'error'
 let cashClosureEditLocked = false;
+let cashClosureDraft = null;
 let selectedReportsTab = 'horas'; // 'horas' | 'diaria' | 'semanal' | 'mensual' | 'anual'
 let loyaltyAdminQuery = '';
 let loyaltyAdminTab = 'resumen';
@@ -1984,9 +1985,16 @@ function renderAjustesView(state) {
         <strong>${Number(closure.cashDifference || 0).toFixed(2)}€ / ${Number(closure.cardDifference || 0).toFixed(2)}€</strong>
       </div>
     `).join('');
-    const openingCash = 100;
-    const countedCash = '';
-    const bbvaTotal = summary.expectedCard;
+    const activeDraft = cashClosureDraft?.businessDate === selectedDate
+      ? cashClosureDraft
+      : null;
+    const openingCashValue = activeDraft?.openingCash ?? '100';
+    const countedCashValue = activeDraft?.countedCash ?? '';
+    const bbvaTotalValue = activeDraft?.bbvaTotal ?? String(summary.expectedCard || '');
+    const notesValue = activeDraft?.notes ?? '';
+    const openingCash = parseFloat(openingCashValue || '0');
+    const countedCash = parseFloat(countedCashValue || '0');
+    const bbvaTotal = parseFloat(bbvaTotalValue || '0');
     const expectedDrawer = openingCash + summary.expectedCash;
     const cashDifference = 0;
     const cardDifference = bbvaTotal - summary.expectedCard;
@@ -2049,16 +2057,16 @@ function renderAjustesView(state) {
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
               <div class="editor-form-group">
                 <label class="editor-form-label">Fondo inicial</label>
-                <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-opening-cash" value="${openingCash}" ${disabledAttr}>
+                <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-opening-cash" value="${escapeHtml(openingCashValue)}" ${disabledAttr}>
               </div>
               <div class="editor-form-group">
                 <label class="editor-form-label">Efectivo contado</label>
-                <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-counted-cash" value="${countedCash}" ${disabledAttr}>
+                <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-counted-cash" value="${escapeHtml(countedCashValue)}" ${disabledAttr}>
               </div>
             </div>
             <div class="editor-form-group">
               <label class="editor-form-label">Total cierre datáfono BBVA</label>
-              <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-bbva-total" value="${bbvaTotal || ''}" ${disabledAttr}>
+              <input type="number" step="0.01" min="0" class="editor-form-input" id="closure-bbva-total" value="${escapeHtml(bbvaTotalValue)}" ${disabledAttr}>
             </div>
             <div class="accounting-summary-grid">
               <div><span>Cajón esperado</span><strong>${expectedDrawer.toFixed(2)}€</strong></div>
@@ -2073,7 +2081,7 @@ function renderAjustesView(state) {
             </button>
             <div class="editor-form-group">
               <label class="editor-form-label">Notas</label>
-              <textarea class="editor-form-input" id="closure-notes" rows="3" placeholder="Descuadres, incidencias, observaciones..." ${disabledAttr}></textarea>
+              <textarea class="editor-form-input" id="closure-notes" rows="3" placeholder="Descuadres, incidencias, observaciones..." ${disabledAttr}>${escapeHtml(notesValue)}</textarea>
             </div>
             <button type="submit" class="btn btn-primary" style="height:48px; background-color:var(--secondary);" ${store.cashClosurePersistenceReady && store.canCloseCash() && !state.salesHistoryLoading ? '' : 'disabled'}>
               Guardar cierre de turno
@@ -4099,6 +4107,7 @@ function isExternalRenderMeta(meta = {}) {
 }
 
 function shouldDeferExternalRender(meta = {}) {
+  if (cashClosureEditLocked && isCashClosureViewActive(store.state)) return true;
   if (!isExternalRenderMeta(meta)) return false;
   if (isEditableControlFocused()) return true;
   if (['sales-realtime', 'sales-broadcast'].includes(meta.source)) {
@@ -4115,6 +4124,13 @@ function shouldDeferExternalRender(meta = {}) {
 function render(state = store.state) {
   const appRoot = document.getElementById('app-root');
   if (!appRoot) return;
+  if (
+    cashClosureEditLocked &&
+    isCashClosureViewActive(state) &&
+    appRoot.querySelector('#cash-closure-form')
+  ) {
+    return;
+  }
   const scrollSnapshot = captureScrollState(state);
   const focusSnapshot = captureFocusState();
 
@@ -7289,6 +7305,7 @@ function setupEventListeners(container) {
         }
         isDrawerOpen = false; // Reset drawer on tab switch
         cashClosureEditLocked = false;
+        cashClosureDraft = null;
         store.state.settingsPath = []; // Always go to root of that section
         if (tab === 'inicio') {
           store.state.selectedTableId = null;
@@ -7973,6 +7990,8 @@ function setupEventListeners(container) {
   const toCierreBtn = container.querySelector('#settings-to-cierre');
   if (toCierreBtn) {
     toCierreBtn.addEventListener('click', async () => {
+      cashClosureEditLocked = false;
+      cashClosureDraft = null;
       toCierreBtn.disabled = true;
       const month = store.state.selectedReportMonth || getTransactionDayKey({ createdAt: new Date().toISOString() }).slice(0, 7);
       const loaded = await store.loadSalesForMonth(month, { notify: false });
@@ -8024,6 +8043,8 @@ function setupEventListeners(container) {
   const pendingClosureBtn = container.querySelector('[data-open-cash-closure-date]');
   if (pendingClosureBtn) {
     pendingClosureBtn.addEventListener('click', async () => {
+      cashClosureEditLocked = false;
+      cashClosureDraft = null;
       const date = pendingClosureBtn.dataset.openCashClosureDate || new Date().toISOString().slice(0, 10);
       pendingClosureBtn.disabled = true;
       const loaded = await store.loadSalesForMonth(date.slice(0, 7), { notify: false });
@@ -8192,6 +8213,8 @@ function setupEventListeners(container) {
   const closureDateInput = container.querySelector('#cash-closure-date-input');
   if (closureDateInput) {
     closureDateInput.addEventListener('change', async (e) => {
+      cashClosureEditLocked = false;
+      cashClosureDraft = null;
       store.state.selectedReportDate = e.target.value || new Date().toISOString().slice(0, 10);
       store.state.selectedReportMonth = store.state.selectedReportDate.slice(0, 7);
       await store.loadSalesForDate(store.state.selectedReportDate, {
@@ -8204,11 +8227,25 @@ function setupEventListeners(container) {
 
   const cashClosureForm = container.querySelector('#cash-closure-form');
   if (cashClosureForm) {
+    const saveCashClosureDraft = () => {
+      cashClosureDraft = {
+        businessDate: container.querySelector('#cash-closure-date-input')?.value ||
+          store.state.selectedReportDate ||
+          new Date().toISOString().slice(0, 10),
+        openingCash: container.querySelector('#closure-opening-cash')?.value ?? '',
+        countedCash: container.querySelector('#closure-counted-cash')?.value ?? '',
+        bbvaTotal: container.querySelector('#closure-bbva-total')?.value ?? '',
+        notes: container.querySelector('#closure-notes')?.value ?? ''
+      };
+    };
+
     cashClosureForm.addEventListener('focusin', () => {
       cashClosureEditLocked = true;
+      saveCashClosureDraft();
     });
     cashClosureForm.addEventListener('input', () => {
       cashClosureEditLocked = true;
+      saveCashClosureDraft();
     });
 
     const calcClosure = () => {
@@ -8279,12 +8316,16 @@ function setupEventListeners(container) {
         confirmationMessage,
         async () => {
           if (submitBtn) submitBtn.disabled = true;
-          cashClosureEditLocked = false;
+          cashClosureEditLocked = true;
           try {
             const saved = await store.saveCashClosure(closureData);
             if (!saved) {
               cashClosureEditLocked = true;
               if (submitBtn) submitBtn.disabled = false;
+            } else {
+              cashClosureDraft = null;
+              cashClosureEditLocked = false;
+              store.emitChange({ source: 'closure-saved' });
             }
             showToast(saved ? 'Cierre guardado. El nuevo turno empieza automaticamente.' : 'No se pudo guardar el cierre. Puede estar ya cerrado o faltar la migracion de Supabase.', saved ? 'success' : 'warning');
           } catch (error) {
@@ -8650,6 +8691,7 @@ function setupEventListeners(container) {
       // Clear article search when leaving the list
       store.state.articleSearchQuery = '';
       cashClosureEditLocked = false;
+      cashClosureDraft = null;
       store.goBackSettings();
     });
   }
@@ -9631,6 +9673,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     pendingRenderFrame = requestAnimationFrame(() => {
       pendingRenderFrame = null;
       const nextState = pendingRenderState || store.state;
+      if (cashClosureEditLocked && isCashClosureViewActive(nextState)) {
+        deferredExternalRenderState = nextState;
+        pendingRenderState = null;
+        return;
+      }
       render(nextState);
       restoreScrollState(scrollSnapshot, nextState);
       restoreFocusState(focusSnapshot);
@@ -9639,7 +9686,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   };
 
   const scheduleBackgroundRender = (state = store.state) => {
-    if (isEditableControlFocused() || isCatalogManagerViewActive(store.state)) {
+    if (
+      isEditableControlFocused() ||
+      isCatalogManagerViewActive(store.state) ||
+      (cashClosureEditLocked && isCashClosureViewActive(store.state))
+    ) {
       deferredExternalRenderState = state;
       return;
     }
@@ -9678,6 +9729,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     queueMicrotask(() => {
       if (!deferredExternalRenderState || isEditableControlFocused()) return;
       if (isCatalogManagerViewActive(store.state)) return;
+      if (cashClosureEditLocked && isCashClosureViewActive(store.state)) return;
       const nextState = deferredExternalRenderState;
       deferredExternalRenderState = null;
       scheduleRender(nextState);
