@@ -9723,7 +9723,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.addEventListener('table-sync-conflict', (event) => {
     const tableNames = event.detail?.tableNames || [];
     const label = tableNames.length > 0 ? tableNames.join(', ') : 'una mesa';
-    showToast(`Otro dispositivo modificó ${label} antes. Se ha conservado la versión de Supabase.`, 'warning');
+    console.info(`[Sync] Se conservó la versión más reciente de Supabase para ${label}.`);
   });
 
   // Bind store event reactive updates
