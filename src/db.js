@@ -814,7 +814,7 @@ export async function saveTPVState(tables, directSale, transactions, legal, role
   let preservedKdsState = {};
   const { data: currentState } = await supabase
     .from('tpv_state')
-    .select('tables, direct_sale')
+    .select('direct_sale')
     .eq('id', 'global')
     .maybeSingle();
 
@@ -824,16 +824,6 @@ export async function saveTPVState(tables, directSale, transactions, legal, role
       : {};
   }
 
-  const currentTablesById = new Map((currentState?.tables || []).map(table => [Number(table.id), table]));
-  const mergedTables = (tables || []).map(localTable => {
-    const currentTable = currentTablesById.get(Number(localTable.id));
-    if (!currentTable) return localTable;
-
-    const localTime = new Date(localTable.syncUpdatedAt || 0).getTime();
-    const currentTime = new Date(currentTable.syncUpdatedAt || 0).getTime();
-    return currentTime > localTime ? currentTable : localTable;
-  });
-
   const directSaleWithFallback = {
     ...directSale,
     legal_data: legal,
@@ -841,36 +831,44 @@ export async function saveTPVState(tables, directSale, transactions, legal, role
     kds_state: kdsState || directSale?.kds_state || preservedKdsState
   };
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('tpv_state')
     .upsert({
       id: 'global',
-      tables: mergedTables,
+      tables,
       direct_sale: directSaleWithFallback,
       transactions,
       legal_data: legal,
       role_permissions: rolePermissions,
       updated_at: new Date().toISOString()
-    }, { onConflict: 'id' });
+    }, { onConflict: 'id' })
+    .select('tables, direct_sale, legal_data, role_permissions, updated_at')
+    .single();
 
   if (error) {
     // 42703: undefined_column (legal_data column doesn't exist yet on remote db)
     if (error.code === '42703') {
-      const { error: fallbackError } = await supabase
+      const { data: fallbackData, error: fallbackError } = await supabase
         .from('tpv_state')
         .upsert({
           id: 'global',
-          tables: mergedTables,
+          tables,
           direct_sale: directSaleWithFallback,
           transactions,
           updated_at: new Date().toISOString()
-        }, { onConflict: 'id' });
+        }, { onConflict: 'id' })
+        .select('tables, direct_sale, updated_at')
+        .single();
 
       if (fallbackError) {
         console.warn('[DB] Error saving TPV state to Supabase (fallback):', fallbackError.message);
+        throw fallbackError;
       }
+      return fallbackData;
     } else {
       console.warn('[DB] Error saving TPV state to Supabase:', error.message);
+      throw error;
     }
   }
+  return data;
 }

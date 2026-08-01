@@ -5551,6 +5551,14 @@ function showPaymentModal(totalAmount) {
       totalCharged
     });
 
+    if (transaction?.duplicatePrevented) {
+      showToast('Esta comanda ya estaba cobrada. Se limpió la mesa sin registrar otra venta.', 'warning');
+      isDrawerOpen = false;
+      stopGiftCardScanner();
+      modal.remove();
+      return transaction;
+    }
+
     if (transaction && loyaltySnapshot && !existingLoyaltyAward) {
       try {
         const result = await addLoyaltyPurchase({
@@ -9710,6 +9718,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     showToast(userMsg, 'error');
     scheduleBackgroundRender(store.state); // refresh header dot color without resetting open forms
+  });
+
+  window.addEventListener('table-sync-conflict', (event) => {
+    const tableNames = event.detail?.tableNames || [];
+    const label = tableNames.length > 0 ? tableNames.join(', ') : 'una mesa';
+    showToast(`Otro dispositivo modificó ${label} antes. Se ha conservado la versión de Supabase.`, 'warning');
   });
 
   // Bind store event reactive updates

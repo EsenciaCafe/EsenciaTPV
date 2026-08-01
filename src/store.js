@@ -29,6 +29,7 @@ import {
   getSignedChargedPaymentAmount,
   getSignedPaymentAmount
 } from './paymentAccounting.js';
+import { createOrderFingerprint } from './orderIdentity.js';
 
 
 const DINING_STATE_STORAGE_KEY = 'tpv-dining-state-v1';
@@ -180,6 +181,7 @@ class Store {
     this.lastRemotePersistSnapshot = '';
     this.pendingRemotePersist = null;
     this.remotePersistTimer = null;
+    this.remotePersistInFlight = false;
     this.resumeSyncTimer = null;
     this.resumeSyncNeedsSales = false;
     this.realtimeReconnectTimer = null;
@@ -268,26 +270,16 @@ class Store {
   }
 
   getTableSyncFingerprint(table = {}) {
-    const { syncUpdatedAt, syncClientId, ...stableTable } = table;
+    const { syncRevision, syncUpdatedAt, syncClientId, ...stableTable } = table;
     return JSON.stringify(stableTable);
   }
 
   ensureTableSyncMetadata(tables = this.state.tables) {
-    const now = new Date().toISOString();
-    return tables.map(table => {
-      const fingerprint = this.getTableSyncFingerprint(table);
-      const previousFingerprint = this.tableSyncFingerprints.get(table.id);
-      const changedLocally = previousFingerprint !== undefined && previousFingerprint !== fingerprint;
-      const nextTable = (changedLocally || !table.syncUpdatedAt)
-        ? {
-            ...table,
-            syncUpdatedAt: changedLocally ? now : (table.syncUpdatedAt || now),
-            syncClientId: changedLocally ? this.syncClientId : (table.syncClientId || this.syncClientId)
-          }
-        : table;
-      this.tableSyncFingerprints.set(table.id, this.getTableSyncFingerprint(nextTable));
-      return nextTable;
-    });
+    return tables.map(table => ({
+      ...table,
+      syncRevision: Number(table.syncRevision || 0),
+      syncClientId: table.syncClientId || this.syncClientId
+    }));
   }
 
   refreshTableSyncFingerprints(tables = this.state.tables) {
@@ -319,8 +311,8 @@ class Store {
     };
   }
 
-  flushRemotePersist() {
-    if (!this.pendingRemotePersist) return;
+  async flushRemotePersist() {
+    if (!this.pendingRemotePersist || this.remotePersistInFlight) return;
     if (this.remotePersistTimer) {
       clearTimeout(this.remotePersistTimer);
       this.remotePersistTimer = null;
@@ -328,13 +320,99 @@ class Store {
 
     const { payload, snapshot } = this.pendingRemotePersist;
     this.pendingRemotePersist = null;
-    this.lastRemotePersistSnapshot = snapshot;
+    this.remotePersistInFlight = true;
 
-    saveTPVState(payload.tables, payload.directSaleTicket, payload.transactions, payload.legal, payload.rolePermissions, payload.kdsState)
-      .catch(err => {
-        console.warn('[Store] No se pudo guardar el estado en Supabase.', err);
-        this.lastRemotePersistSnapshot = '';
-      });
+    try {
+      const savedState = await saveTPVState(
+        payload.tables,
+        payload.directSaleTicket,
+        payload.transactions,
+        payload.legal,
+        payload.rolePermissions,
+        payload.kdsState
+      );
+      const reconciliation = this.reconcilePersistedTables(payload.tables, savedState?.tables || []);
+      const savedPayload = {
+        ...payload,
+        tables: savedState?.tables || payload.tables
+      };
+      this.lastRemotePersistSnapshot = JSON.stringify(savedPayload);
+
+      if (reconciliation.changed) {
+        this.persistDiningState({ remote: false });
+        this.emitChange({ source: 'remote-save', silent: true });
+      }
+      if (reconciliation.conflicts.length > 0 && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('table-sync-conflict', {
+          detail: { tableNames: reconciliation.conflicts }
+        }));
+      }
+    } catch (err) {
+      console.warn('[Store] No se pudo guardar el estado en Supabase.', err);
+      this.lastRemotePersistSnapshot = '';
+      this.pendingRemotePersist = { payload, snapshot };
+    } finally {
+      this.remotePersistInFlight = false;
+      const currentPayload = this.getRemotePersistPayload();
+      const currentSnapshot = JSON.stringify(currentPayload);
+      if (currentSnapshot !== this.lastRemotePersistSnapshot) {
+        this.pendingRemotePersist = { payload: currentPayload, snapshot: currentSnapshot };
+      }
+      if (this.pendingRemotePersist) {
+        if (this.remotePersistTimer) clearTimeout(this.remotePersistTimer);
+        this.remotePersistTimer = setTimeout(() => {
+          this.remotePersistTimer = null;
+          void this.flushRemotePersist();
+        }, 120);
+      }
+    }
+  }
+
+  reconcilePersistedTables(sentTables = [], savedTables = []) {
+    const sentById = new Map(sentTables.map(table => [Number(table.id), table]));
+    const savedById = new Map(savedTables.map(table => [Number(table.id), table]));
+    const conflicts = [];
+    let changed = false;
+
+    this.state.tables = this.state.tables.map(localTable => {
+      const sentTable = sentById.get(Number(localTable.id));
+      const savedTable = savedById.get(Number(localTable.id));
+      if (!sentTable || !savedTable) return localTable;
+
+      const localFingerprint = this.getTableSyncFingerprint(localTable);
+      const sentFingerprint = this.getTableSyncFingerprint(sentTable);
+      const savedFingerprint = this.getTableSyncFingerprint(savedTable);
+      const sentRevision = Number(sentTable.syncRevision || 0);
+      const savedRevision = Number(savedTable.syncRevision || 0);
+      this.tableSyncFingerprints.set(localTable.id, savedFingerprint);
+
+      if (savedFingerprint !== sentFingerprint && savedRevision > sentRevision) {
+        conflicts.push(savedTable.name || localTable.name || `Mesa ${localTable.id}`);
+        changed = true;
+        return {
+          ...savedTable,
+          items: this.sortTicketItemsForService(savedTable.items || [])
+        };
+      }
+
+      if (localFingerprint === sentFingerprint) {
+        if (JSON.stringify(localTable) !== JSON.stringify(savedTable)) changed = true;
+        return {
+          ...savedTable,
+          items: this.sortTicketItemsForService(savedTable.items || [])
+        };
+      }
+
+      changed = true;
+      return {
+        ...localTable,
+        syncRevision: savedRevision,
+        syncUpdatedAt: savedTable.syncUpdatedAt,
+        syncClientId: savedTable.syncClientId
+      };
+    });
+
+    return { changed, conflicts };
   }
 
   persistDiningState({ remote = true } = {}) {
@@ -361,7 +439,7 @@ class Store {
     if (this.remotePersistTimer) clearTimeout(this.remotePersistTimer);
     this.remotePersistTimer = setTimeout(() => {
       this.remotePersistTimer = null;
-      this.flushRemotePersist();
+      void this.flushRemotePersist();
     }, 180);
   }
 
@@ -379,7 +457,7 @@ class Store {
 
   notify(options = {}) {
     this.persistDiningState(options);
-    if (options.flushRemote) this.flushRemotePersist();
+    if (options.flushRemote) void this.flushRemotePersist();
     this.emitChange(options);
   }
 
@@ -1032,26 +1110,32 @@ class Store {
 
     if (Array.isArray(newState.tables) && newState.tables.length > 0) {
       const remoteTables = new Map(newState.tables.map(table => [Number(table.id), table]));
+      const acceptedFingerprints = new Map();
       const mergedTables = this.state.tables.map(localTable => {
         const remoteTable = remoteTables.get(Number(localTable.id));
         if (!remoteTable) return localTable;
 
-        const localTime = new Date(localTable.syncUpdatedAt || 0).getTime();
-        const remoteTime = new Date(remoteTable.syncUpdatedAt || 0).getTime();
-        const shouldAcceptRemote = remoteTime > localTime ||
-          (!localTable.syncUpdatedAt && JSON.stringify(localTable) !== JSON.stringify(remoteTable));
+        const localRevision = Number(localTable.syncRevision || 0);
+        const remoteRevision = Number(remoteTable.syncRevision || 0);
+        const localFingerprint = this.getTableSyncFingerprint(localTable);
+        const syncedFingerprint = this.tableSyncFingerprints.get(localTable.id);
+        const hasLocalChanges = syncedFingerprint !== undefined && syncedFingerprint !== localFingerprint;
+        const shouldAcceptRemote = !this.remotePersistInFlight && (
+          remoteRevision > localRevision ||
+          (!hasLocalChanges && remoteRevision === localRevision && localFingerprint !== this.getTableSyncFingerprint(remoteTable))
+        );
 
-        return shouldAcceptRemote
-          ? {
-              ...remoteTable,
-              items: this.sortTicketItemsForService(remoteTable.items || [])
-            }
-          : localTable;
+        if (!shouldAcceptRemote) return localTable;
+        acceptedFingerprints.set(localTable.id, this.getTableSyncFingerprint(remoteTable));
+        return {
+          ...remoteTable,
+          items: this.sortTicketItemsForService(remoteTable.items || [])
+        };
       });
 
       if (JSON.stringify(this.state.tables) !== JSON.stringify(mergedTables)) {
         this.state.tables = mergedTables;
-        this.refreshTableSyncFingerprints();
+        acceptedFingerprints.forEach((fingerprint, id) => this.tableSyncFingerprints.set(id, fingerprint));
         changed = true;
       }
     }
@@ -1109,7 +1193,7 @@ class Store {
   }
 
   async refreshSharedStateFromSupabase({ silent = true } = {}) {
-    if (this.pendingRemotePersist) return false;
+    if (this.pendingRemotePersist || this.remotePersistInFlight) return false;
 
     try {
       const tpvState = await loadTPVState();
@@ -2678,6 +2762,32 @@ class Store {
     const items = this.getActiveItems();
     if (items.length === 0) return;
 
+    const orderFingerprint = createOrderFingerprint(items);
+    const duplicateTransaction = this.state.transactions.find(transaction => (
+      transaction.type !== 'refund' &&
+      (transaction.orderFingerprint || createOrderFingerprint(transaction.items || [])) === orderFingerprint
+    ));
+    if (duplicateTransaction) {
+      if (this.state.selectedTableId !== null) {
+        const tableIndex = this.state.tables.findIndex(table => table.id === this.state.selectedTableId);
+        if (tableIndex > -1) {
+          this.state.tables[tableIndex] = {
+            ...this.state.tables[tableIndex],
+            status: 'available',
+            items: [],
+            loyaltyAwarded: undefined
+          };
+        }
+        this.state.selectedTableId = null;
+      } else {
+        this.state.directSaleTicket = { items: [] };
+      }
+      this.state.activeTab = 'inicio';
+      this.state.gridPath = ['root'];
+      this.notify({ flushRemote: true });
+      return { ...duplicateTransaction, duplicatePrevented: true };
+    }
+
     const total = this.getActiveTicketTotal();
     const grossTotal = this.getActiveTicketGrossTotal();
     const discountTotal = this.getActiveTicketDiscountTotal();
@@ -2727,6 +2837,7 @@ class Store {
       }],
       createdAt: dateNow.toISOString(),
       receiptToken: this.createReceiptToken(),
+      orderFingerprint,
       legalData: { ...this.state.legal },
       staff: this.state.auth.profile ? {
         id: this.state.auth.profile.id,
