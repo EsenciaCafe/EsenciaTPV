@@ -142,7 +142,7 @@ begin
     coalesce(v_legal->>'nif', ''),
     coalesce(v_sale.id, '')
   );
-  v_hash := encode(digest(v_hash_source, 'sha256'), 'hex');
+  v_hash := encode(extensions.digest(v_hash_source, 'sha256'), 'hex');
 
   insert into fiscal_documents (
     sale_id,
