@@ -12,11 +12,10 @@ import {
   upsertReceiptTicket,
   loadSalesByDateRange,
   loadSaleById,
-  upsertSaleRecord,
   createFiscalDocumentForSale,
   loadCashClosures,
-  upsertCashClosure,
   loadSquareGiftCardEvents,
+  setOfflineDeviceDesignation,
   loadStaffProfiles,
   findStaffByPin,
   upsertStaffProfile,
@@ -30,6 +29,26 @@ import {
   getSignedPaymentAmount
 } from './paymentAccounting.js';
 import { createOrderFingerprint } from './orderIdentity.js';
+import {
+  activateEmergencySession,
+  cacheCatalogSnapshot,
+  cacheClosuresSnapshot,
+  cacheOperationalSnapshot,
+  cacheStaffSnapshot,
+  completeEmergencySession,
+  createEmergencyFiscalDocument,
+  createUuid,
+  exportEmergencyBackup,
+  findCachedStaffByPin,
+  getLocalReadiness,
+  initializeLocalDatabase,
+  loadCachedBootstrap,
+  persistClosureLocally,
+  persistSaleLocally,
+  queueSharedState,
+  setEmergencyDesignation
+} from './localDb.js';
+import { SyncCoordinator } from './syncCoordinator.js';
 
 
 const DINING_STATE_STORAGE_KEY = 'tpv-dining-state-v1';
@@ -140,10 +159,10 @@ class Store {
 
       // Fiscal / Legal Details (Default to Tenerife IGIC 7%)
       legal: {
-        businessName: "Esencia Café",
-        companyName: "Esencia Café S.L.",
-        nif: "B-87654321",
-        address: "Calle del Grano 12, 38001 Santa Cruz de Tenerife",
+        businessName: "",
+        companyName: "",
+        nif: "",
+        address: "",
         taxName: "IGIC",
         taxRate: 7
       },
@@ -168,6 +187,20 @@ class Store {
         profile: null,
         role: null,
         isLoading: true
+      },
+      offline: {
+        available: false,
+        persistent: false,
+        designated: false,
+        mode: 'online',
+        degraded: false,
+        syncing: false,
+        pending: 0,
+        conflicts: 0,
+        lastSyncAt: null,
+        deviceId: null,
+        sessionId: null,
+        error: null
       }
     };
     
@@ -193,7 +226,199 @@ class Store {
     this.salesRangeLoadCount = 0;
     this.realtimeStatus = 'CLOSED';
     this.listeners = [];
+    this.syncCoordinator = new SyncCoordinator({
+      onStatusChange: status => this.handleOfflineStatusChange(status)
+    });
     this.setupResumeSync();
+  }
+
+  async initializeLocalPersistence() {
+    try {
+      const initialized = await initializeLocalDatabase();
+      const cached = initialized.available ? await loadCachedBootstrap() : null;
+      this.state.offline = {
+        ...this.state.offline,
+        available: initialized.available,
+        persistent: initialized.persistent,
+        designated: cached?.device?.designated === true,
+        deviceId: cached?.device?.id || null,
+        mode: cached?.offlineStatus?.mode || 'online',
+        sessionId: cached?.offlineStatus?.sessionId || null,
+        lastSyncAt: cached?.offlineStatus?.lastSyncAt || null,
+        pending: Number(cached?.pending || 0)
+      };
+
+      if (cached?.catalog) {
+        this.state.categories = cached.catalog.categories || [];
+        this.state.menuItems = cached.catalog.menuItems || [];
+        this.state.modifiers = cached.catalog.modifiers || [];
+        this.state.gridItems = cached.catalog.gridItems || {};
+      }
+      if (Array.isArray(cached?.staff)) this.state.staffProfiles = cached.staff;
+      if (Array.isArray(cached?.closures)) {
+        this.state.cashClosures = cached.closures;
+        this.cashClosurePersistenceReady = true;
+      }
+      if (cached?.operational) this.applyCachedOperationalState(cached.operational);
+      if (Array.isArray(cached?.transactions) && cached.transactions.length > 0) {
+        const merged = new Map(this.state.transactions.map(transaction => [transaction.id, transaction]));
+        cached.transactions.forEach(transaction => merged.set(transaction.id, transaction));
+        this.state.transactions = this.sortTransactions([...merged.values()]);
+      }
+
+      await this.refreshOfflineReadiness({ notify: false });
+      return initialized.available;
+    } catch (error) {
+      console.warn('[Offline] No se pudo iniciar IndexedDB.', error);
+      this.state.offline = { ...this.state.offline, available: false, error: error.message };
+      return false;
+    }
+  }
+
+  applyCachedOperationalState(snapshot = {}) {
+    if (Array.isArray(snapshot.tables) && snapshot.tables.length > 0) {
+      this.state.tables = snapshot.tables.map(table => ({
+        ...table,
+        items: this.sortTicketItemsForService(table.items || [])
+      }));
+      this.refreshTableSyncFingerprints();
+    }
+    if (snapshot.directSaleTicket && Array.isArray(snapshot.directSaleTicket.items)) {
+      this.state.directSaleTicket = snapshot.directSaleTicket;
+    }
+    if (Array.isArray(snapshot.transactions)) this.state.transactions = this.sortTransactions(snapshot.transactions);
+    if (snapshot.legal && typeof snapshot.legal === 'object') this.state.legal = { ...this.state.legal, ...snapshot.legal };
+    if (snapshot.rolePermissions) this.state.rolePermissions = this.mergeRolePermissions(snapshot.rolePermissions);
+    if (snapshot.kdsState && typeof snapshot.kdsState === 'object') this.state.kdsState = snapshot.kdsState;
+  }
+
+  handleOfflineStatusChange(status = {}) {
+    const wasEmergency = this.state.offline.mode === 'emergency';
+    this.state.offline = {
+      ...this.state.offline,
+      ...(status.readiness || {}),
+      ...(typeof status.degraded === 'boolean' ? { degraded: status.degraded } : {}),
+      ...(typeof status.syncing === 'boolean' ? { syncing: status.syncing } : {}),
+      ...(Number.isFinite(status.pending) ? { pending: status.pending } : {}),
+      ...(status.error ? { error: status.error } : {})
+    };
+    this.emitChange({ source: 'offline-status', renderScope: 'status' });
+    if (wasEmergency && this.state.offline.mode === 'online' && Number(this.state.offline.pending || 0) === 0) {
+      void this.reconcileAfterEmergencySync();
+    }
+  }
+
+  async reconcileAfterEmergencySync() {
+    try {
+      await this.refreshSharedStateFromSupabase({ silent: true });
+      const endDate = shiftDateKey(formatLocalDateKey(), 1);
+      const startDate = shiftDateKey(endDate, -30);
+      await this.loadSalesRange(startDate, endDate, {
+        force: true,
+        notify: false,
+        replaceAll: true,
+        source: 'offline-reconciled'
+      });
+      const offlineTickets = this.state.transactions.filter(transaction => (
+        transaction.offlineSessionId && transaction.receiptToken
+      ));
+      await Promise.all(offlineTickets.map(transaction => this.publishReceiptTicket(transaction)));
+      await cacheOperationalSnapshot(this.getPersistPayload());
+      this.emitChange({ source: 'offline-reconciled' });
+    } catch (error) {
+      console.warn('[Offline] No se pudo descargar el estado definitivo.', error);
+    }
+  }
+
+  async refreshOfflineReadiness({ notify = true } = {}) {
+    const readiness = await getLocalReadiness();
+    this.state.offline = { ...this.state.offline, ...readiness };
+    if (notify) this.emitChange({ source: 'offline-status', renderScope: 'status' });
+    return readiness;
+  }
+
+  isEmergencyMode() {
+    return this.state.offline.mode === 'emergency';
+  }
+
+  hasValidLegalProfile() {
+    const legal = this.state.legal || {};
+    return Boolean(legal.businessName && legal.companyName && legal.nif && legal.address && legal.taxName);
+  }
+
+  canUseExternalServices() {
+    return !this.isEmergencyMode()
+      && !this.state.offline.degraded
+      && typeof navigator !== 'undefined'
+      && navigator.onLine !== false;
+  }
+
+  canProcessSales() {
+    if (this.isEmergencyMode()) {
+      return this.state.offline.designated && this.hasValidLegalProfile();
+    }
+    if (this.state.offline.degraded) return false;
+    return typeof navigator === 'undefined' || navigator.onLine !== false;
+  }
+
+  async setEmergencyDeviceDesignation(designated) {
+    if (this.state.auth.role !== 'admin') return false;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      throw new Error('La designacion inicial debe hacerse con conexion.');
+    }
+    await setOfflineDeviceDesignation(this.state.offline.deviceId, designated);
+    const device = await setEmergencyDesignation(designated);
+    if (!device) return false;
+    await this.refreshOfflineReadiness({ notify: false });
+    this.emitChange({ source: 'offline-settings' });
+    return true;
+  }
+
+  async verifyEmergencyPin(pinCode) {
+    if (typeof navigator !== 'undefined' && navigator.onLine !== false) {
+      try {
+        const profile = await findStaffByPin(pinCode);
+        if (profile && ['admin', 'manager'].includes(profile.role)) return profile;
+      } catch (_) {
+        // Fall through to the cached directory.
+      }
+    }
+    return findCachedStaffByPin(pinCode, ['admin', 'manager']);
+  }
+
+  async activateEmergencyMode(profile) {
+    const readiness = await getLocalReadiness();
+    if (!readiness.designated) throw new Error('Este no es el dispositivo de emergencia.');
+    if (!readiness.hasCatalog || !readiness.hasOperationalSnapshot || !readiness.hasStaff) {
+      throw new Error('La copia local no esta completa. Conecta el dispositivo y sincronizalo antes.');
+    }
+    if (!this.hasValidLegalProfile()) throw new Error('Faltan los datos fiscales reales en la copia local.');
+    const status = await activateEmergencySession(profile);
+    this.state.offline = {
+      ...this.state.offline,
+      mode: status.mode,
+      sessionId: status.sessionId,
+      degraded: true,
+      error: null
+    };
+    this.emitChange({ source: 'offline-status' });
+    return true;
+  }
+
+  async leaveEmergencyMode() {
+    const readiness = await getLocalReadiness();
+    if (readiness.pending > 0 || readiness.conflicts > 0) return false;
+    await completeEmergencySession();
+    await this.refreshOfflineReadiness();
+    return true;
+  }
+
+  syncPendingOperations() {
+    return this.syncCoordinator.flush();
+  }
+
+  getEmergencyBackup() {
+    return exportEmergencyBackup();
   }
 
   restoreDiningState() {
@@ -313,6 +538,16 @@ class Store {
 
   async flushRemotePersist() {
     if (!this.pendingRemotePersist || this.remotePersistInFlight) return;
+    if (this.isEmergencyMode() || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+      const pending = this.pendingRemotePersist;
+      this.pendingRemotePersist = null;
+      await queueSharedState(pending.payload, {
+        deviceId: this.state.offline.deviceId,
+        sessionId: this.state.offline.sessionId
+      });
+      await this.refreshOfflineReadiness({ notify: false });
+      return;
+    }
     if (this.remotePersistTimer) {
       clearTimeout(this.remotePersistTimer);
       this.remotePersistTimer = null;
@@ -321,6 +556,7 @@ class Store {
     const { payload, snapshot } = this.pendingRemotePersist;
     this.pendingRemotePersist = null;
     this.remotePersistInFlight = true;
+    let queuedForOfflineSync = false;
 
     try {
       const savedState = await saveTPVState(
@@ -331,6 +567,7 @@ class Store {
         payload.rolePermissions,
         payload.kdsState
       );
+      this.syncCoordinator.reportSuccess();
       const reconciliation = this.reconcilePersistedTables(payload.tables, savedState?.tables || []);
       const savedPayload = {
         ...payload,
@@ -349,13 +586,19 @@ class Store {
       }
     } catch (err) {
       console.warn('[Store] No se pudo guardar el estado en Supabase.', err);
+      this.syncCoordinator.reportFailure(err);
       this.lastRemotePersistSnapshot = '';
-      this.pendingRemotePersist = { payload, snapshot };
+      await queueSharedState(payload, {
+        deviceId: this.state.offline.deviceId,
+        sessionId: this.state.offline.sessionId
+      });
+      queuedForOfflineSync = true;
+      this.pendingRemotePersist = null;
     } finally {
       this.remotePersistInFlight = false;
       const currentPayload = this.getRemotePersistPayload();
       const currentSnapshot = JSON.stringify(currentPayload);
-      if (currentSnapshot !== this.lastRemotePersistSnapshot) {
+      if (!queuedForOfflineSync && currentSnapshot !== this.lastRemotePersistSnapshot) {
         this.pendingRemotePersist = { payload: currentPayload, snapshot: currentSnapshot };
       }
       if (this.pendingRemotePersist) {
@@ -429,11 +672,20 @@ class Store {
         console.warn('[Store] No se pudo guardar el estado de mesas en LocalStorage.', err);
       }
     }
+    void cacheOperationalSnapshot(localPayload);
 
     // 2. Save to Supabase (Realtime Sync)
     const remotePayload = this.getRemotePersistPayload();
     const remoteSnapshot = JSON.stringify(remotePayload);
     if (!remote || remoteSnapshot === this.lastRemotePersistSnapshot) return;
+
+    if (this.isEmergencyMode() || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+      void queueSharedState(remotePayload, {
+        deviceId: this.state.offline.deviceId,
+        sessionId: this.state.offline.sessionId
+      }).then(() => this.refreshOfflineReadiness({ notify: false }));
+      return;
+    }
 
     this.pendingRemotePersist = { payload: remotePayload, snapshot: remoteSnapshot };
     if (this.remotePersistTimer) clearTimeout(this.remotePersistTimer);
@@ -571,13 +823,21 @@ class Store {
   }
 
   async loadStaffDirectory() {
-    this.state.staffProfiles = await loadStaffProfiles();
+    const profiles = await loadStaffProfiles();
+    if (Array.isArray(profiles) && profiles.length > 0) {
+      this.state.staffProfiles = profiles;
+      await cacheStaffSnapshot(profiles);
+    }
+    return this.state.staffProfiles;
   }
 
   async loadCashClosures() {
     const closures = await loadCashClosures();
     this.cashClosurePersistenceReady = Array.isArray(closures);
-    if (Array.isArray(closures)) this.state.cashClosures = closures;
+    if (Array.isArray(closures)) {
+      this.state.cashClosures = closures;
+      await cacheClosuresSnapshot(closures);
+    }
   }
 
   scheduleSalesRefresh(delay = 250, saleId = null) {
@@ -738,6 +998,10 @@ class Store {
       source = 'sales-range'
     } = options;
     if (!startDate || !endDate || startDate >= endDate) return false;
+    if (this.isEmergencyMode() || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+      if (notify) this.emitChange({ source: 'offline-cache' });
+      return Array.isArray(this.state.transactions);
+    }
     if (!force && this.isSalesRangeLoaded(startDate, endDate)) {
       if (notify) this.emitChange({ source });
       return true;
@@ -842,7 +1106,9 @@ class Store {
   async loadAuthSession() {
     this.state.auth.isLoading = true;
     try {
-      await this.loadStaffDirectory();
+      if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+        await this.loadStaffDirectory();
+      }
       let savedProfile = null;
 
       if (typeof window !== 'undefined' && window.localStorage) {
@@ -866,7 +1132,15 @@ class Store {
   }
 
   async signInWithPin(pinCode) {
-    const profile = await findStaffByPin(pinCode);
+    let profile = null;
+    if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+      try {
+        profile = await findStaffByPin(pinCode);
+      } catch (_) {
+        profile = null;
+      }
+    }
+    if (!profile) profile = await findCachedStaffByPin(pinCode);
     if (!profile) {
       throw new Error('PIN no valido');
     }
@@ -875,7 +1149,15 @@ class Store {
   }
 
   async verifyAdminPin(pinCode) {
-    const profile = await findStaffByPin(pinCode);
+    let profile = null;
+    if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+      try {
+        profile = await findStaffByPin(pinCode);
+      } catch (_) {
+        profile = null;
+      }
+    }
+    if (!profile) profile = await findCachedStaffByPin(pinCode, ['admin']);
     return profile?.role === 'admin' ? profile : null;
   }
 
@@ -918,7 +1200,7 @@ class Store {
   }
 
   persistSaleRecord(transaction) {
-    if (!this.salesPersistenceReady || !transaction?.id) return Promise.resolve(null);
+    if (!transaction?.id) return Promise.resolve(null);
 
     const transactionId = transaction.id;
     const snapshot = typeof structuredClone === 'function'
@@ -927,13 +1209,13 @@ class Store {
     const previousWrite = this.pendingSaleWrites.get(transactionId) || Promise.resolve();
     const write = previousWrite
       .catch(() => null)
-      .then(() => upsertSaleRecord(snapshot))
-      .then(result => {
-        if (result) this.broadcastSaleChange(snapshot);
-        return result;
-      })
+      .then(() => persistSaleLocally(snapshot, {
+        deviceId: this.state.offline.deviceId,
+        sessionId: this.state.offline.sessionId
+      }))
+      .then(result => result?.id || transactionId)
       .catch(err => {
-        console.warn('[Store] No se pudo guardar la venta normalizada.', err);
+        console.error('[Store] No se pudo guardar la venta localmente.', err);
         return null;
       });
 
@@ -941,7 +1223,10 @@ class Store {
     void write.finally(() => {
       if (this.pendingSaleWrites.get(transactionId) !== write) return;
       this.pendingSaleWrites.delete(transactionId);
-      this.scheduleSalesRefresh(120, transactionId);
+      void this.refreshOfflineReadiness({ notify: false });
+      if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+        this.syncCoordinator.schedule(50);
+      }
     });
     return write;
   }
@@ -958,7 +1243,9 @@ class Store {
   }
 
   async ensureFiscalDocument(transactionId) {
-    if (!this.salesPersistenceReady) return null;
+    if (this.isEmergencyMode()) {
+      return this.state.transactions.find(tx => tx.id === transactionId)?.fiscalData || null;
+    }
 
     const txIndex = this.state.transactions.findIndex(tx => tx.id === transactionId);
     if (txIndex === -1) return null;
@@ -967,6 +1254,7 @@ class Store {
     if (currentTx.fiscalData?.fiscalNumber) return currentTx.fiscalData;
 
     await this.persistSaleRecord(currentTx);
+    await this.syncCoordinator.flush();
     const fiscalData = await createFiscalDocumentForSale(currentTx);
     if (!fiscalData?.fiscalNumber) return null;
 
@@ -1014,6 +1302,12 @@ class Store {
       this.state.modifiers = catalog.modifiers;
       this.state.gridItems = catalog.gridItems;
       await this.loadStaffDirectory();
+      await cacheCatalogSnapshot({
+        categories: catalog.categories,
+        menuItems: catalog.menuItems,
+        modifiers: catalog.modifiers,
+        gridItems: catalog.gridItems
+      });
       
       console.log('[Store] Catálogo cargado desde Supabase:', {
         categorias: catalog.categories.length,
@@ -1095,16 +1389,23 @@ class Store {
       
       this.lastLocalPersistSnapshot = JSON.stringify(this.getPersistPayload());
       this.lastRemotePersistSnapshot = JSON.stringify(this.getRemotePersistPayload());
+      await cacheOperationalSnapshot(this.getPersistPayload());
+      await this.refreshOfflineReadiness({ notify: false });
+      this.syncCoordinator.reportSuccess();
+      this.syncCoordinator.schedule(50);
       this.emitChange();
       return true;
     } catch (err) {
       console.warn('[Store] No se pudo conectar a Supabase, usando datos locales como fallback.', err.message);
+      this.syncCoordinator.reportFailure(err);
+      await this.refreshOfflineReadiness({ notify: false });
       return false;
     }
   }
 
   applyRemoteSharedState(newState) {
     if (!newState) return false;
+    if (this.isEmergencyMode() || Number(this.state.offline.pending || 0) > 0) return false;
 
     let changed = false;
 
@@ -1193,6 +1494,7 @@ class Store {
   }
 
   async refreshSharedStateFromSupabase({ silent = true } = {}) {
+    if (this.isEmergencyMode() || (typeof navigator !== 'undefined' && navigator.onLine === false)) return false;
     if (this.pendingRemotePersist || this.remotePersistInFlight) return false;
 
     try {
@@ -1235,7 +1537,17 @@ class Store {
     window.addEventListener('online', () => {
       this.resumeSyncNeedsSales = true;
       this.subscribeToRealtime();
+      this.state.offline = { ...this.state.offline, degraded: false, error: null };
+      this.syncCoordinator.schedule(100);
       this.scheduleResumeSync(250, { refreshSales: true });
+    });
+    window.addEventListener('offline', () => {
+      this.state.offline = {
+        ...this.state.offline,
+        degraded: true,
+        error: 'No hay conexion con el servidor.'
+      };
+      this.emitChange({ source: 'offline-status', renderScope: 'status' });
     });
   }
 
@@ -1319,6 +1631,7 @@ class Store {
       if (this.realtimeChannel !== channel) return;
       this.realtimeStatus = status;
       if (status === 'SUBSCRIBED') {
+        this.syncCoordinator.reportSuccess();
         if (this.realtimeReconnectTimer) {
           clearTimeout(this.realtimeReconnectTimer);
           this.realtimeReconnectTimer = null;
@@ -1330,6 +1643,7 @@ class Store {
       }
 
       if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status)) {
+        this.syncCoordinator.reportFailure(new Error(`Realtime ${status}`));
         this.resumeSyncNeedsSales = true;
         if (this.realtimeReconnectTimer) clearTimeout(this.realtimeReconnectTimer);
         this.realtimeReconnectTimer = setTimeout(() => {
@@ -1570,7 +1884,7 @@ class Store {
       const provider = String(payment.provider || '').toLowerCase();
       return method.includes('regalo') || method.includes('gift') || provider.includes('square');
     });
-    return this.salesPersistenceReady &&
+    return (this.salesPersistenceReady || this.isEmergencyMode()) &&
       payments.length > 0 &&
       !hasExternalGiftCardPayment &&
       !this.isTransactionPaymentCorrectionLocked(transaction);
@@ -1698,11 +2012,13 @@ class Store {
 
   async saveCashClosure(data) {
     if (!this.canCloseCash() || !this.cashClosurePersistenceReady) return false;
-    const salesLoaded = await this.loadSalesForDate(data.businessDate, {
-      force: true,
-      notify: false
-    });
-    if (!salesLoaded) return false;
+    if (!this.isEmergencyMode()) {
+      const salesLoaded = await this.loadSalesForDate(data.businessDate, {
+        force: true,
+        notify: false
+      });
+      if (!salesLoaded) return false;
+    }
     const lastClosure = this.getLatestCashClosure(data.businessDate);
     const shiftStartAt = lastClosure?.closedAt || null;
     const sinceTime = shiftStartAt ? new Date(shiftStartAt).getTime() : 0;
@@ -1730,13 +2046,23 @@ class Store {
       closedAt: new Date().toISOString()
     };
 
-    await upsertCashClosure(closure);
-    await this.loadCashClosures();
-    try {
-      await notifyTelegramCashClosure(closure);
-    } catch (error) {
-      console.warn('[Cierre] Guardado, pero no se pudo enviar el resumen privado.', error);
+    await persistClosureLocally(closure, {
+      deviceId: this.state.offline.deviceId,
+      sessionId: this.state.offline.sessionId
+    });
+    const closureIndex = this.state.cashClosures.findIndex(item => item.id === closure.id);
+    if (closureIndex >= 0) this.state.cashClosures[closureIndex] = closure;
+    else this.state.cashClosures.unshift(closure);
+    await cacheClosuresSnapshot(this.state.cashClosures);
+    if (this.canUseExternalServices()) {
+      this.syncCoordinator.schedule(50);
+      try {
+        await notifyTelegramCashClosure(closure);
+      } catch (error) {
+        console.warn('[Cierre] Guardado, pero no se pudo enviar el resumen privado.', error);
+      }
     }
+    await this.refreshOfflineReadiness({ notify: false });
     this.notify();
     return true;
   }
@@ -2248,7 +2574,7 @@ class Store {
     const itemQuantity = Math.max(1, Math.floor(Number(quantity) || 1));
     const sortedOptions = [...selectedOptions].sort((a, b) => a.id.localeCompare(b.id));
     const itemNote = String(note || '').trim();
-    const ticketItemId = `${itemId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const ticketItemId = createUuid('line');
 
     if (this.state.selectedTableId !== null) {
       const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
@@ -2758,7 +3084,8 @@ class Store {
     return true;
   }
 
-  payActiveTicket(paymentMethod = 'Tarjeta', options = {}) {
+  async payActiveTicket(paymentMethod = 'Tarjeta', options = {}) {
+    if (!this.canProcessSales()) return null;
     const items = this.getActiveItems();
     if (items.length === 0) return;
 
@@ -2812,7 +3139,7 @@ class Store {
 
     const dateNow = new Date();
     const tipAmount = Math.max(0, Number(options.tipAmount || 0));
-    const txId = `TX-${dateNow.getTime()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const txId = createUuid('TX');
     const dateStr = `${String(dateNow.getDate()).padStart(2, '0')}/${String(dateNow.getMonth() + 1).padStart(2, '0')}/${dateNow.getFullYear()}`;
     const timeStr = `${String(dateNow.getHours()).padStart(2, '0')}:${String(dateNow.getMinutes()).padStart(2, '0')}`;
     
@@ -2847,10 +3174,24 @@ class Store {
       ...(options.loyaltyCustomer ? { loyaltyCustomer: { ...options.loyaltyCustomer } } : {})
     };
 
+    if (this.isEmergencyMode()) {
+      const fiscalData = await createEmergencyFiscalDocument(
+        transaction,
+        this.state.legal,
+        this.state.offline.deviceId
+      );
+      if (!fiscalData) return null;
+      transaction.fiscalData = fiscalData;
+      transaction.offlineSessionId = this.state.offline.sessionId;
+      transaction.syncStatus = 'pending';
+    }
+
+    const persistedId = await this.persistSaleRecord(transaction);
+    if (!persistedId) return null;
+
     this.state.transactions.unshift(transaction);
-    this.publishReceiptTicket(transaction);
-    this.persistSaleRecord(transaction);
-    this.ensureFiscalDocument(transaction.id);
+    if (this.canUseExternalServices()) this.publishReceiptTicket(transaction);
+    if (!this.isEmergencyMode()) void this.ensureFiscalDocument(transaction.id);
 
     if (this.state.selectedTableId !== null) {
       const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
@@ -2869,6 +3210,7 @@ class Store {
     this.state.activeTab = 'inicio';
     this.state.gridPath = ['root'];
     this.notify({ flushRemote: true });
+    await cacheOperationalSnapshot(this.getPersistPayload());
     return transaction;
   }
 
@@ -2995,8 +3337,9 @@ class Store {
   // ─────────────────────────────────────────────────────────────────
   // Devoluciones / Refunds
   // ─────────────────────────────────────────────────────────────────
-  registerRefund({ parentTransactionId, amount, reason = '' }) {
+  async registerRefund({ parentTransactionId, amount, reason = '' }) {
     if (!this.canIssueRefunds()) return null;
+    if (!this.canProcessSales()) return null;
 
     const parent = this.state.transactions.find(t => t.id === parentTransactionId);
     if (!this.canRefundTransaction(parent)) return null;
@@ -3009,7 +3352,7 @@ class Store {
     const timeStr = `${String(dateNow.getHours()).padStart(2, '0')}:${String(dateNow.getMinutes()).padStart(2, '0')}`;
 
     const refundTx = {
-      id: `DEV-${Date.now()}`,
+      id: createUuid('DEV'),
       type: 'refund',
       parentId: parentTransactionId,
       date: `${dateStr}, ${timeStr}`,
@@ -3028,6 +3371,17 @@ class Store {
       legalData: { ...this.state.legal }
     };
 
+    if (this.isEmergencyMode()) {
+      refundTx.fiscalData = await createEmergencyFiscalDocument(
+        refundTx,
+        this.state.legal,
+        this.state.offline.deviceId
+      );
+      if (!refundTx.fiscalData) return null;
+      refundTx.offlineSessionId = this.state.offline.sessionId;
+      refundTx.syncStatus = 'pending';
+    }
+
     // Mark the original transaction
     const parentIdx = this.state.transactions.findIndex(t => t.id === parentTransactionId);
     if (parentIdx > -1) {
@@ -3038,10 +3392,11 @@ class Store {
       };
     }
 
+    const parentPersisted = await this.persistSaleRecord(this.state.transactions[parentIdx] || parent);
+    const refundPersisted = await this.persistSaleRecord(refundTx);
+    if (!parentPersisted || !refundPersisted) return null;
     this.state.transactions.unshift(refundTx);
-    this.persistSaleRecord(this.state.transactions[parentIdx] || parent);
-    this.persistSaleRecord(refundTx);
-    this.ensureFiscalDocument(refundTx.id);
+    if (!this.isEmergencyMode()) void this.ensureFiscalDocument(refundTx.id);
     this.notify();
     return refundTx;
   }

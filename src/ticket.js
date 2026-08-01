@@ -56,14 +56,7 @@ function renderTicket(tx) {
   const totalCharged = Number(tx.totalCharged ?? (total + tipAmount));
   const fiscal = tx.fiscalData || null;
   const displayNumber = fiscal?.fiscalNumber || tx.id;
-  const legal = tx.legalData || {
-    businessName: "Esencia Café",
-    companyName: "Esencia Café S.L.",
-    nif: "B-87654321",
-    address: "Calle del Grano 12, 38001 Santa Cruz de Tenerife",
-    taxName: "IGIC",
-    taxRate: 7
-  };
+  const legal = tx.legalData || {};
   const taxRate = Number(legal.taxRate || 0);
   const taxName = legal.taxName || "IGIC";
   const baseImponible = total / (1 + (taxRate / 100));
@@ -73,12 +66,12 @@ function renderTicket(tx) {
   root.innerHTML = `
     <section class="receipt-card" id="receipt-card">
       <header class="receipt-header">
-        <div class="receipt-brand">${legal.businessName || 'Esencia Café'}</div>
+        <div class="receipt-brand">${legal.businessName || legal.companyName || 'Datos fiscales no disponibles'}</div>
         <div class="receipt-subtitle" style="font-size: 1.1rem; font-weight: 700; color: var(--text);">Factura Simplificada</div>
         <div class="receipt-emitter" style="font-size: 0.85rem; color: var(--muted); margin-top: 6px; line-height: 1.4;">
-          ${legal.companyName || 'Esencia Café S.L.'}<br>
-          NIF: ${legal.nif || 'B-87654321'}<br>
-          ${legal.address || 'Calle del Grano 12, 38001 Santa Cruz de Tenerife'}
+          ${legal.companyName || ''}<br>
+          NIF: ${legal.nif || 'No disponible'}<br>
+          ${legal.address || ''}
         </div>
       </header>
 
@@ -250,21 +243,14 @@ function buildReceiptImageCanvas(tx) {
     ctx.stroke();
   };
 
-  const legal = tx.legalData || {
-    businessName: "Esencia Café",
-    companyName: "Esencia Café S.L.",
-    nif: "B-87654321",
-    address: "Calle del Grano 12, 38001 Santa Cruz de Tenerife",
-    taxName: "IGIC",
-    taxRate: 7
-  };
+  const legal = tx.legalData || {};
   const taxRate = Number(legal.taxRate || 0);
   const taxName = legal.taxName || "IGIC";
 
-  drawText(legal.businessName || 'Esencia Café', width / 2, 42, 42, '800', 'center');
+  drawText(legal.businessName || legal.companyName || 'Datos fiscales no disponibles', width / 2, 42, 42, '800', 'center');
   drawText('Factura Simplificada', width / 2, 94, 22, '700', 'center', '#555555');
-  drawText(`${legal.companyName || 'Esencia Café S.L.'} · NIF: ${legal.nif || 'B-87654321'}`, width / 2, 126, 18, '500', 'center', '#666666');
-  drawText(legal.address || 'Calle del Grano 12, 38001 Santa Cruz de Tenerife', width / 2, 152, 18, '500', 'center', '#666666');
+  drawText(`${legal.companyName || ''} · NIF: ${legal.nif || 'No disponible'}`, width / 2, 126, 18, '500', 'center', '#666666');
+  drawText(legal.address || '', width / 2, 152, 18, '500', 'center', '#666666');
   drawRule(190);
 
   let y = 220;

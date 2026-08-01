@@ -632,6 +632,71 @@ export async function createFiscalDocumentForSale(transaction) {
   return mapFiscalDocument(data);
 }
 
+export async function applyOfflineBatch(deviceId, sessionId, operations = []) {
+  if (!deviceId || !Array.isArray(operations) || operations.length === 0) return [];
+  if (operations.length > 50) throw new Error('La sincronizacion admite un maximo de 50 operaciones por lote.');
+
+  const payload = operations.map(operation => ({
+    operation_id: operation.operationId,
+    sequence: Number(operation.sequence || 0),
+    kind: operation.kind,
+    entity_id: operation.entityId,
+    payload: operation.payload || {},
+    occurred_at: operation.occurredAt || new Date().toISOString()
+  }));
+  const { data, error } = await supabase.rpc('apply_offline_batch', {
+    p_device_id: deviceId,
+    p_session_id: sessionId,
+    p_operations: payload
+  });
+
+  if (error) throw error;
+  return (Array.isArray(data) ? data : []).map(result => ({
+    operationId: result.operation_id,
+    status: result.status,
+    error: result.error || null,
+    serverPayload: result.server_payload || null
+  }));
+}
+
+export async function completeOfflineSession(sessionId) {
+  if (!sessionId) return true;
+  const { error } = await supabase
+    .from('offline_sessions')
+    .update({
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', sessionId);
+  if (error) throw error;
+  return true;
+}
+
+export async function setOfflineDeviceDesignation(deviceId, designated, label = 'TPV de Esencia') {
+  if (!deviceId) throw new Error('Falta el identificador local del dispositivo.');
+  const { error } = await supabase
+    .from('offline_devices')
+    .upsert({
+      id: deviceId,
+      label,
+      emergency_enabled: Boolean(designated),
+      last_seen_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+  if (error) throw error;
+  return true;
+}
+
+export async function checkSupabaseHealth() {
+  const { error } = await supabase
+    .from('tpv_state')
+    .select('id', { head: true, count: 'exact' })
+    .eq('id', 'global');
+  if (error) throw error;
+  return true;
+}
+
 export async function loadCashClosures(limit = 120) {
   const { data, error } = await supabase
     .from('cash_closures')

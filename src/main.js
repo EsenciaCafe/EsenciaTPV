@@ -37,6 +37,7 @@ import {
   buildSalesReport,
   REPORT_PAYMENT_METHODS
 } from './salesReporting.js';
+import { createUuid } from './localDb.js';
 
 // SVG Icons
 const ICONS = {
@@ -611,11 +612,26 @@ function renderHeader(state) {
   const roleLabel = store.getRoleLabel();
   const staffName = state.auth.profile?.display_name || 'Usuario';
 
-  const dbDot = dbStatus === 'connected'
+  const offline = state.offline || {};
+  const statusMode = offline.mode === 'emergency'
+    ? 'emergency'
+    : offline.syncing
+      ? 'syncing'
+      : offline.degraded || dbStatus === 'fallback'
+        ? 'offline'
+        : dbStatus;
+  const statusLabel = statusMode === 'emergency'
+    ? `Emergencia · ${offline.pending || 0}`
+    : statusMode === 'syncing'
+      ? `Sincronizando · ${offline.pending || 0}`
+      : statusMode === 'offline'
+        ? 'Sin conexión'
+        : statusMode === 'connected' ? 'Base de Datos' : 'Comandero';
+  const dbDot = statusMode === 'connected'
     ? '<div class="status-dot" title="Base de Datos conectada"></div>'
-    : dbStatus === 'fallback'
+    : statusMode === 'offline' || statusMode === 'emergency'
     ? '<div class="status-dot status-dot--warn" title="Modo sin conexión — datos locales"></div>'
-    : dbStatus === 'error'
+    : statusMode === 'error'
     ? '<div class="status-dot status-dot--error" title="Error de base de datos"></div>'
     : '<div class="status-dot status-dot--loading" title="Conectando..."></div>';
 
@@ -630,9 +646,9 @@ function renderHeader(state) {
           <span class="staff-session-name">${staffName}</span>
           <span class="staff-session-role">${roleLabel}</span>
         </button>
-        <div class="status-badge">
+        <div class="status-badge" id="connectivity-status-badge" data-mode="${statusMode}">
           ${dbDot}
-          <span>${dbStatus === 'connected' ? 'Base de Datos' : dbStatus === 'fallback' ? 'Sin BD' : 'Comandero'}</span>
+          <span>${statusLabel}</span>
         </div>
       </div>
     </header>
@@ -1043,10 +1059,40 @@ function renderTransaccionesView(state) {
   `;
 }
 
+function renderOfflineBanner(state = store.state) {
+  const offline = state.offline || {};
+  if (offline.mode === 'emergency') {
+    return `
+      <div class="offline-banner offline-banner--emergency">
+        <div><strong>Modo de emergencia</strong><span>${offline.pending || 0} operaciones pendientes de sincronizar.</span></div>
+        <div class="offline-banner__actions">
+          <a class="offline-banner__button" href="./kds.html">Cocina local</a>
+          ${navigator.onLine !== false ? '<button class="offline-banner__button" id="offline-sync-now-btn">Sincronizar</button>' : ''}
+        </div>
+      </div>`;
+  }
+  if (!offline.degraded) return '';
+  if (offline.designated) {
+    return `
+      <div class="offline-banner">
+        <div><strong>Sin conexión con Supabase</strong><span>Activa la emergencia para seguir cobrando desde este dispositivo.</span></div>
+        <button class="offline-banner__button" id="offline-activate-btn">Activar</button>
+      </div>`;
+  }
+  return `
+    <div class="offline-banner offline-banner--blocked">
+      <div><strong>Dispositivo en espera</strong><span>Los cobros offline solo están permitidos en el TPV de emergencia.</span></div>
+    </div>`;
+}
+
 async function showReceiptQrModal(transactionId) {
   const tx = store.ensureTransactionReceiptToken(transactionId);
   if (!tx?.receiptToken) {
     showToast('No se pudo generar el enlace del ticket.', 'error');
+    return;
+  }
+  if (tx.syncStatus === 'pending') {
+    showToast('El enlace y el QR estaran disponibles cuando este ticket termine de sincronizarse.', 'warning');
     return;
   }
   const txDisplayNumber = tx.fiscalData?.fiscalNumber || tx.id;
@@ -1116,14 +1162,7 @@ function showTransactionDetailModal(transactionId) {
   const totalCharged = Number(tx.totalCharged ?? (total + tipAmount));
   const fiscal = tx.fiscalData || null;
   const txDisplayNumber = fiscal?.fiscalNumber || tx.id;
-  const legal = tx.legalData || {
-    businessName: "Esencia Café",
-    companyName: "Esencia Café S.L.",
-    nif: "B-87654321",
-    address: "Calle del Grano 12, 38001 Santa Cruz de Tenerife",
-    taxName: "IGIC",
-    taxRate: 7
-  };
+  const legal = tx.legalData || {};
   const taxRate = Number(legal.taxRate || 0);
   const taxName = legal.taxName || "IGIC";
   const baseImponible = total / (1 + (taxRate / 100));
@@ -1204,9 +1243,9 @@ function showTransactionDetailModal(transactionId) {
           </button>
         </div>
         <div class="tx-detail-emitter" style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.4;">
-          <strong>${legal.businessName || 'Esencia Café'}</strong><br>
-          ${legal.companyName || 'Esencia Café S.L.'} · NIF: ${legal.nif || 'B-87654321'}<br>
-          ${legal.address || 'Calle del Grano 12, 38001 Santa Cruz de Tenerife'}
+          <strong>${escapeHtml(legal.businessName || legal.companyName || 'Datos fiscales no disponibles')}</strong><br>
+          ${legal.companyName ? `${escapeHtml(legal.companyName)} · ` : ''}NIF: ${escapeHtml(legal.nif || 'No disponible')}<br>
+          ${escapeHtml(legal.address || '')}
         </div>
       </div>
       <div class="tx-detail-body">
@@ -1278,9 +1317,13 @@ function showTransactionDetailModal(transactionId) {
           <strong class="${tx.type === 'refund' ? 'text-danger' : ''}">${(tx.type === 'refund' ? total : totalCharged).toFixed(2)}€</strong>
         </div>
         <div style="display:flex; flex-direction:column; gap:8px;">
-          <button class="pay-btn-opt primary tx-detail-share-btn" id="tx-detail-share-btn" style="height: 40px; font-size: 0.9rem;">
-            Mostrar QR del ticket
-          </button>
+          ${tx.syncStatus === 'pending' ? `
+            <div class="tx-detail-empty">Ticket pendiente de sincronizar. El QR publico se activara al recuperar la conexion.</div>
+          ` : `
+            <button class="pay-btn-opt primary tx-detail-share-btn" id="tx-detail-share-btn" style="height: 40px; font-size: 0.9rem;">
+              Mostrar QR del ticket
+            </button>
+          `}
           ${store.canCorrectTransactionPayment(tx) ? `
             <button class="pay-btn-opt payment-correction-open-btn" id="tx-payment-correction-btn" style="height:40px; font-size:0.9rem; margin:0;">
               Corregir método de pago
@@ -1298,7 +1341,7 @@ function showTransactionDetailModal(transactionId) {
 
   document.body.appendChild(modal);
   modal.querySelector('#tx-detail-close-btn').addEventListener('click', () => modal.remove());
-  modal.querySelector('#tx-detail-share-btn').addEventListener('click', () => {
+  modal.querySelector('#tx-detail-share-btn')?.addEventListener('click', () => {
     showReceiptQrModal(tx.id);
   });
 
@@ -1493,7 +1536,7 @@ function showRefundModal(tx) {
   cancelBtn.addEventListener('click', closeModal);
   modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const amount = parseFloat(modal.querySelector('#refund-amount-input').value);
     const reason = modal.querySelector('#refund-reason-input').value.trim();
@@ -1503,7 +1546,7 @@ function showRefundModal(tx) {
       return;
     }
 
-    const result = store.registerRefund({
+    const result = await store.registerRefund({
       parentTransactionId: tx.id,
       amount: amount,
       reason: reason
@@ -1647,6 +1690,35 @@ function renderAjustesView(state) {
           
           <div style="margin-top: 24px; border-top: 1px solid var(--border-color); padding-top: 16px;">
             <div style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Configuración de Dispositivo</div>
+
+            <section class="offline-readiness-card">
+              <div class="offline-readiness-card__head">
+                <div>
+                  <strong>Trabajo sin conexión</strong>
+                  <span>${state.offline.designated ? 'Este es el TPV de emergencia' : 'Este dispositivo no está designado'}</span>
+                </div>
+                <span class="offline-readiness-pill ${state.offline.available && state.offline.hasCatalog && state.offline.hasOperationalSnapshot && state.offline.hasStaff && store.hasValidLegalProfile() ? 'is-ready' : ''}">
+                  ${state.offline.available && state.offline.hasCatalog && state.offline.hasOperationalSnapshot && state.offline.hasStaff && store.hasValidLegalProfile() ? 'Preparado' : 'Incompleto'}
+                </span>
+              </div>
+              <div class="offline-readiness-grid">
+                <span>Base local <strong>${state.offline.available ? 'OK' : 'No disponible'}</strong></span>
+                <span>Almacenamiento <strong>${state.offline.persistent ? 'Persistente' : 'Estándar'}</strong></span>
+                <span>Espacio local <strong>${state.offline.storageQuota ? `${(Number(state.offline.storageUsage || 0) / 1048576).toFixed(1)} MB usados` : 'No disponible'}</strong></span>
+                <span>Perfil fiscal <strong>${store.hasValidLegalProfile() ? 'Válido' : 'Incompleto'}</strong></span>
+                <span>Pendientes <strong>${state.offline.pending || 0}</strong></span>
+                <span>Conflictos <strong>${state.offline.conflicts || 0}</strong></span>
+              </div>
+              <div class="offline-readiness-actions">
+                ${store.state.auth.role === 'admin' ? `
+                  <button class="btn btn-secondary" id="offline-designate-btn">
+                    ${state.offline.designated ? 'Quitar designación' : 'Designar este TPV'}
+                  </button>` : ''}
+                <button class="btn btn-secondary" id="offline-export-btn">Exportar respaldo</button>
+                ${navigator.onLine !== false && Number(state.offline.pending || 0) > 0 ? '<button class="btn btn-primary" id="offline-settings-sync-btn">Sincronizar ahora</button>' : ''}
+              </div>
+              <small>Última sincronización: ${state.offline.lastSyncAt ? new Date(state.offline.lastSyncAt).toLocaleString('es-ES') : 'todavía no registrada'}</small>
+            </section>
             
             <div class="settings-row" style="padding: 12px 0; border-bottom: 1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
               <div>
@@ -4208,6 +4280,7 @@ function render(state = store.state) {
     <div class="app-shell">
       <div class="main-layout-container">
         ${renderHeader(state)}
+        <div id="offline-banner-host">${renderOfflineBanner(state)}</div>
         <main class="app-workspace">
           ${workspaceHTML}
         </main>
@@ -4973,6 +5046,117 @@ function showAdminPinModal({ title = 'Confirmar administrador', onConfirm }) {
   setTimeout(() => input.focus(), 30);
 }
 
+function showEmergencyPinModal(onConfirm) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.id = 'emergency-pin-modal';
+  modal.style.zIndex = '1200';
+  modal.innerHTML = `
+    <div class="modal-dialog" style="max-width:360px; width:92%; padding:22px; text-align:center;">
+      <h3 style="margin:0 0 8px; font-size:1.15rem; font-weight:800;">Activar modo de emergencia</h3>
+      <p style="margin:0 0 16px; color:var(--text-muted); font-size:0.86rem; line-height:1.4;">Introduce el PIN de administrador o encargado.</p>
+      <input id="emergency-pin-input" class="search-input" type="password" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="PIN" style="margin:0 0 16px; text-align:center; font-size:1.25rem; font-weight:800;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <button class="btn btn-secondary" id="emergency-pin-cancel-btn">Cancelar</button>
+        <button class="btn btn-primary" id="emergency-pin-confirm-btn">Activar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  const input = modal.querySelector('#emergency-pin-input');
+  const confirm = async () => {
+    const profile = await store.verifyEmergencyPin((input?.value || '').trim());
+    if (!profile) {
+      showToast('PIN de administrador o encargado no válido.', 'error');
+      return;
+    }
+    try {
+      await store.activateEmergencyMode(profile);
+      modal.remove();
+      showToast('Modo de emergencia activado. Este es el único dispositivo autorizado para cobrar.', 'warning');
+    } catch (error) {
+      showToast(error.message || 'No se pudo activar el modo de emergencia.', 'error');
+    }
+  };
+  modal.querySelector('#emergency-pin-cancel-btn').addEventListener('click', () => modal.remove());
+  modal.querySelector('#emergency-pin-confirm-btn').addEventListener('click', confirm);
+  input.addEventListener('keydown', event => { if (event.key === 'Enter') void confirm(); });
+  setTimeout(() => input.focus(), 30);
+}
+
+function requestEmergencyActivation() {
+  showConfirm(
+    'Trabajar sin conexión',
+    'Confirma que los demás móviles y el KDS han dejado de cobrar. Solo este dispositivo podrá registrar ventas hasta recuperar la conexión.',
+    () => showEmergencyPinModal(),
+    null,
+    true,
+    'Confirmar y continuar'
+  );
+}
+
+function downloadEmergencyBackup() {
+  void store.getEmergencyBackup().then(backup => {
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `respaldo-tpv-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    showToast('Respaldo local descargado.', 'success');
+  }).catch(error => showToast(error.message || 'No se pudo exportar el respaldo.', 'error'));
+}
+
+function bindOfflineControls(container = document) {
+  const activate = container.querySelector('#offline-activate-btn');
+  if (activate) activate.addEventListener('click', requestEmergencyActivation);
+
+  const sync = container.querySelector('#offline-sync-now-btn, #offline-settings-sync-btn');
+  if (sync) sync.addEventListener('click', async () => {
+    sync.disabled = true;
+    const completed = await store.syncPendingOperations();
+    sync.disabled = false;
+    showToast(completed ? 'Sincronización completada.' : 'La sincronización sigue pendiente.', completed ? 'success' : 'warning');
+  });
+
+  const designate = container.querySelector('#offline-designate-btn');
+  if (designate) designate.addEventListener('click', () => {
+    const nextValue = !store.state.offline.designated;
+    showConfirm(
+      nextValue ? 'Designar TPV de emergencia' : 'Quitar designación',
+      nextValue
+        ? 'Este será el único dispositivo autorizado para cobrar cuando no haya conexión.'
+        : 'Este dispositivo dejará de poder trabajar durante una caída.',
+      async () => {
+        try {
+          const saved = await store.setEmergencyDeviceDesignation(nextValue);
+          showToast(saved ? 'Configuración de emergencia actualizada.' : 'Solo el administrador puede cambiar esta opción.', saved ? 'success' : 'error');
+        } catch (error) {
+          showToast(error.message || 'No se pudo cambiar el TPV de emergencia.', 'error');
+        }
+      }
+    );
+  });
+
+  const exportBtn = container.querySelector('#offline-export-btn');
+  if (exportBtn) exportBtn.addEventListener('click', downloadEmergencyBackup);
+}
+
+function updateConnectivityUi(state = store.state) {
+  const currentBadge = document.querySelector('#connectivity-status-badge');
+  if (currentBadge) {
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = renderHeader(state);
+    const nextBadge = wrapper.querySelector('#connectivity-status-badge');
+    if (nextBadge) currentBadge.replaceWith(nextBadge);
+  }
+  const bannerHost = document.querySelector('#offline-banner-host');
+  if (bannerHost) {
+    bannerHost.innerHTML = renderOfflineBanner(state);
+    bindOfflineControls(bannerHost);
+  }
+}
+
 function showTableSelectionModal() {
   const activeItems = store.getActiveItems();
   if (activeItems.length === 0) {
@@ -5183,6 +5367,10 @@ function showReassignTableModal() {
 
 // Modal de pago unificado y táctil
 function showPaymentModal(totalAmount) {
+  if (!store.canProcessSales()) {
+    showToast('Sin conexión: activa el modo de emergencia en el dispositivo designado antes de cobrar.', 'warning');
+    return;
+  }
   if (totalAmount <= 0) {
     if (store.getActiveTicketDiscountTotal() <= 0) return;
     showConfirm(
@@ -5223,6 +5411,11 @@ function showPaymentModal(totalAmount) {
   };
 
   const identifyLoyaltyCustomer = async () => {
+    if (!store.canUseExternalServices()) {
+      loyaltyStatus = 'Fidelidad no disponible durante la emergencia.';
+      renderPaymentContent();
+      return;
+    }
     const cleanUid = normalizeRfidUid(loyaltyRfidInput);
     if (!cleanUid) {
       loyaltyStatus = 'Escanea o introduce un RFID.';
@@ -5261,6 +5454,10 @@ function showPaymentModal(totalAmount) {
   };
 
   const awardManualLoyalty = () => {
+    if (!store.canUseExternalServices()) {
+      showToast('Fidelidad no disponible durante la emergencia.', 'warning');
+      return;
+    }
     if (!loyaltyCustomer) {
       showToast('Identifica primero al cliente.', 'warning');
       return;
@@ -5297,6 +5494,11 @@ function showPaymentModal(totalAmount) {
   };
 
   const lookupGiftCard = async () => {
+    if (!store.canUseExternalServices()) {
+      giftCardStatus = 'Las tarjetas regalo Square requieren conexion.';
+      renderPaymentContent();
+      return;
+    }
     const cleanCode = normalizeSquareGiftCardCode(giftCardCodeInput);
     if (!cleanCode) {
       giftCardStatus = 'Escanea o introduce el codigo de la tarjeta regalo.';
@@ -5339,6 +5541,11 @@ function showPaymentModal(totalAmount) {
   };
 
   const startGiftCardScanner = async () => {
+    if (!store.canUseExternalServices()) {
+      giftCardStatus = 'Las tarjetas regalo Square requieren conexion.';
+      renderPaymentContent();
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia) {
       giftCardStatus = 'Este navegador no permite usar la camara desde aqui.';
       renderPaymentContent();
@@ -5420,6 +5627,11 @@ function showPaymentModal(totalAmount) {
   };
 
   const payWithGiftCard = async () => {
+    if (!store.canUseExternalServices()) {
+      giftCardStatus = 'No se puede canjear una tarjeta regalo sin conexion.';
+      renderPaymentContent();
+      return;
+    }
     const cleanCode = normalizeSquareGiftCardCode(giftCardCodeInput);
     if (!cleanCode) {
       giftCardStatus = 'Escanea o introduce el codigo de la tarjeta regalo.';
@@ -5535,7 +5747,7 @@ function showPaymentModal(totalAmount) {
     const totalCharged = finalPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
     const loyaltySnapshot = loyaltyCustomer ? { ...loyaltyCustomer } : null;
     const existingLoyaltyAward = store.getActiveLoyaltyAward();
-    const transaction = store.payActiveTicket(paymentMethod, loyaltySnapshot ? {
+    const transaction = await store.payActiveTicket(paymentMethod, loyaltySnapshot ? {
       loyaltyCustomer: {
         id: loyaltySnapshot.id,
         name: loyaltySnapshot.name,
@@ -5559,7 +5771,12 @@ function showPaymentModal(totalAmount) {
       return transaction;
     }
 
-    if (transaction && loyaltySnapshot && !existingLoyaltyAward) {
+    if (!transaction) {
+      showToast('No se pudo guardar la venta localmente. La comanda sigue abierta.', 'error');
+      return null;
+    }
+
+    if (transaction && loyaltySnapshot && !existingLoyaltyAward && store.canUseExternalServices()) {
       try {
         const result = await addLoyaltyPurchase({
           customer: loyaltySnapshot,
@@ -5680,7 +5897,7 @@ function showPaymentModal(totalAmount) {
     const giftCardBalance = Number(giftCardLookup?.balance || 0);
     const giftCardRedeemAmount = Number(Math.min(totalAmount, giftCardBalance).toFixed(2));
     const giftCardRemainingAmount = Number(Math.max(0, totalAmount - giftCardRedeemAmount).toFixed(2));
-    const loyaltyHTML = `
+    const loyaltyHTML = store.canUseExternalServices() ? `
       <div class="payment-loyalty-box payment-loyalty-box--compact ${loyaltyExpanded ? 'is-expanded' : ''}">
         <button type="button" class="payment-loyalty-toggle" id="loyalty-toggle-btn" aria-expanded="${loyaltyExpanded}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
@@ -5727,6 +5944,12 @@ function showPaymentModal(totalAmount) {
             ` : ''}
           </div>
         ` : ''}
+      </div>
+    ` : `
+      <div class="payment-loyalty-box payment-loyalty-box--compact is-disabled">
+        <div class="payment-loyalty-toggle">
+          <span class="payment-loyalty-toggle-copy"><strong>Fidelidad</strong><small>No disponible durante la emergencia</small></span>
+        </div>
       </div>
     `;
     const cardTipHTML = showsCardTip ? `
@@ -6065,7 +6288,7 @@ function showPaymentModal(totalAmount) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:20px; height:20px; color:${selectedMethod === 'Efectivo' ? '#10b981' : 'var(--text-muted)'};"><rect x="2" y="6" width="20" height="12" rx="2" /><circle cx="12" cy="12" r="2" /><path d="M6 12h.01M18 12h.01" /></svg>
               <span>Efectivo</span>
             </button>
-            <button class="payment-method-card ${selectedMethod === 'Tarjeta Regalo' ? 'active' : ''}" data-method="Tarjeta Regalo" style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:12px 6px; display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.72rem; transition:all 0.2s ease;">
+            <button class="payment-method-card ${selectedMethod === 'Tarjeta Regalo' ? 'active' : ''}" data-method="Tarjeta Regalo" ${!store.canUseExternalServices() ? 'disabled title="Requiere conexion"' : ''} style="background:var(--bg-item); border: 1px solid var(--border-color); border-radius:var(--border-radius-md); padding:12px 6px; display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; color:var(--text-main); font-family:var(--font-family); font-weight:600; font-size:0.72rem; transition:all 0.2s ease;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:20px; height:20px; color:${selectedMethod === 'Tarjeta Regalo' ? 'var(--secondary)' : 'var(--text-muted)'};"><rect x="3" y="8" width="18" height="12" rx="2" /><path d="M12 8v12M3 12h18M7.5 8a2.5 2.5 0 1 1 4.5 0M16.5 8a2.5 2.5 0 1 0-4.5 0" /></svg>
               <span>Regalo</span>
             </button>
@@ -6447,7 +6670,7 @@ function showPaymentModal(totalAmount) {
     }
     
     freePayments.push({
-      id: Date.now(),
+      id: createUuid('payment'),
       amount: amount,
       method: method
     });
@@ -6498,7 +6721,7 @@ function showPaymentModal(totalAmount) {
     });
 
     articlePayments.push({
-      id: Date.now(),
+      id: createUuid('payment'),
       amount: selectedTotal,
       method: method,
       itemsText: paidItems.join(', ')
@@ -6593,7 +6816,7 @@ function downloadCashClosuresExcel(selectedMonth, closures, legal) {
   </style>
 </head>
 <body>
-  <h1>Cierres de caja - ${escapeHtml(legal?.businessName || 'Esencia Cafe')}</h1>
+  <h1>Cierres de caja - ${escapeHtml(legal?.businessName || 'Datos fiscales no disponibles')}</h1>
   <p>Mes: ${escapeHtml(selectedMonth)}</p>
   <table>
     <thead>
@@ -6768,7 +6991,7 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
   </style>
 </head>
 <body>
-  <h1>Ventas mensuales - ${escapeCell(legal?.businessName || 'Esencia Cafe')}</h1>
+  <h1>Ventas mensuales - ${escapeCell(legal?.businessName || 'Datos fiscales no disponibles')}</h1>
   <p>Mes: ${escapeCell(selectedMonth)}</p>
 
   <h2>Resumen</h2>
@@ -6832,7 +7055,7 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text(legal.businessName || 'Esencia Café', margin, 13);
+    doc.text(legal.businessName || 'Datos fiscales no disponibles', margin, 13);
 
     // ── Title ──────────────────────────────────────────────────────────────
     doc.setFontSize(10);
@@ -6845,9 +7068,9 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
     const rightX = pageW - margin;
     doc.setFontSize(8);
     doc.setTextColor(200, 210, 220);
-    doc.text(legal.companyName || 'Esencia Café S.L.', rightX, 12, { align: 'right' });
-    doc.text(`NIF: ${legal.nif || 'B-87654321'}`, rightX, 17, { align: 'right' });
-    doc.text(legal.address || 'Santa Cruz de Tenerife', rightX, 22, { align: 'right' });
+    doc.text(legal.companyName || legal.businessName || 'Datos fiscales no disponibles', rightX, 12, { align: 'right' });
+    doc.text(`NIF: ${legal.nif || 'No disponible'}`, rightX, 17, { align: 'right' });
+    doc.text(legal.address || 'Direccion no disponible', rightX, 22, { align: 'right' });
 
     const report = buildSalesReport(dayTx, {
       getTransactionDate: getTransactionDateObject,
@@ -6998,7 +7221,7 @@ function downloadMonthlyReportPDF(selectedMonth, report, legal, filename) {
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text(legal.businessName || 'Esencia Café', margin, 13);
+    doc.text(legal.businessName || 'Datos fiscales no disponibles', margin, 13);
 
     // ── Title ──────────────────────────────────────────────────────────────
     doc.setFontSize(10);
@@ -7011,9 +7234,9 @@ function downloadMonthlyReportPDF(selectedMonth, report, legal, filename) {
     const rightX = pageW - margin;
     doc.setFontSize(8);
     doc.setTextColor(200, 210, 220);
-    doc.text(legal.companyName || 'Esencia Café S.L.', rightX, 12, { align: 'right' });
-    doc.text(`NIF: ${legal.nif || 'B-87654321'}`, rightX, 17, { align: 'right' });
-    doc.text(legal.address || 'Santa Cruz de Tenerife', rightX, 22, { align: 'right' });
+    doc.text(legal.companyName || legal.businessName || 'Datos fiscales no disponibles', rightX, 12, { align: 'right' });
+    doc.text(`NIF: ${legal.nif || 'No disponible'}`, rightX, 17, { align: 'right' });
+    doc.text(legal.address || 'Direccion no disponible', rightX, 22, { align: 'right' });
 
     const totalGross = report.grossSales;
     const totalRefunds = report.refunds;
@@ -7167,7 +7390,7 @@ function downloadReportPDF(title, headers, rows, legal, filename) {
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text(legal.businessName || 'Esencia Café', margin, 13);
+    doc.text(legal.businessName || 'Datos fiscales no disponibles', margin, 13);
 
     // ── Report title (top-left, below business name) ──────────────────────
     doc.setFontSize(10);
@@ -7180,9 +7403,9 @@ function downloadReportPDF(title, headers, rows, legal, filename) {
     const rightX = pageW - margin;
     doc.setFontSize(8);
     doc.setTextColor(200, 210, 220);
-    doc.text(legal.companyName || 'Esencia Café S.L.', rightX, 12, { align: 'right' });
-    doc.text(`NIF: ${legal.nif || 'B-87654321'}`, rightX, 17, { align: 'right' });
-    doc.text(legal.address || 'Santa Cruz de Tenerife', rightX, 22, { align: 'right' });
+    doc.text(legal.companyName || legal.businessName || 'Datos fiscales no disponibles', rightX, 12, { align: 'right' });
+    doc.text(`NIF: ${legal.nif || 'No disponible'}`, rightX, 17, { align: 'right' });
+    doc.text(legal.address || 'Direccion no disponible', rightX, 22, { align: 'right' });
 
     // ── Format helper ─────────────────────────────────────────────────────
     const fmtCurrency = (v) =>
@@ -7286,6 +7509,7 @@ function downloadReportPDF(title, headers, rows, legal, filename) {
 
 // Event bindings
 function setupEventListeners(container) {
+  bindOfflineControls(container);
   if (store.state.settingsPath?.[0] === 'menu-manager') {
     initMenuManager(() => store.notify(), showToast);
   }
@@ -7488,7 +7712,7 @@ function setupEventListeners(container) {
             const table = store.state.tables[tIdx];
             const newItems = [...table.items];
             newItems.push({
-              id: 'quick-sale-' + Date.now(),
+              id: createUuid('quick-sale'),
               name: `Cargo Rápido (${customPrice.toFixed(2)}€)`,
               price: customPrice,
               qty: 1
@@ -7502,7 +7726,7 @@ function setupEventListeners(container) {
         } else {
           const newItems = [...store.state.directSaleTicket.items];
           newItems.push({
-            id: 'quick-sale-' + Date.now(),
+            id: createUuid('quick-sale'),
             name: `Cargo Rápido (${customPrice.toFixed(2)}€)`,
             price: customPrice,
             qty: 1
@@ -9708,6 +9932,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Listen for DB write errors and show toast
   window.addEventListener('db-error', (e) => {
     const { operation, message } = e.detail;
+    const isConnectivityFailure = navigator.onLine === false || /fetch|network|timeout|connection/i.test(message || '');
+    if (isConnectivityFailure) {
+      dbStatus = 'fallback';
+      store.syncCoordinator.reportFailure(new Error(message || 'Sin conexión'));
+      updateConnectivityUi(store.state);
+      return;
+    }
     dbStatus = 'error';
     // Detect the most common cause and give actionable advice
     let userMsg = `Error guardando en Supabase (${operation})`;
@@ -9728,6 +9959,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Bind store event reactive updates
   store.subscribe((state, meta = {}) => {
+    if (meta.renderScope === 'status') {
+      updateConnectivityUi(state);
+      return;
+    }
     if (shouldDeferExternalRender(meta)) {
       deferredExternalRenderState = state;
       return;
@@ -9757,6 +9992,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  await store.initializeLocalPersistence();
   await store.loadAuthSession();
 
   let loaded = false;

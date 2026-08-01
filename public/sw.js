@@ -1,5 +1,6 @@
-const CACHE_NAME = 'tpv-cache-v94';
+const CACHE_NAME = 'tpv-cache-v96';
 const BASE_URL = new URL('./', self.location.href);
+const BUILD_ASSETS = /* __PRECACHE_ASSETS__ */ [];
 const ASSETS = [
   './',
   './index.html',
@@ -14,9 +15,10 @@ const ASSETS = [
   './icons/kds-192.png',
   './icons/kds-512.png',
   './latte.png',
-  './minipancakes.png'
+  './minipancakes.png',
+  ...BUILD_ASSETS
 ];
-const CACHE_URLS = ASSETS.map((asset) => new URL(asset, BASE_URL).toString());
+const CACHE_URLS = [...new Set(ASSETS)].map((asset) => new URL(asset, BASE_URL).toString());
 
 // Install Event
 self.addEventListener('install', (e) => {
@@ -49,6 +51,23 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
+  const requestUrl = new URL(e.request.url);
+  const isNavigation = e.request.mode === 'navigate';
+  const isStaticAsset = ['script', 'style', 'image', 'font'].includes(e.request.destination);
+
+  if (isStaticAsset) {
+    e.respondWith(
+      caches.match(e.request, { ignoreVary: true }).then((cached) => cached || fetch(e.request).then((networkResponse) => {
+        if (networkResponse.ok) {
+          const responseToCache = networkResponse.clone();
+          void caches.open(CACHE_NAME).then((cache) => cache.put(e.request, responseToCache));
+        }
+        return networkResponse;
+      }))
+    );
+    return;
+  }
+
   e.respondWith(
     fetch(e.request)
       .then((networkResponse) => {
@@ -61,9 +80,22 @@ self.addEventListener('fetch', (e) => {
         }
         return networkResponse;
       })
-      .catch(() => {
-        // If network fails (offline), fall back to cache
-        return caches.match(e.request);
+      .catch(async () => {
+        const cached = await caches.match(e.request, { ignoreVary: true });
+        if (cached) return cached;
+        if (isNavigation) {
+          const fallback = requestUrl.pathname.endsWith('/kds.html')
+            ? './kds.html'
+            : requestUrl.pathname.endsWith('/ticket.html')
+              ? './ticket.html'
+              : './index.html';
+          return caches.match(new URL(fallback, BASE_URL).toString(), { ignoreVary: true });
+        }
+        return Response.error();
       })
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });

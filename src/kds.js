@@ -11,6 +11,13 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import {
+  cacheOperationalSnapshot,
+  getLocalReadiness,
+  initializeLocalDatabase,
+  loadCachedBootstrap,
+  queueSharedState
+} from './localDb.js';
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register(new URL('sw.js', document.baseURI), { scope: './' }).catch((error) => {
@@ -90,7 +97,35 @@ function saveTableKdsState() {
 }
 
 async function publishSharedKdsState() {
+  const compactState = Object.fromEntries(
+    Object.entries(state.tableKdsState || {})
+      .filter(([, value]) => value && value.status)
+      .map(([tableId, value]) => [tableId, {
+        status: value.status,
+        readyAt: value.readyAt || null,
+        updatedAt: new Date().toISOString()
+      }])
+  );
+
+  const persistLocal = async () => {
+    const cached = await loadCachedBootstrap();
+    if (!cached?.operational) return false;
+    const payload = { ...cached.operational, kdsState: compactState };
+    await cacheOperationalSnapshot(payload);
+    await queueSharedState(payload, {
+      deviceId: cached.device?.id,
+      sessionId: cached.offlineStatus?.sessionId || null
+    });
+    state.localMode = true;
+    return true;
+  };
+
   try {
+    const readiness = await getLocalReadiness();
+    if (readiness.mode === 'emergency' || navigator.onLine === false) {
+      await persistLocal();
+      return;
+    }
     const { data, error } = await supabase
       .from('tpv_state')
       .select('direct_sale')
@@ -103,16 +138,6 @@ async function publishSharedKdsState() {
       ? data.direct_sale
       : { items: [] };
 
-    const compactState = Object.fromEntries(
-      Object.entries(state.tableKdsState || {})
-        .filter(([, value]) => value && value.status)
-        .map(([tableId, value]) => [tableId, {
-          status: value.status,
-          readyAt: value.readyAt || null,
-          updatedAt: new Date().toISOString()
-        }])
-    );
-
     const { error: updateError } = await supabase
       .from('tpv_state')
       .update({
@@ -124,6 +149,9 @@ async function publishSharedKdsState() {
     if (updateError) throw updateError;
   } catch (err) {
     console.warn('[KDS] No se pudo publicar el estado de cocina:', err?.message || err);
+    await persistLocal().catch(localError => {
+      console.warn('[KDS] No se pudo guardar el estado local:', localError?.message || localError);
+    });
   }
 }
 
@@ -149,6 +177,7 @@ function mergeSharedKdsState(sharedKdsState = {}) {
 let state = {
   tables:         [],
   connected:      false,
+  localMode:      false,
   config:         loadConfig(),
   settingsOpen:   false,
   tableStartTimes: {},
@@ -852,8 +881,9 @@ function renderHeader() {
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
           <div class="kds-status-dot ${state.connected ? '' : 'disconnected'}" id="kds-status-dot"></div>
-          <span class="kds-status-label">${state.connected ? 'En línea' : 'Reconectando...'}</span>
+          <span class="kds-status-label">${state.localMode ? 'Modo local' : state.connected ? 'En línea' : 'Reconectando...'}</span>
         </div>
+        <a href="./index.html" class="kds-settings-btn" title="Volver al TPV" aria-label="Volver al TPV" style="display:grid;place-items:center;text-decoration:none;">TPV</a>
         <button class="kds-settings-btn" id="kds-open-settings" title="Configuración">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;">
@@ -1128,10 +1158,34 @@ function mergeTablesWithDefs(savedTables) {
 }
 
 async function loadInitialState() {
+  const loadLocal = async () => {
+    const cached = await loadCachedBootstrap();
+    if (!cached?.operational) return false;
+    if (Array.isArray(cached.operational.tables)) {
+      const merged = mergeTablesWithDefs(cached.operational.tables);
+      updateTableStartTimes(merged);
+      state.tables = merged;
+    }
+    if (cached.operational.kdsState && typeof cached.operational.kdsState === 'object') {
+      mergeSharedKdsState(cached.operational.kdsState);
+      saveTableKdsState();
+    }
+    state.localMode = cached.offlineStatus?.mode === 'emergency' || navigator.onLine === false;
+    return true;
+  };
+
   try {
+    const readiness = await getLocalReadiness();
+    if (readiness.mode === 'emergency' || navigator.onLine === false) {
+      await loadLocal();
+      return;
+    }
     const { data, error } = await supabase
       .from('tpv_state').select('*').eq('id', 'global').single();
-    if (error || !data) return;
+    if (error || !data) {
+      await loadLocal();
+      return;
+    }
     if (Array.isArray(data.tables)) {
       const merged = mergeTablesWithDefs(data.tables);
       updateTableStartTimes(merged);
@@ -1141,7 +1195,10 @@ async function loadInitialState() {
       mergeSharedKdsState(data.direct_sale.kds_state);
       saveTableKdsState();
     }
-  } catch (err) { console.warn('[KDS] Error cargando estado:', err); }
+  } catch (err) {
+    console.warn('[KDS] Error cargando estado:', err);
+    await loadLocal();
+  }
 }
 
 function onRealtimeUpdate(newTables, sharedKdsState = null) {
@@ -1201,7 +1258,7 @@ function subscribeRealtime() {
         const dot   = document.getElementById('kds-status-dot');
         const label = dot?.nextElementSibling;
         if (dot)   dot.className = `kds-status-dot ${state.connected ? '' : 'disconnected'}`;
-        if (label) label.textContent = state.connected ? 'En línea' : 'Reconectando...';
+        if (label) label.textContent = state.localMode ? 'Modo local' : state.connected ? 'En línea' : 'Reconectando...';
       }
     });
 }
@@ -1226,12 +1283,13 @@ function startTimeRefresh() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function init() {
+  await initializeLocalDatabase().catch(() => null);
   state.allTableDefs = buildAllTableDefs();
   applyTheme();
   setupGlobalEventListeners();
   await loadInitialState();
   render();
-  subscribeRealtime();
+  if (!state.localMode) subscribeRealtime();
   startClock();
   startTimeRefresh();
 }
