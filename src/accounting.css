@@ -301,6 +301,68 @@ button { cursor: pointer; }
 .toast { position: fixed; right: 22px; bottom: 22px; z-index: 40; background: var(--brand-dark); color: white; border-radius: 12px; padding: 13px 16px; box-shadow: var(--shadow); max-width: 360px; }
 .toast.error { background: var(--danger); }
 
+.reconciliation-head > div:first-child { display: grid; gap: 4px; }
+.reconciliation-head small { color: var(--muted); }
+.reconciliation-toolbar { width: max-content; max-width: calc(100% - 40px); margin: 16px 20px 4px; overflow-x: auto; }
+.reconciliation-list { display: grid; gap: 12px; padding: 16px 20px 20px; }
+.reconciliation-card { border: 1px solid var(--line); border-radius: 14px; padding: 16px; background: #fbfcfb; display: grid; gap: 14px; }
+.reconciliation-card-top, .reconciliation-card-bottom { display: flex; justify-content: space-between; align-items: center; gap: 14px; }
+.reconciliation-card-top > div { display: flex; gap: 7px; flex-wrap: wrap; }
+.reconciliation-card-top > strong { font-size: 19px; font-variant-numeric: tabular-nums; }
+.reconciliation-card-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.reconciliation-card-pair > div { min-width: 0; display: grid; gap: 4px; border-radius: 11px; padding: 12px; background: white; border: 1px solid #e8eeeb; }
+.reconciliation-card-pair small { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.reconciliation-card-pair strong, .reconciliation-card-pair span { overflow-wrap: anywhere; }
+.reconciliation-card-pair span { color: var(--muted); font-size: 12px; }
+.reconciliation-card-bottom > span { color: var(--muted); font-size: 12px; }
+.bank-movements-card details > summary { list-style: none; padding: 18px 20px; display: flex; justify-content: space-between; align-items: center; gap: 15px; cursor: pointer; }
+.bank-movements-card details > summary::-webkit-details-marker { display: none; }
+.bank-movements-card summary > span:first-child { display: grid; gap: 4px; }
+.bank-movements-card summary small { color: var(--muted); }
+.bank-movements-card summary > span:last-child { color: var(--brand); font-size: 12px; font-weight: 750; }
+.bank-movements-card details[open] summary { border-bottom: 1px solid var(--line); }
+.bank-list-note { padding: 12px 15px; color: var(--muted); font-size: 12px; text-align: center; background: #f8fbfa; }
+
+.reconciliation-modal-summary { display: grid; grid-template-columns: 1fr auto; gap: 7px 18px; align-items: center; margin-bottom: 16px; }
+.reconciliation-modal-summary > div { display: flex; gap: 7px; flex-wrap: wrap; }
+.reconciliation-modal-summary > strong { grid-row: span 2; font-size: 24px; font-variant-numeric: tabular-nums; }
+.reconciliation-modal-summary > small { color: var(--muted); }
+.reconciliation-comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.reconciliation-side { min-width: 0; border: 1px solid var(--line); border-radius: 14px; padding: 16px; background: #fbfcfb; }
+.reconciliation-side-title { display: flex; align-items: center; gap: 11px; margin-bottom: 14px; }
+.reconciliation-side-title > span { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--brand-dark); color: white; font-weight: 800; }
+.reconciliation-side-title.document > span { background: var(--accent); }
+.reconciliation-side-title > div { min-width: 0; display: grid; gap: 2px; }
+.reconciliation-side-title small { color: var(--muted); overflow-wrap: anywhere; }
+.reconciliation-side dl { margin: 0; display: grid; }
+.reconciliation-side dl > div { min-width: 0; display: grid; grid-template-columns: minmax(105px,.7fr) minmax(0,1.3fr); gap: 10px; padding: 9px 0; border-top: 1px solid #e8eeeb; }
+.reconciliation-side dt { color: var(--muted); font-size: 12px; }
+.reconciliation-side dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+.reconciliation-amount { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.reconciliation-checks { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin: 14px 0; }
+.reconciliation-checks > div { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; }
+.reconciliation-checks span { color: var(--muted); font-size: 11px; }
+.reconciliation-checks strong { font-size: 13px; }
+.reconciliation-checks .is-ok { border-color: #bcded2; background: var(--brand-soft); color: var(--brand-dark); }
+.reconciliation-checks .is-warning { border-color: #f0d8aa; background: #fff7e7; color: #73501a; }
+.reconciliation-warnings, .reconciliation-validation { border: 1px solid #f0d8aa; border-radius: 12px; padding: 13px 15px; background: #fff7e7; color: #73501a; }
+.reconciliation-warnings ul { margin: 7px 0 0; padding-left: 20px; }
+.reconciliation-validation { display: grid; gap: 3px; }
+.reconciliation-validation.is-ok { border-color: #bcded2; background: var(--brand-soft); color: var(--brand-dark); }
+.reconciliation-validation span { font-size: 12px; }
+.reconciliation-confirm-check { display: flex; align-items: flex-start; gap: 10px; margin-top: 14px; padding: 14px; border: 1px solid #bfd9cf; border-radius: 12px; background: #f5fbf8; cursor: pointer; }
+.reconciliation-confirm-check input { width: 19px; height: 19px; margin: 1px 0 0; accent-color: var(--brand); }
+.reconciliation-confirm-check span { display: grid; gap: 3px; }
+.reconciliation-confirm-check small { color: var(--muted); }
+.reconciliation-detail-section, .reconciliation-original { margin-top: 20px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.reconciliation-detail-section > h3 { margin: 0; padding: 15px 16px; font-size: 15px; border-bottom: 1px solid var(--line); }
+.reconciliation-lines-empty { padding: 25px 16px; }
+.reconciliation-original-head { padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 15px; border-bottom: 1px solid var(--line); }
+.reconciliation-original-head > div { display: grid; gap: 3px; }
+.reconciliation-original-head small { color: var(--muted); }
+.reconciliation-original iframe { display: block; width: 100%; height: 620px; border: 0; background: #edf1ef; }
+.reconciliation-original-empty { padding: 28px 16px; }
+
 @media (max-width: 1050px) {
   .acc-kpis { grid-template-columns: repeat(2,1fr); }
   .drive-kpis { grid-template-columns: repeat(3,minmax(0,1fr)); }
@@ -312,6 +374,7 @@ button { cursor: pointer; }
   .document-line-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
   .document-line-grid .line-description { grid-column: span 2; }
   .document-line-amounts { grid-column: span 2; }
+  .reconciliation-comparison { grid-template-columns: 1fr; }
 }
 @media (max-width: 760px) {
   .acc-shell { display: block; padding-bottom: 72px; }
@@ -357,4 +420,22 @@ button { cursor: pointer; }
   .document-line-grid .line-description,
   .document-line-amounts { grid-column: 1 / -1; }
   .document-totals { grid-template-columns: 1fr 1fr; }
+  .reconciliation-head { align-items: stretch; flex-direction: column; gap: 12px; }
+  .reconciliation-head .acc-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .reconciliation-toolbar { margin: 13px 14px 2px; max-width: calc(100% - 28px); }
+  .reconciliation-list { padding: 12px 14px 16px; }
+  .reconciliation-card { padding: 13px; }
+  .reconciliation-card-pair { grid-template-columns: 1fr; }
+  .reconciliation-card-bottom { align-items: stretch; flex-direction: column; }
+  .reconciliation-card-bottom .acc-actions { display: grid; grid-template-columns: 1fr; }
+  .reconciliation-card-bottom .btn { width: 100%; }
+  .reconciliation-modal-summary { grid-template-columns: 1fr; }
+  .reconciliation-modal-summary > strong { grid-row: auto; }
+  .reconciliation-checks { grid-template-columns: 1fr; }
+  .reconciliation-side { padding: 13px; }
+  .reconciliation-side dl > div { grid-template-columns: minmax(95px,.8fr) minmax(0,1.2fr); }
+  .reconciliation-original-head { align-items: stretch; flex-direction: column; }
+  .reconciliation-original-head .btn { width: 100%; text-align: center; }
+  .reconciliation-original iframe { height: 430px; }
+  .reconciliation-modal .acc-modal-foot .btn { flex: 1 1 145px; }
 }

@@ -17,6 +17,10 @@ import {
   emptyDocumentLine
 } from './documentLines.js';
 import {
+  buildReconciliationComparison,
+  reconciliationsByStatus
+} from './reconciliationView.js';
+import {
   GOOGLE_DRIVE_SCOPE,
   driveFileUrl,
   driveFolderUrl,
@@ -53,6 +57,7 @@ const state = {
   view: 'dashboard',
   dashboardPeriod: 'month',
   profitabilityFilter: 'pending',
+  reconciliationFilter: 'suggested',
   token: '',
   client: null,
   business: null,
@@ -123,6 +128,19 @@ function safeDriveUrl(value = '') {
   } catch {
     return '';
   }
+}
+
+function drivePreviewUrl(value = '') {
+  const safeUrl = safeDriveUrl(value);
+  if (!safeUrl) return '';
+  const url = new URL(safeUrl);
+  const fileId = url.pathname.match(/\/file\/d\/([^/]+)/)?.[1] || url.searchParams.get('id');
+  return fileId ? `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/preview` : safeUrl;
+}
+
+function displayDate(value) {
+  if (!value) return '—';
+  return new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString('es-ES');
 }
 
 function isoDate(value = new Date()) {
@@ -600,9 +618,85 @@ function renderDocuments(direction) {
   return `<section class="acc-card"><div class="acc-card-head"><h2>${title}</h2><span class="badge muted">${docs.length} documentos</span></div>${renderDocumentTable(docs)}</section>`;
 }
 
+function reconciliationContext(match) {
+  const bankTransaction = state.bankTransactions.find(item => item.id === match.bank_transaction_id)
+    || match.accounting_bank_transactions
+    || null;
+  const document = state.documents.find(item => item.id === match.document_id)
+    || match.bookkeeping_documents
+    || null;
+  const contact = state.contacts.find(item => item.id === document?.contact_id) || null;
+  const bankAccount = state.bankAccounts.find(item => item.id === bankTransaction?.bank_account_id) || null;
+  return { bankTransaction, document, contact, bankAccount };
+}
+
+function reconciliationOriginal(document) {
+  if (!document) return { url: '', previewUrl: '' };
+  const driveImport = state.driveImports.find(item => item.document_id === document.id);
+  const review = driveImport
+    ? reviewableSupplierDocument(driveImport.payload, { drive_file_id: driveImport.drive_file_id })
+    : null;
+  const url = safeDriveUrl(
+    document.attachment_url
+    || document.source_payload?.source_url
+    || review?.source_url
+    || driveFileUrl(driveImport?.drive_file_id || '')
+  );
+  return { url, previewUrl: drivePreviewUrl(url) };
+}
+
+function reconciliationComparison(match, bankTransaction, document) {
+  const comparisonDocument = match.status === 'confirmed' && match.document_paid_before != null
+    ? { ...document, paid_amount: match.document_paid_before }
+    : document;
+  return buildReconciliationComparison({ match, bankTransaction, document: comparisonDocument });
+}
+
+function renderReconciliationCard(match) {
+  const { bankTransaction, document, contact, bankAccount } = reconciliationContext(match);
+  const comparison = reconciliationComparison(match, bankTransaction, document);
+  const stateLabel = match.status === 'confirmed' ? 'Confirmada' : match.status === 'rejected' ? 'Descartada' : 'Pendiente';
+  const stateClass = match.status === 'confirmed' ? '' : match.status === 'rejected' ? 'danger' : 'warning';
+  const warningLabel = comparison.warnings.length
+    ? `<span class="badge warning">${comparison.warnings.length} aviso${comparison.warnings.length === 1 ? '' : 's'}</span>`
+    : '<span class="badge">Datos coherentes</span>';
+  return `<article class="reconciliation-card">
+    <div class="reconciliation-card-top">
+      <div><span class="badge ${stateClass}">${stateLabel}</span>${warningLabel}</div>
+      <strong>${money(match.amount)}</strong>
+    </div>
+    <div class="reconciliation-card-pair">
+      <div>
+        <small>Movimiento bancario</small>
+        <strong>${escapeHtml(bankTransaction?.description || 'Movimiento no disponible')}</strong>
+        <span>${displayDate(bankTransaction?.booked_on)} · ${escapeHtml(bankAccount?.name || 'Cuenta bancaria')}</span>
+        <span>Ref. ${escapeHtml(bankTransaction?.reference || 'sin referencia')}</span>
+      </div>
+      <div>
+        <small>Documento contable</small>
+        <strong>${escapeHtml(document?.number || 'Documento no disponible')}</strong>
+        <span>${displayDate(document?.issue_date)} · ${escapeHtml(contact?.name || (document?.direction === 'sale' ? 'Venta' : 'Proveedor sin asignar'))}</span>
+        <span>Pendiente antes de conciliar: ${money(comparison.outstanding)}</span>
+      </div>
+    </div>
+    <div class="reconciliation-card-bottom">
+      <span>${escapeHtml(match.reason || 'Coincidencia propuesta')} · ${Number(match.score || 0)}%</span>
+      <div class="acc-actions">
+        <button class="btn btn-small btn-primary" data-review-reconciliation="${match.id}">${match.status === 'confirmed' ? 'Ver conciliación' : 'Revisar coincidencia'}</button>
+        ${match.status === 'suggested' ? `<button class="btn btn-small" data-reject-match="${match.id}">Descartar</button>` : ''}
+        ${match.status === 'rejected' ? `<button class="btn btn-small" data-reopen-match="${match.id}">Volver a pendientes</button>` : ''}
+      </div>
+    </div>
+  </article>`;
+}
+
 function renderTreasury() {
   const pending = state.bankTransactions.filter(tx => tx.status === 'pending').length;
   const balance = state.bankTransactions.find(tx => tx.balance != null)?.balance || 0;
+  const filteredReconciliations = reconciliationsByStatus(state.reconciliations, state.reconciliationFilter);
+  const reconciliationCounts = Object.fromEntries(
+    ['suggested', 'confirmed', 'rejected'].map(status => [status, reconciliationsByStatus(state.reconciliations, status).length])
+  );
   return `
     <div class="acc-grid acc-kpis">
       <div class="acc-kpi is-accent"><span>Último saldo importado</span><strong>${money(balance)}</strong></div>
@@ -610,17 +704,27 @@ function renderTreasury() {
       <div class="acc-kpi"><span>Cuentas bancarias</span><strong>${state.bankAccounts.length}</strong></div>
       <div class="acc-kpi"><span>Movimientos</span><strong>${state.bankTransactions.length}</strong></div>
     </div>
-    <section class="acc-card">
-      <div class="acc-card-head"><h2>Movimientos bancarios</h2><div class="acc-actions"><button class="btn btn-small" id="suggest-matches-btn">Buscar coincidencias</button><button class="btn btn-small" id="new-bank-account-btn">Añadir cuenta</button></div></div>
-      ${state.bankTransactions.length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Fecha</th><th>Concepto</th><th>Referencia</th><th>Estado</th><th class="num">Importe</th><th class="num">Saldo</th></tr></thead><tbody>
-        ${state.bankTransactions.map(tx => `<tr><td>${new Date(`${tx.booked_on}T12:00:00`).toLocaleDateString('es-ES')}</td><td>${escapeHtml(tx.description)}</td><td>${escapeHtml(tx.reference)}</td><td>${statusBadge(tx.status === 'matched' ? 'paid' : 'needs_review')}</td><td class="num">${money(tx.amount)}</td><td class="num">${tx.balance == null ? '—' : money(tx.balance)}</td></tr>`).join('')}
-      </tbody></table></div>` : '<div class="acc-empty"><strong>Importa tu primer extracto</strong>Compatible con CSV y la primera hoja de XLSX.</div>'}
+    <section class="acc-card reconciliation-section">
+      <div class="acc-card-head reconciliation-head">
+        <div><h2>Conciliación asistida</h2><small>Comprueba banco, documento y factura original antes de confirmar.</small></div>
+        <div class="acc-actions"><button class="btn btn-small" id="suggest-matches-btn">Buscar coincidencias</button><button class="btn btn-small" id="new-bank-account-btn">Añadir cuenta</button></div>
+      </div>
+      <div class="reconciliation-toolbar period-switch">
+        <button class="btn btn-small ${state.reconciliationFilter === 'suggested' ? 'is-active' : ''}" data-reconciliation-filter="suggested">Pendientes ${reconciliationCounts.suggested}</button>
+        <button class="btn btn-small ${state.reconciliationFilter === 'confirmed' ? 'is-active' : ''}" data-reconciliation-filter="confirmed">Confirmadas ${reconciliationCounts.confirmed}</button>
+        <button class="btn btn-small ${state.reconciliationFilter === 'rejected' ? 'is-active' : ''}" data-reconciliation-filter="rejected">Descartadas ${reconciliationCounts.rejected}</button>
+      </div>
+      ${filteredReconciliations.length
+        ? `<div class="reconciliation-list">${filteredReconciliations.map(renderReconciliationCard).join('')}</div>`
+        : `<div class="acc-empty"><strong>${state.reconciliationFilter === 'suggested' ? 'Sin propuestas pendientes' : 'No hay conciliaciones en este estado'}</strong>${state.reconciliationFilter === 'suggested' ? 'Pulsa Buscar coincidencias cuando hayas importado movimientos.' : 'Puedes cambiar de pestaña para revisar el historial.'}</div>`}
     </section>
-    <section class="acc-card" style="margin-top:18px">
-      <div class="acc-card-head"><h2>Conciliación asistida</h2></div>
-      ${state.reconciliations.filter(item=>item.status==='suggested').length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Banco</th><th>Documento</th><th>Motivo</th><th class="num">Importe</th><th></th></tr></thead><tbody>
-        ${state.reconciliations.filter(item=>item.status==='suggested').map(item=>`<tr><td>${escapeHtml(item.accounting_bank_transactions?.description)}<br><small>${item.accounting_bank_transactions?.booked_on || ''}</small></td><td>${escapeHtml(item.bookkeeping_documents?.number || '')}</td><td>${escapeHtml(item.reason || '')} · ${Number(item.score)}%</td><td class="num">${money(item.amount)}</td><td><button class="btn btn-small btn-primary" data-confirm-match="${item.id}">Confirmar</button> <button class="btn btn-small" data-reject-match="${item.id}">Descartar</button></td></tr>`).join('')}
-      </tbody></table></div>` : '<div class="acc-empty"><strong>Sin propuestas</strong>Importa movimientos y busca coincidencias.</div>'}
+    <section class="acc-card bank-movements-card" style="margin-top:18px">
+      <details>
+        <summary><span><strong>Movimientos bancarios</strong><small>${state.bankTransactions.length} movimientos · ${pending} sin conciliar</small></span><span>Mostrar listado</span></summary>
+        ${state.bankTransactions.length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Fecha</th><th>Concepto</th><th>Referencia</th><th>Estado</th><th class="num">Importe</th><th class="num">Saldo</th></tr></thead><tbody>
+          ${state.bankTransactions.slice(0, 50).map(tx => `<tr><td>${displayDate(tx.booked_on)}</td><td>${escapeHtml(tx.description)}</td><td>${escapeHtml(tx.reference)}</td><td>${statusBadge(tx.status === 'matched' ? 'paid' : 'needs_review')}</td><td class="num">${money(tx.amount)}</td><td class="num">${tx.balance == null ? '—' : money(tx.balance)}</td></tr>`).join('')}
+        </tbody></table>${state.bankTransactions.length > 50 ? '<div class="bank-list-note">Se muestran los 50 movimientos más recientes.</div>' : ''}</div>` : '<div class="acc-empty"><strong>Importa tu primer extracto</strong>Compatible con CSV y la primera hoja de XLSX.</div>'}
+      </details>
     </section>`;
 }
 
@@ -771,6 +875,7 @@ function renderSettings() {
 
 function renderModal() {
   if (state.modal.type === 'document') return renderDocumentModal(state.modal.document);
+  if (state.modal.type === 'reconciliation') return renderReconciliationModal();
   if (state.modal.type === 'bank-import') return renderBankImportModal();
   if (state.modal.type === 'bank-account') return renderBankAccountModal();
   if (state.modal.type === 'tax') return renderTaxModal(state.modal.model);
@@ -780,6 +885,88 @@ function renderModal() {
 
 function modalFrame(title, body, foot = '', className = '') {
   return `<div class="acc-modal-backdrop"><div class="acc-modal ${className}"><div class="acc-modal-head"><h2>${title}</h2><button class="btn btn-small" data-close-modal>✕</button></div><div class="acc-modal-body">${body}</div>${foot ? `<div class="acc-modal-foot">${foot}</div>` : ''}</div></div>`;
+}
+
+function renderReconciliationLines(lines = []) {
+  if (!lines.length) {
+    return state.modal.loading
+      ? '<div class="acc-empty reconciliation-lines-empty"><strong>Cargando artículos…</strong></div>'
+      : '<div class="acc-empty reconciliation-lines-empty"><strong>Sin líneas desglosadas</strong>Comprueba los totales y la factura original.</div>';
+  }
+  return `<div class="acc-table-wrap"><table class="acc-table reconciliation-lines-table">
+    <thead><tr><th>Artículo / concepto</th><th class="num">Cantidad</th><th class="num">Precio</th><th class="num">Base</th><th class="num">IGIC</th></tr></thead>
+    <tbody>${lines.map(line => {
+      const quantity = Number(line.quantity || 0);
+      const unitPrice = Number(line.unit_price || 0);
+      const base = Number(line.taxable_base ?? line.total_amount ?? (quantity * unitPrice));
+      const tax = Number(line.tax_amount ?? (base * Number(line.tax_rate || 0) / 100));
+      return `<tr><td><strong>${escapeHtml(line.description || 'Sin descripción')}</strong>${line.supplier_item_code ? `<br><small>Cód. ${escapeHtml(line.supplier_item_code)}</small>` : ''}</td><td class="num">${quantity}</td><td class="num">${money(unitPrice)}</td><td class="num">${money(base)}</td><td class="num">${money(tax)} <small>(${Number(line.tax_rate || 0)}%)</small></td></tr>`;
+    }).join('')}</tbody>
+  </table></div>`;
+}
+
+function renderReconciliationModal() {
+  const match = state.modal.match;
+  const { bankTransaction, document, contact, bankAccount } = reconciliationContext(match);
+  const comparison = reconciliationComparison(match, bankTransaction, document);
+  const original = reconciliationOriginal(document);
+  const referenceTone = comparison.referenceMatches === true ? 'is-ok' : comparison.referenceMatches === false ? 'is-warning' : '';
+  const dateTone = comparison.dateDifference != null && comparison.dateDifference <= 7 ? 'is-ok' : 'is-warning';
+  const statusTitle = match.status === 'confirmed' ? 'Conciliación confirmada' : match.status === 'rejected' ? 'Propuesta descartada' : 'Revisar conciliación';
+  const warnings = comparison.warnings.length
+    ? `<div class="reconciliation-warnings"><strong>Antes de confirmar, revisa:</strong><ul>${comparison.warnings.map(warning => `<li>${escapeHtml(warning)}</li>`).join('')}</ul></div>`
+    : '<div class="reconciliation-validation is-ok"><strong>Los datos básicos son coherentes.</strong><span>Aun así, comprueba el concepto y la factura original.</span></div>';
+  const originalMarkup = original.previewUrl
+    ? `<div class="reconciliation-original-head"><div><strong>Factura original</strong><small>Se muestra aquí para que no tengas que abandonar la conciliación.</small></div><a class="btn btn-small" href="${escapeHtml(original.url)}" target="_blank" rel="noopener noreferrer">Abrir en Drive ↗</a></div><iframe src="${escapeHtml(original.previewUrl)}" title="Factura original" loading="lazy"></iframe>`
+    : '<div class="acc-empty reconciliation-original-empty"><strong>No hay una factura original vinculada</strong>Puedes revisar los datos contables guardados, pero no hay un archivo de Drive disponible.</div>';
+  let foot = '<button class="btn" data-close-modal>Cerrar</button>';
+  if (match.status === 'suggested') {
+    foot += `<button class="btn" data-match-action="reject" data-match-id="${match.id}">Descartar</button><button class="btn btn-primary" id="confirm-reconciliation-btn" data-match-action="confirm" data-match-id="${match.id}" disabled>Confirmar conciliación</button>`;
+  } else if (match.status === 'confirmed') {
+    foot += `<button class="btn btn-danger" data-match-action="undo" data-match-id="${match.id}">Deshacer conciliación</button>`;
+  } else {
+    foot += `<button class="btn btn-primary" data-match-action="reopen" data-match-id="${match.id}">Volver a pendientes</button>`;
+  }
+  return modalFrame(statusTitle, `
+    <div class="reconciliation-modal-summary">
+      <div><span class="badge ${match.status === 'confirmed' ? '' : match.status === 'rejected' ? 'danger' : 'warning'}">${match.status === 'confirmed' ? 'Confirmada' : match.status === 'rejected' ? 'Descartada' : 'Pendiente'}</span><span class="badge muted">Confianza ${Number(match.score || 0)}%</span></div>
+      <strong>${money(match.amount)}</strong>
+      <small>${escapeHtml(match.reason || 'Coincidencia propuesta')}</small>
+    </div>
+    <div class="reconciliation-comparison">
+      <section class="reconciliation-side">
+        <div class="reconciliation-side-title"><span>B</span><div><strong>Movimiento bancario</strong><small>${escapeHtml(bankAccount?.name || 'Cuenta bancaria')}${bankAccount?.iban_last4 ? ` · ···· ${escapeHtml(bankAccount.iban_last4)}` : ''}</small></div></div>
+        <dl>
+          <div><dt>Fecha operación</dt><dd>${displayDate(bankTransaction?.booked_on)}</dd></div>
+          <div><dt>Fecha valor</dt><dd>${displayDate(bankTransaction?.value_on)}</dd></div>
+          <div><dt>Concepto</dt><dd>${escapeHtml(bankTransaction?.description || '—')}</dd></div>
+          <div><dt>Referencia</dt><dd>${escapeHtml(bankTransaction?.reference || '—')}</dd></div>
+          <div><dt>Importe</dt><dd class="reconciliation-amount">${money(bankTransaction?.amount)}</dd></div>
+          <div><dt>Saldo tras movimiento</dt><dd>${bankTransaction?.balance == null ? '—' : money(bankTransaction.balance)}</dd></div>
+        </dl>
+      </section>
+      <section class="reconciliation-side">
+        <div class="reconciliation-side-title document"><span>D</span><div><strong>Documento contable</strong><small>${escapeHtml(contact?.name || (document?.direction === 'sale' ? 'Venta' : 'Proveedor sin asignar'))}</small></div></div>
+        <dl>
+          <div><dt>Número</dt><dd>${escapeHtml(document?.number || '—')}</dd></div>
+          <div><dt>NIF</dt><dd>${escapeHtml(contact?.tax_id || '—')}</dd></div>
+          <div><dt>Fecha emisión</dt><dd>${displayDate(document?.issue_date)}</dd></div>
+          <div><dt>Vencimiento</dt><dd>${displayDate(document?.due_date)}</dd></div>
+          <div><dt>Base + IGIC</dt><dd>${money(document?.subtotal)} + ${money(document?.tax_amount)}</dd></div>
+          <div><dt>Total / pendiente antes</dt><dd class="reconciliation-amount">${money(document?.total_amount)} / ${money(comparison.outstanding)}</dd></div>
+        </dl>
+      </section>
+    </div>
+    <div class="reconciliation-checks">
+      <div class="${comparison.amountMatches ? 'is-ok' : 'is-warning'}"><span>Importe</span><strong>${comparison.amountMatches ? 'Coincide' : `Diferencia ${money(comparison.amountDifference)}`}</strong></div>
+      <div class="${dateTone}"><span>Fechas</span><strong>${comparison.dateDifference == null ? 'Sin comparar' : comparison.dateDifference === 0 ? 'Mismo día' : `${comparison.dateDifference} día${comparison.dateDifference === 1 ? '' : 's'}`}</strong></div>
+      <div class="${referenceTone}"><span>Referencia</span><strong>${comparison.referenceMatches === true ? 'Coincide' : comparison.referenceMatches === false ? 'No coincide' : 'Sin dato suficiente'}</strong></div>
+    </div>
+    ${warnings}
+    ${match.status === 'suggested' && comparison.canConfirm ? '<label class="reconciliation-confirm-check"><input type="checkbox" id="reconciliation-reviewed"> <span><strong>He comprobado el movimiento, el documento y la factura original.</strong><small>La confirmación marcará el banco como conciliado y actualizará el pago del documento.</small></span></label>' : ''}
+    <section class="reconciliation-detail-section"><h3>Artículos del documento</h3>${renderReconciliationLines(state.modal.lines)}</section>
+    <section class="reconciliation-original">${originalMarkup}</section>
+  `, foot, 'acc-modal-wide reconciliation-modal');
 }
 
 function documentHistoryFor(line) {
@@ -971,8 +1158,13 @@ function wireEvents() {
   document.querySelector('#import-bank-btn')?.addEventListener('click', () => openModal({ type: 'bank-import' }));
   document.querySelector('#new-bank-account-btn')?.addEventListener('click', () => openModal({ type: 'bank-account' }));
   document.querySelector('#suggest-matches-btn')?.addEventListener('click', suggestMatches);
-  document.querySelectorAll('[data-confirm-match]').forEach(button => button.addEventListener('click', () => updateMatch(button.dataset.confirmMatch, 'confirmed')));
-  document.querySelectorAll('[data-reject-match]').forEach(button => button.addEventListener('click', () => updateMatch(button.dataset.rejectMatch, 'rejected')));
+  document.querySelectorAll('[data-reconciliation-filter]').forEach(button => button.addEventListener('click', () => {
+    state.reconciliationFilter = button.dataset.reconciliationFilter;
+    renderApp();
+  }));
+  document.querySelectorAll('[data-review-reconciliation]').forEach(button => button.addEventListener('click', () => openReconciliation(button.dataset.reviewReconciliation)));
+  document.querySelectorAll('[data-reject-match]').forEach(button => button.addEventListener('click', () => updateMatch(button.dataset.rejectMatch, 'reject', button)));
+  document.querySelectorAll('[data-reopen-match]').forEach(button => button.addEventListener('click', () => updateMatch(button.dataset.reopenMatch, 'reopen', button)));
   document.querySelector('#new-entry-btn')?.addEventListener('click', () => openModal({ type: 'entry' }));
   document.querySelectorAll('[data-tax-model]').forEach(button => button.addEventListener('click', () => openModal({ type: 'tax', model: button.dataset.taxModel })));
   document.querySelector('#export-tax-btn')?.addEventListener('click', exportTaxCsv);
@@ -1016,6 +1208,13 @@ function wireModal() {
   document.querySelector('#bank-account-form')?.addEventListener('submit', saveBankAccount);
   document.querySelector('#tax-form')?.addEventListener('submit', generateTaxDraft);
   document.querySelector('#entry-form')?.addEventListener('submit', saveEntry);
+  document.querySelector('#reconciliation-reviewed')?.addEventListener('change', event => {
+    const confirmButton = document.querySelector('#confirm-reconciliation-btn');
+    if (confirmButton) confirmButton.disabled = !event.currentTarget.checked;
+  });
+  document.querySelectorAll('[data-match-action]').forEach(button => button.addEventListener('click', () => {
+    updateMatch(button.dataset.matchId, button.dataset.matchAction, button);
+  }));
 }
 
 function openModal(modal) { state.modal = modal; renderApp(); }
@@ -1509,23 +1708,51 @@ async function suggestMatches() {
   } catch (error) { toast(error.message, 'error'); }
 }
 
-async function updateMatch(id, status) {
+async function openReconciliation(id) {
+  const match = state.reconciliations.find(item => item.id === id);
+  if (!match) return toast('No se encontró la propuesta de conciliación.', 'error');
+  state.modal = { type: 'reconciliation', match, lines: [], loading: true };
+  renderApp();
+  if (!match.document_id) {
+    state.modal.loading = false;
+    renderApp();
+    return;
+  }
+  const { data, error } = await state.client.from('bookkeeping_document_lines')
+    .select('*')
+    .eq('document_id', match.document_id)
+    .order('position');
+  if (state.modal?.type !== 'reconciliation' || state.modal.match.id !== id) return;
+  state.modal.lines = data || [];
+  state.modal.loading = false;
+  if (error) toast('No se pudo cargar el desglose del documento.', 'error');
+  renderApp();
+}
+
+async function updateMatch(id, action, button) {
   const match = state.reconciliations.find(item => item.id === id);
   if (!match) return;
-  const { error } = await state.client.from('accounting_reconciliations').update({ status }).eq('id', id);
-  if (error) return toast(error.message, 'error');
-  if (status === 'confirmed') {
-    await state.client.from('accounting_bank_transactions').update({ status: 'matched' }).eq('id', match.bank_transaction_id);
-    const document = state.documents.find(item => item.id === match.document_id);
-    if (document) {
-      const paid = Math.min(Number(document.total_amount), Number(document.paid_amount || 0) + Number(match.amount));
-      await state.client.from('bookkeeping_documents').update({
-        paid_amount: paid,
-        status: paid >= Number(document.total_amount) ? 'paid' : 'partially_paid'
-      }).eq('id', document.id);
-    }
+  const keepModalOpen = state.modal?.type === 'reconciliation' && state.modal.match.id === id;
+  if (button) button.disabled = true;
+  try {
+    await rpc('accounting_update_reconciliation', {
+      p_reconciliation_id: id,
+      p_action: action
+    });
+    const messages = {
+      confirm: 'Conciliación confirmada. El banco y el documento se han actualizado juntos.',
+      reject: 'Propuesta descartada. Puedes recuperarla desde Descartadas.',
+      reopen: 'La propuesta vuelve a estar pendiente de revisión.',
+      undo: 'Conciliación deshecha. Se han restaurado el banco y el documento.'
+    };
+    state.modal = null;
+    await loadAll();
+    if (keepModalOpen) await openReconciliation(id);
+    toast(messages[action] || 'Conciliación actualizada.');
+  } catch (error) {
+    if (button) button.disabled = false;
+    toast(error.message || 'No se pudo actualizar la conciliación.', 'error');
   }
-  await loadAll();
 }
 
 async function sha256(text) {
