@@ -6,6 +6,11 @@ import {
 import { mapBankRows, parseCsv, parseXlsx } from './bankStatement.js';
 import { buildBusinessSnapshot } from './accountingDashboard.js';
 import {
+  PROFITABILITY_CATEGORIES,
+  buildProfitabilityAnalysis,
+  categoryDefinition
+} from './profitabilityAnalysis.js';
+import {
   IGIC_RATES,
   calculateDocumentTotals,
   calculatePriceVariation,
@@ -34,6 +39,7 @@ const SESSION_KEY = 'accounting-session-v1';
 const DEVICE_KEY = 'accounting-device-v1';
 const VIEW_LABELS = {
   dashboard: 'Resumen',
+  profitability: 'Rentabilidad',
   sales: 'Ventas',
   purchases: 'Compras y gastos',
   treasury: 'Tesorería',
@@ -46,6 +52,7 @@ const VIEW_LABELS = {
 const state = {
   view: 'dashboard',
   dashboardPeriod: 'month',
+  profitabilityFilter: 'pending',
   token: '',
   client: null,
   business: null,
@@ -61,6 +68,7 @@ const state = {
   taxPeriods: [],
   driveSources: [],
   driveImports: [],
+  profitabilityAnalyses: [],
   driveFiles: [],
   driveFolders: {},
   driveBusy: false,
@@ -269,19 +277,21 @@ async function loadAll() {
     query('accounting_tax_drafts', '*, accounting_tax_periods(year,quarter,starts_on,ends_on)', { column: 'generated_at', ascending: false }),
     query('accounting_tax_periods', '*', { column: 'starts_on', ascending: false }),
     query('accounting_drive_sources').limit(1),
-    query('accounting_drive_imports', '*, bookkeeping_documents(number,status,total_amount,accounting_contacts(name))', { column: 'created_at', ascending: false }).limit(500)
+    query('accounting_drive_imports', '*, bookkeeping_documents(number,status,total_amount,accounting_contacts(name))', { column: 'created_at', ascending: false }).limit(500),
+    query('accounting_document_analysis')
   ]);
   const failed = results.find(result => result.error);
   if (failed) throw failed.error;
   [
     state.business, state.documents, state.contacts, state.bankAccounts,
     state.bankTransactions, state.reconciliations, state.accounts, state.journalEntries, state.journalLines,
-    state.taxDrafts, state.taxPeriods, state.driveSources, state.driveImports
+    state.taxDrafts, state.taxPeriods, state.driveSources, state.driveImports, state.profitabilityAnalyses
   ] = [
     results[0].data?.[0] || null, results[1].data || [], results[2].data || [],
     results[3].data || [], results[4].data || [], results[5].data || [],
     results[6].data || [], results[7].data || [], results[8].data || [],
-    results[9].data || [], results[10].data || [], results[11].data || [], results[12].data || []
+    results[9].data || [], results[10].data || [], results[11].data || [], results[12].data || [],
+    results[13].data || []
   ];
   state.loading = false;
   renderApp();
@@ -298,6 +308,7 @@ function renderApp() {
         <div class="acc-brand"><div class="acc-mark">€</div><div><strong>${escapeHtml(state.business?.name || 'Contabilidad')}</strong><small>Autónomo canario</small></div></div>
         <nav class="acc-nav">
           ${navButton('dashboard','⌂','Resumen')}
+          ${navButton('profitability','◎','Rentabilidad')}
           ${navButton('sales','↗','Ventas')}
           ${navButton('purchases','↙','Compras')}
           ${navButton('treasury','≈','Tesorería')}
@@ -332,6 +343,7 @@ function renderTopActions() {
 function renderView() {
   const views = {
     dashboard: renderDashboard,
+    profitability: renderProfitability,
     sales: () => renderDocuments('sale'),
     purchases: () => renderDocuments('purchase'),
     treasury: renderTreasury,
@@ -359,6 +371,7 @@ function renderDashboard() {
   const periodRange = `${compactDate(snapshot.bounds.start)} – ${compactDate(snapshot.bounds.end)}`;
   const comparisonRange = `${compactDate(snapshot.bounds.comparisonStart)} – ${compactDate(snapshot.bounds.comparisonEnd)}`;
   const taxReserve = Math.max(snapshot.current.taxResult, 0) + snapshot.current.estimatedIrpf;
+  const missingCurrentCosts = snapshot.current.salesBase > 0 && snapshot.current.expensesBase === 0;
   return `
     <div class="dashboard-toolbar">
       <div>
@@ -372,8 +385,8 @@ function renderDashboard() {
     <div class="acc-grid acc-kpis">
       <div class="acc-kpi is-accent"><span>Ventas netas</span><strong>${money(snapshot.current.salesBase)}</strong>${variationMarkup(snapshot.changes.sales)}<small>Sin IGIC · ${snapshot.current.salesCount} documentos</small></div>
       <div class="acc-kpi"><span>Compras y gastos</span><strong>${money(snapshot.current.expensesBase)}</strong>${variationMarkup(snapshot.changes.expenses, { neutral: true })}<small>Sin IGIC · solo aprobados</small></div>
-      <div class="acc-kpi ${snapshot.current.result < 0 ? 'is-danger' : ''}"><span>Resultado del negocio</span><strong>${money(snapshot.current.result)}</strong>${variationMarkup(snapshot.changes.result)}<small>Antes de IRPF</small></div>
-      <div class="acc-kpi"><span>Margen sobre ventas</span><strong>${percent(snapshot.current.margin)} %</strong><small>${snapshot.current.averageTicket == null ? 'Sin tickets TPV en el periodo' : `Ticket medio ${money(snapshot.current.averageTicket)}`}</small></div>
+      <div class="acc-kpi ${snapshot.current.result < 0 ? 'is-danger' : ''}"><span>${missingCurrentCosts ? 'Resultado todavía incompleto' : 'Resultado del negocio'}</span><strong>${money(snapshot.current.result)}</strong>${missingCurrentCosts ? '<span class="metric-change is-neutral">Faltan gastos aprobados</span>' : variationMarkup(snapshot.changes.result)}<small>${missingCurrentCosts ? 'No es beneficio real todavía' : 'Antes de IRPF'}</small><button class="kpi-link" data-view="profitability">Entender la rentabilidad →</button></div>
+      <div class="acc-kpi"><span>Margen sobre ventas</span><strong>${missingCurrentCosts ? '—' : `${percent(snapshot.current.margin)} %`}</strong><small>${missingCurrentCosts ? 'Se calculará cuando haya gastos' : snapshot.current.averageTicket == null ? 'Sin tickets TPV en el periodo' : `Ticket medio ${money(snapshot.current.averageTicket)}`}</small></div>
     </div>
     <div class="acc-grid acc-two">
       <section class="acc-card">
@@ -416,6 +429,137 @@ function renderDashboard() {
     <section class="acc-card dashboard-recent">
       <div class="acc-card-head"><h2>Actividad reciente</h2></div>
       ${renderDocumentTable(recent)}
+    </section>`;
+}
+
+function analysisBehaviorOptions(selected) {
+  return [
+    ['variable', 'Variable · cambia con las ventas'],
+    ['fixed', 'Fijo · se paga aunque vendas menos'],
+    ['investment', 'Inversión · no es gasto operativo'],
+    ['unclassified', 'Sin clasificar']
+  ].map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${label}</option>`).join('');
+}
+
+function renderProfitabilityClassificationRow(row) {
+  const document = row.document;
+  const supplier = document.accounting_contacts?.name || 'Sin proveedor';
+  const sourceLabel = row.source === 'confirmed'
+    ? '<span class="badge">Confirmada</span>'
+    : row.source === 'suggested'
+      ? '<span class="badge warning">Sugerida</span>'
+      : '<span class="badge danger">Sin clasificar</span>';
+  return `
+    <article class="profitability-classification-row" data-analysis-row="${document.id}">
+      <div class="profitability-document-name">
+        <strong>${escapeHtml(supplier)}</strong>
+        <small>${escapeHtml(document.number || document.document_type)} · ${new Date(`${document.issue_date}T12:00:00`).toLocaleDateString('es-ES')}</small>
+        ${sourceLabel}
+      </div>
+      <div class="field">
+        <label>Categoría</label>
+        <select data-analysis-category="${document.id}">${PROFITABILITY_CATEGORIES.map(category => `<option value="${category.value}" ${row.category === category.value ? 'selected' : ''}>${category.label}</option>`).join('')}</select>
+      </div>
+      <div class="field">
+        <label>Comportamiento</label>
+        <select data-analysis-behavior="${document.id}">${analysisBehaviorOptions(row.cost_behavior)}</select>
+      </div>
+      <div class="profitability-row-amount"><span>Base sin IGIC</span><strong>${money(row.amount)}</strong></div>
+      <button class="btn btn-primary" data-save-analysis="${document.id}">Guardar</button>
+    </article>`;
+}
+
+function renderProfitability() {
+  const analysis = buildProfitabilityAnalysis({
+    documents: state.documents,
+    analyses: state.profitabilityAnalyses,
+    period: state.dashboardPeriod
+  });
+  const periodRange = `${compactDate(analysis.bounds.start)} – ${compactDate(analysis.bounds.end)}`;
+  const visibleRows = analysis.rows
+    .filter(row => state.profitabilityFilter === 'all' || row.source !== 'confirmed')
+    .sort((a, b) => {
+      if (a.source === 'confirmed' && b.source !== 'confirmed') return 1;
+      if (a.source !== 'confirmed' && b.source === 'confirmed') return -1;
+      return String(b.document.issue_date).localeCompare(String(a.document.issue_date));
+    });
+  const suggestedCount = analysis.needsConfirmation.filter(row => row.category !== 'unclassified').length;
+  const categoryMax = Math.max(...analysis.categories.map(category => category.amount), 1);
+  const perHundred = analysis.margin == null ? null : analysis.margin;
+  const resultTone = analysis.result < 0 ? 'danger' : analysis.verdict.tone;
+  const breakEvenProgress = analysis.breakEvenSales && analysis.breakEvenSales > 0
+    ? Math.min(100, (analysis.sales / analysis.breakEvenSales) * 100)
+    : 0;
+  return `
+    <div class="dashboard-toolbar">
+      <div>
+        <strong>${escapeHtml(dashboardPeriodLabel(analysis))}</strong>
+        <small>${periodRange} · importes sin IGIC</small>
+      </div>
+      <div class="period-switch" role="group" aria-label="Periodo del análisis">
+        ${[['month','Mes'],['quarter','Trimestre'],['year','Año']].map(([value,label]) => `<button class="btn btn-small ${state.dashboardPeriod === value ? 'is-active' : ''}" data-dashboard-period="${value}">${label}</button>`).join('')}
+      </div>
+    </div>
+
+    <section class="profitability-hero is-${resultTone}">
+      <div>
+        <span class="profitability-verdict">${escapeHtml(analysis.verdict.label)}</span>
+        <h2>${analysis.missingCosts ? `Ventas registradas ${money(analysis.sales)}` : `${analysis.result >= 0 ? 'El negocio deja' : 'El negocio pierde'} ${money(Math.abs(analysis.result))}`}</h2>
+        <p>${escapeHtml(analysis.verdict.explanation)} ${perHundred == null || analysis.missingCosts ? '' : `Por cada 100 € vendidos quedan ${money(perHundred)} antes de IRPF.`}</p>
+      </div>
+      <div class="profitability-confidence">
+        <div><span>Datos clasificados</span><strong>${percent(analysis.classificationCoverage)} %</strong></div>
+        <div class="progress"><i style="width:${Math.max(2, analysis.classificationCoverage)}%"></i></div>
+        <small>${analysis.needsConfirmation.length} gastos por confirmar · ${analysis.pendingDocuments} facturas pendientes</small>
+      </div>
+    </section>
+
+    ${analysis.provisional ? `<div class="acc-notice profitability-notice"><strong>Resultado provisional.</strong> ${analysis.missingCosts ? 'Todavía no hay gastos aprobados; no tomes el margen mostrado como beneficio real. ' : ''}${analysis.needsConfirmation.length ? `Confirma la clasificación de ${analysis.needsConfirmation.length} gastos.` : ''} ${analysis.pendingDocuments ? `Hay ${analysis.pendingDocuments} facturas con una base de ${money(analysis.pendingAmount)} todavía fuera del cálculo.` : ''}</div>` : '<div class="acc-notice acc-success profitability-notice"><strong>Análisis completo.</strong> Todos los gastos del periodo están clasificados y no hay facturas pendientes.</div>'}
+
+    <div class="acc-grid profitability-main-grid">
+      <section class="acc-card">
+        <div class="acc-card-head"><h2>Cómo se obtiene el resultado</h2><small>Ventas − gastos operativos</small></div>
+        <div class="acc-card-body profitability-equation">
+          <div><span>Ventas netas</span><strong>${money(analysis.sales)}</strong></div>
+          <div class="subtract"><span>Costes variables</span><strong>− ${money(analysis.variableCosts)}</strong></div>
+          <div class="subtotal"><span>Margen de contribución</span><strong>${money(analysis.contribution)}</strong><small>${percent(analysis.contributionMargin)} % de las ventas</small></div>
+          <div class="subtract"><span>Costes fijos</span><strong>− ${money(analysis.fixedCosts)}</strong></div>
+          ${analysis.unclassifiedCosts > 0 ? `<div class="subtract warning"><span>Gastos aún sin clasificar</span><strong>− ${money(analysis.unclassifiedCosts)}</strong></div>` : ''}
+          <div class="total ${analysis.result < 0 ? 'negative' : ''}"><span>${analysis.missingCosts ? 'Resultado todavía incompleto' : 'Resultado antes de IRPF'}</span><strong>${money(analysis.result)}</strong><small>${analysis.missingCosts ? 'Faltan gastos aprobados' : `Margen ${percent(analysis.margin)} %`}</small></div>
+          ${analysis.investments > 0 ? `<div class="investment"><span>Inversiones del periodo</span><strong>${money(analysis.investments)}</strong><small>Se muestran aparte: no se restan enteras como gasto operativo. Su amortización se incorporará cuando esté configurada.</small></div>` : ''}
+        </div>
+      </section>
+
+      <section class="acc-card">
+        <div class="acc-card-head"><h2>Punto de equilibrio</h2><small>Ventas mínimas para no perder</small></div>
+        <div class="acc-card-body profitability-break-even">
+          ${analysis.breakEvenSales == null
+            ? `<div class="acc-empty"><strong>Necesita clasificación completa</strong>Confirma qué gastos son variables y cuáles fijos para calcularlo sin inventar datos.<button class="btn" data-profitability-filter="pending">Clasificar gastos</button></div>`
+            : `<div class="dashboard-main-figure"><span>Debes vender al menos</span><strong>${money(analysis.breakEvenSales)}</strong><small>en este periodo</small></div>
+              <div class="break-even-track"><i style="width:${breakEvenProgress}%"></i></div>
+              <div class="dashboard-split"><div><span>Ventas actuales</span><strong>${money(analysis.sales)}</strong></div><div><span>${analysis.safetyMargin >= 0 ? 'Colchón sobre equilibrio' : 'Ventas que faltan'}</span><strong class="${analysis.safetyMargin < 0 ? 'negative' : 'positive'}">${money(Math.abs(analysis.safetyMargin))}</strong></div></div>`}
+        </div>
+      </section>
+    </div>
+
+    <section class="acc-card profitability-categories">
+      <div class="acc-card-head"><h2>En qué se va el dinero</h2><small>Gastos aprobados del periodo</small></div>
+      <div class="acc-card-body">
+        ${analysis.categories.length ? analysis.categories.map(category => `<div class="profitability-category"><div><strong>${category.label}</strong><span>${category.behavior === 'variable' ? 'Variable' : category.behavior === 'investment' ? 'Inversión' : 'Fijo'}</span></div><div class="profitability-category-bar"><i style="width:${Math.max(2,(category.amount/categoryMax)*100)}%"></i></div><strong>${money(category.amount)}</strong></div>`).join('') : '<div class="acc-empty"><strong>Sin gastos aprobados</strong>No hay categorías que mostrar para este periodo.</div>'}
+      </div>
+    </section>
+
+    <section class="acc-card profitability-classification">
+      <div class="acc-card-head profitability-classification-head">
+        <div><h2>Clasificación de gastos</h2><small>Confirma la sugerencia una vez; quedará guardada para el análisis.</small></div>
+        <div class="acc-actions">
+          <div class="period-switch profitability-filter"><button class="btn btn-small ${state.profitabilityFilter === 'pending' ? 'is-active' : ''}" data-profitability-filter="pending">Pendientes (${analysis.needsConfirmation.length})</button><button class="btn btn-small ${state.profitabilityFilter === 'all' ? 'is-active' : ''}" data-profitability-filter="all">Todos</button></div>
+          ${suggestedCount ? `<button class="btn btn-primary btn-small" id="confirm-analysis-suggestions">Confirmar ${suggestedCount} sugerencias</button>` : ''}
+        </div>
+      </div>
+      <div class="acc-card-body profitability-classification-list">
+        ${visibleRows.length ? visibleRows.map(renderProfitabilityClassificationRow).join('') : analysis.missingCosts ? '<div class="acc-empty"><strong>A la espera de gastos</strong>Cuando apruebes facturas o tickets de este periodo aparecerán aquí para clasificarlos.</div>' : '<div class="acc-empty"><strong>Todo clasificado</strong>Ya puedes confiar en la separación de costes fijos y variables.</div>'}
+      </div>
     </section>`;
 }
 
@@ -796,6 +940,19 @@ function wireEvents() {
     state.dashboardPeriod = button.dataset.dashboardPeriod;
     renderApp();
   }));
+  document.querySelectorAll('[data-profitability-filter]').forEach(button => button.addEventListener('click', () => {
+    state.profitabilityFilter = button.dataset.profitabilityFilter;
+    renderApp();
+    document.querySelector('.profitability-classification')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  document.querySelectorAll('[data-analysis-category]').forEach(select => select.addEventListener('change', () => {
+    const behavior = document.querySelector(`[data-analysis-behavior="${select.dataset.analysisCategory}"]`);
+    if (behavior) behavior.value = categoryDefinition(select.value).behavior;
+  }));
+  document.querySelectorAll('[data-save-analysis]').forEach(button => button.addEventListener('click', () => {
+    saveProfitabilityClassification(button.dataset.saveAnalysis, button);
+  }));
+  document.querySelector('#confirm-analysis-suggestions')?.addEventListener('click', confirmProfitabilitySuggestions);
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
     state.view = button.dataset.view; state.modal = null; renderApp();
   }));
@@ -863,6 +1020,69 @@ function wireModal() {
 
 function openModal(modal) { state.modal = modal; renderApp(); }
 function closeModal() { state.modal = null; renderApp(); }
+
+async function saveProfitabilityClassification(documentId, button) {
+  const category = document.querySelector(`[data-analysis-category="${documentId}"]`)?.value;
+  const costBehavior = document.querySelector(`[data-analysis-behavior="${documentId}"]`)?.value;
+  if (!category || !costBehavior) return;
+  if (button) button.disabled = true;
+  const row = {
+    document_id: documentId,
+    business_id: state.business.id,
+    category,
+    cost_behavior: costBehavior,
+    updated_at: new Date().toISOString()
+  };
+  const { data, error } = await state.client.from('accounting_document_analysis')
+    .upsert(row, { onConflict: 'document_id' })
+    .select('*')
+    .single();
+  if (error) {
+    if (button) button.disabled = false;
+    return toast(error.message || 'No se pudo guardar la clasificación.', 'error');
+  }
+  state.profitabilityAnalyses = [
+    ...state.profitabilityAnalyses.filter(item => item.document_id !== documentId),
+    data
+  ];
+  renderApp();
+  toast('Clasificación guardada. El análisis se ha recalculado.');
+}
+
+async function confirmProfitabilitySuggestions() {
+  const analysis = buildProfitabilityAnalysis({
+    documents: state.documents,
+    analyses: state.profitabilityAnalyses,
+    period: state.dashboardPeriod
+  });
+  const rows = analysis.needsConfirmation
+    .filter(item => item.category !== 'unclassified')
+    .map(item => ({
+      document_id: item.document.id,
+      business_id: state.business.id,
+      category: item.category,
+      cost_behavior: item.cost_behavior,
+      updated_at: new Date().toISOString()
+    }));
+  if (!rows.length) return toast('No hay sugerencias listas para confirmar.');
+  const button = document.querySelector('#confirm-analysis-suggestions');
+  if (button) button.disabled = true;
+  const { data, error } = await state.client.from('accounting_document_analysis')
+    .upsert(rows, { onConflict: 'document_id' })
+    .select('*');
+  if (error) {
+    if (button) button.disabled = false;
+    return toast(error.message || 'No se pudieron confirmar las sugerencias.', 'error');
+  }
+  const savedIds = new Set((data || []).map(item => item.document_id));
+  state.profitabilityAnalyses = [
+    ...state.profitabilityAnalyses.filter(item => !savedIds.has(item.document_id)),
+    ...(data || [])
+  ];
+  renderApp();
+  toast(`${rows.length} clasificaciones confirmadas.`);
+}
+
 async function openDocument(document = {}, direction = document.direction || 'purchase', context = {}) {
   if (!document.id) {
     openModal({
