@@ -98,6 +98,13 @@ button { cursor: pointer; }
 .acc-kpi small { color: var(--muted); }
 .acc-kpi.is-accent { background: var(--brand-dark); color: white; border-color: var(--brand-dark); }
 .acc-kpi.is-accent span, .acc-kpi.is-accent small { color: #bdd4cc; }
+.acc-kpi.is-danger { border-color: #ebc4c4; background: #fffafa; }
+.metric-change { display: block; min-height: 17px; margin: 4px 0 7px; font-size: 11px; font-weight: 750; }
+.metric-change span { font: inherit; color: inherit; opacity: .75; }
+.metric-change.is-positive { color: var(--brand); }
+.metric-change.is-negative { color: var(--danger); }
+.metric-change.is-neutral { color: var(--muted); }
+.acc-kpi.is-accent .metric-change { color: #d7eee6; }
 .acc-two { grid-template-columns: minmax(0,1.45fr) minmax(300px,.75fr); }
 .acc-card { overflow: hidden; }
 .acc-card-head { padding: 18px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); }
@@ -197,10 +204,49 @@ button { cursor: pointer; }
 .tax-row:last-child { border: 0; }
 .progress { height: 8px; border-radius: 999px; background: #e9eeec; overflow: hidden; }
 .progress i { display: block; height: 100%; background: var(--brand); }
+.dashboard-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
+.dashboard-toolbar > div:first-child { display: grid; gap: 3px; }
+.dashboard-toolbar > div:first-child strong { font-size: 18px; }
+.dashboard-toolbar small { color: var(--muted); }
+.period-switch { display: flex; padding: 3px; border: 1px solid var(--line); border-radius: 12px; background: #e9eeec; }
+.period-switch .btn { border: 0; background: transparent; min-height: 34px; }
+.period-switch .btn.is-active { background: white; color: var(--brand-dark); box-shadow: 0 2px 8px rgba(22,60,53,.10); }
+.dashboard-three { grid-template-columns: repeat(3,minmax(0,1fr)); margin-top: 18px; }
+.dashboard-recent { margin-top: 18px; }
+.dashboard-stack { display: grid; gap: 17px; }
+.dashboard-main-figure { display: grid; gap: 4px; }
+.dashboard-main-figure > span, .dashboard-split span { color: var(--muted); font-size: 12px; }
+.dashboard-main-figure > strong { font-size: 28px; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.dashboard-main-figure > small, .dashboard-stack > small { color: var(--muted); }
+.dashboard-split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.dashboard-split > div { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; background: #f8fbfa; }
+.dashboard-split strong { font-size: 17px; font-variant-numeric: tabular-nums; }
+.positive { color: var(--brand); }
+.negative, .is-negative { color: var(--danger) !important; }
+.dashboard-callout { padding: 10px 12px; border-radius: 10px; font-size: 13px; }
+.dashboard-callout.warning { background: #fff4dd; color: var(--warning); }
+.dashboard-callout.success { background: var(--brand-soft); color: var(--brand); }
+.dashboard-quality { display: grid; gap: 8px; }
+.dashboard-quality button { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; width: 100%; padding: 10px 12px; text-align: left; border: 1px solid var(--line); border-radius: 10px; background: #f8fbfa; color: var(--ink); }
+.dashboard-quality button:hover { border-color: #aabbb5; background: white; }
+.dashboard-quality button span { font-size: 12px; }
+.dashboard-quality button strong { grid-column: 2; grid-row: 1 / span 2; font-size: 20px; }
+.dashboard-quality button small { color: var(--muted); }
+.chart-legend { display: flex; gap: 12px; color: var(--muted); font-size: 11px; }
+.chart-legend span { display: flex; align-items: center; gap: 5px; }
+.chart-legend i { width: 9px; height: 9px; border-radius: 3px; }
+.chart-legend i.sales, .chart-period i.sales { background: var(--brand); }
+.chart-legend i.expenses, .chart-period i.expenses { background: var(--accent); }
 .chart-bars { height: 190px; display: flex; align-items: end; gap: 10px; padding-top: 15px; }
 .chart-bar { flex: 1; min-width: 14px; display: flex; flex-direction: column; justify-content: end; gap: 6px; height: 100%; }
 .chart-bar i { display: block; background: var(--brand); border-radius: 7px 7px 2px 2px; min-height: 2px; }
 .chart-bar span { font-size: 10px; color: var(--muted); text-align: center; }
+.chart-business { height: 225px; gap: 14px; }
+.chart-period { flex: 1; min-width: 35px; display: grid; grid-template-rows: 160px auto auto; gap: 5px; align-items: end; height: 100%; text-align: center; }
+.chart-period > div { height: 160px; display: flex; align-items: end; justify-content: center; gap: 4px; }
+.chart-period i { display: block; width: min(26px,40%); min-height: 2px; border-radius: 6px 6px 2px 2px; }
+.chart-period span, .chart-period small { font-size: 10px; color: var(--muted); }
+.chart-period small { font-variant-numeric: tabular-nums; }
 .hidden { display: none !important; }
 .toast { position: fixed; right: 22px; bottom: 22px; z-index: 40; background: var(--brand-dark); color: white; border-radius: 12px; padding: 13px 16px; box-shadow: var(--shadow); max-width: 360px; }
 .toast.error { background: var(--danger); }
@@ -209,6 +255,7 @@ button { cursor: pointer; }
   .acc-kpis { grid-template-columns: repeat(2,1fr); }
   .drive-kpis { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .acc-two { grid-template-columns: 1fr; }
+  .dashboard-three { grid-template-columns: 1fr 1fr; }
   .document-line-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
   .document-line-grid .line-description { grid-column: span 2; }
   .document-line-amounts { grid-column: span 2; }
@@ -222,11 +269,16 @@ button { cursor: pointer; }
   .acc-topbar { height: auto; min-height: 68px; padding: 12px 16px; gap: 10px; }
   .acc-topbar small { display: none; }
   .acc-content { padding: 18px 14px 35px; }
+  .dashboard-toolbar { align-items: stretch; flex-direction: column; }
+  .period-switch { align-self: flex-start; }
   .document-contact-row { grid-template-columns: 1fr; }
   .document-contact-panel .acc-form-grid.three { grid-template-columns: 1fr; }
   .acc-kpis { grid-template-columns: 1fr 1fr; gap: 10px; }
   .acc-kpi { padding: 15px; }
   .acc-kpi strong { font-size: 20px; }
+  .dashboard-three { grid-template-columns: 1fr; }
+  .chart-business { gap: 8px; overflow-x: auto; }
+  .chart-period { min-width: 46px; }
   .acc-form-grid, .acc-form-grid.three { grid-template-columns: 1fr; }
   .drive-kpis, .drive-folder-summary { grid-template-columns: 1fr; }
   .acc-modal-backdrop { padding: 0; align-items: end; }

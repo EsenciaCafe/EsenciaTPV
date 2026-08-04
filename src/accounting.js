@@ -4,6 +4,7 @@ import {
   mergeContactKind
 } from './accountingContacts.js';
 import { mapBankRows, parseCsv, parseXlsx } from './bankStatement.js';
+import { buildBusinessSnapshot } from './accountingDashboard.js';
 import {
   IGIC_RATES,
   calculateDocumentTotals,
@@ -26,7 +27,9 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 const appRoot = document.querySelector('#accounting-app');
-const baseClient = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+const baseClient = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey, {
+  auth: { persistSession: false, storageKey: 'accounting-base-auth' }
+}) : null;
 const SESSION_KEY = 'accounting-session-v1';
 const DEVICE_KEY = 'accounting-device-v1';
 const VIEW_LABELS = {
@@ -42,6 +45,7 @@ const VIEW_LABELS = {
 
 const state = {
   view: 'dashboard',
+  dashboardPeriod: 'month',
   token: '',
   client: null,
   business: null,
@@ -75,6 +79,31 @@ function escapeHtml(value = '') {
 
 function money(value = 0) {
   return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(Number(value || 0));
+}
+
+function percent(value) {
+  return value == null
+    ? '—'
+    : new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1, minimumFractionDigits: 1 }).format(Number(value));
+}
+
+function compactDate(value) {
+  return value.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }).replace('.', '');
+}
+
+function dashboardPeriodLabel(snapshot) {
+  const { period, start } = snapshot.bounds;
+  if (period === 'year') return `Ejercicio ${start.getFullYear()}`;
+  if (period === 'quarter') return `${Math.floor(start.getMonth() / 3) + 1}T ${start.getFullYear()}`;
+  const label = start.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+  return `${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+}
+
+function variationMarkup(value, options = {}) {
+  if (value == null) return '<small class="metric-change is-neutral">Sin base comparable</small>';
+  const sign = value > 0 ? '+' : '';
+  const className = options.neutral ? 'is-neutral' : value > 0 ? 'is-positive' : value < 0 ? 'is-negative' : 'is-neutral';
+  return `<small class="metric-change ${className}">${sign}${percent(value)} % <span>vs tramo anterior</span></small>`;
 }
 
 function safeDriveUrl(value = '') {
@@ -112,7 +141,7 @@ function setSession(token, expiresAt) {
   localStorage.setItem(SESSION_KEY, JSON.stringify({ token, expiresAt }));
   state.client = createClient(supabaseUrl, supabaseKey, {
     global: { headers: { 'x-accounting-session': token } },
-    auth: { persistSession: false }
+    auth: { persistSession: false, storageKey: 'accounting-owner-auth' }
   });
 }
 
@@ -314,49 +343,77 @@ function renderView() {
   return (views[state.view] || renderDashboard)();
 }
 
-function dashboardStats() {
-  const year = new Date().getFullYear();
-  const approved = state.documents.filter(doc => Number(String(doc.issue_date).slice(0,4)) === year && !['draft','voided'].includes(doc.status));
-  const sales = approved.filter(doc => doc.direction === 'sale').reduce((sum, doc) => sum + Number(doc.total_amount), 0);
-  const expenses = approved.filter(doc => doc.direction === 'purchase').reduce((sum, doc) => sum + Number(doc.subtotal), 0);
-  const outputTax = approved.filter(doc => doc.direction === 'sale').reduce((sum, doc) => sum + Number(doc.tax_amount), 0);
-  const inputTax = approved.filter(doc => doc.direction === 'purchase').reduce((sum, doc) => sum + Number(doc.tax_amount), 0);
-  return { sales, expenses, profit: sales - expenses, tax: outputTax - inputTax };
-}
-
 function renderDashboard() {
-  const stats = dashboardStats();
-  const recent = state.documents.slice(0, 8);
-  const months = Array.from({ length: 6 }, (_, index) => {
-    const d = new Date(); d.setMonth(d.getMonth() - (5 - index));
-    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-    const value = state.documents.filter(doc => doc.direction === 'sale' && String(doc.issue_date).startsWith(key))
-      .reduce((sum, doc) => sum + Number(doc.total_amount), 0);
-    return { label: d.toLocaleDateString('es-ES',{month:'short'}), value };
+  const snapshot = buildBusinessSnapshot({
+    documents: state.documents,
+    bankAccounts: state.bankAccounts,
+    bankTransactions: state.bankTransactions,
+    period: state.dashboardPeriod
   });
-  const max = Math.max(...months.map(item => item.value), 1);
+  const recent = state.documents.slice(0, 8);
+  const maxTrend = Math.max(...snapshot.trend.flatMap(item => [Math.abs(item.sales), Math.abs(item.expenses)]), 1);
+  const driveCorrections = state.driveImports.filter(item => (
+    ['needs_correction', 'invalid', 'error'].includes(driveReviewStatus(item))
+  )).length;
+  const dataWarnings = snapshot.quality.documentsToReview + snapshot.treasury.pendingCount + driveCorrections;
+  const periodRange = `${compactDate(snapshot.bounds.start)} – ${compactDate(snapshot.bounds.end)}`;
+  const comparisonRange = `${compactDate(snapshot.bounds.comparisonStart)} – ${compactDate(snapshot.bounds.comparisonEnd)}`;
+  const taxReserve = Math.max(snapshot.current.taxResult, 0) + snapshot.current.estimatedIrpf;
   return `
+    <div class="dashboard-toolbar">
+      <div>
+        <strong>${escapeHtml(dashboardPeriodLabel(snapshot))}</strong>
+        <small>${periodRange} · comparación homogénea con ${comparisonRange}</small>
+      </div>
+      <div class="period-switch" role="group" aria-label="Periodo del resumen">
+        ${[['month','Mes'],['quarter','Trimestre'],['year','Año']].map(([value,label]) => `<button class="btn btn-small ${state.dashboardPeriod === value ? 'is-active' : ''}" data-dashboard-period="${value}">${label}</button>`).join('')}
+      </div>
+    </div>
     <div class="acc-grid acc-kpis">
-      <div class="acc-kpi is-accent"><span>Ventas del ejercicio</span><strong>${money(stats.sales)}</strong><small>Facturas y TPV</small></div>
-      <div class="acc-kpi"><span>Gastos deducibles</span><strong>${money(stats.expenses)}</strong><small>Base aprobada</small></div>
-      <div class="acc-kpi"><span>Resultado estimado</span><strong>${money(stats.profit)}</strong><small>Antes de IRPF</small></div>
-      <div class="acc-kpi"><span>IGIC estimado</span><strong>${money(stats.tax)}</strong><small>Repercutido − soportado</small></div>
+      <div class="acc-kpi is-accent"><span>Ventas netas</span><strong>${money(snapshot.current.salesBase)}</strong>${variationMarkup(snapshot.changes.sales)}<small>Sin IGIC · ${snapshot.current.salesCount} documentos</small></div>
+      <div class="acc-kpi"><span>Compras y gastos</span><strong>${money(snapshot.current.expensesBase)}</strong>${variationMarkup(snapshot.changes.expenses, { neutral: true })}<small>Sin IGIC · solo aprobados</small></div>
+      <div class="acc-kpi ${snapshot.current.result < 0 ? 'is-danger' : ''}"><span>Resultado del negocio</span><strong>${money(snapshot.current.result)}</strong>${variationMarkup(snapshot.changes.result)}<small>Antes de IRPF</small></div>
+      <div class="acc-kpi"><span>Margen sobre ventas</span><strong>${percent(snapshot.current.margin)} %</strong><small>${snapshot.current.averageTicket == null ? 'Sin tickets TPV en el periodo' : `Ticket medio ${money(snapshot.current.averageTicket)}`}</small></div>
     </div>
     <div class="acc-grid acc-two">
       <section class="acc-card">
-        <div class="acc-card-head"><h2>Facturación últimos 6 meses</h2></div>
-        <div class="acc-card-body"><div class="chart-bars">${months.map(item => `<div class="chart-bar" title="${money(item.value)}"><i style="height:${Math.max(2,(item.value/max)*160)}px"></i><span>${item.label}</span></div>`).join('')}</div></div>
+        <div class="acc-card-head"><h2>Evolución real del negocio</h2><div class="chart-legend"><span><i class="sales"></i>Ventas</span><span><i class="expenses"></i>Gastos</span></div></div>
+        <div class="acc-card-body"><div class="chart-bars chart-business">${snapshot.trend.map(item => `<div class="chart-period" title="Ventas: ${money(item.sales)} · Gastos: ${money(item.expenses)} · Resultado: ${money(item.result)}"><div><i class="sales" style="height:${Math.max(2,(Math.abs(item.sales)/maxTrend)*160)}px"></i><i class="expenses" style="height:${Math.max(2,(Math.abs(item.expenses)/maxTrend)*160)}px"></i></div><span>${item.date.toLocaleDateString('es-ES',{month:'short'}).replace('.','')}</span><small class="${item.result < 0 ? 'is-negative' : ''}">${money(item.result)}</small></div>`).join('')}</div></div>
       </section>
       <section class="acc-card">
-        <div class="acc-card-head"><h2>Atención</h2></div>
-        <div class="acc-card-body acc-form">
-          <div><strong>${state.documents.filter(doc => doc.status === 'needs_review').length}</strong><br><small>documentos pendientes de revisión</small></div>
-          <div><strong>${state.bankTransactions.filter(tx => tx.status === 'pending').length}</strong><br><small>movimientos sin conciliar</small></div>
-          <div><strong>${state.documents.filter(doc => ['overdue','partially_paid'].includes(doc.status)).length}</strong><br><small>cobros o pagos pendientes</small></div>
+        <div class="acc-card-head"><h2>Tesorería</h2><button class="btn btn-small" data-view="treasury">Ver banco</button></div>
+        <div class="acc-card-body dashboard-stack">
+          <div class="dashboard-main-figure"><span>Saldo bancario conocido</span><strong>${snapshot.treasury.hasBalance ? money(snapshot.treasury.balance) : 'Sin datos'}</strong><small>${snapshot.treasury.latestDate ? `Actualizado al ${new Date(`${snapshot.treasury.latestDate}T12:00:00`).toLocaleDateString('es-ES')}` : 'Añade una cuenta e importa un extracto'}</small></div>
+          <div class="dashboard-split"><div><span>Entradas del periodo</span><strong class="positive">${money(snapshot.treasury.inflows)}</strong></div><div><span>Salidas del periodo</span><strong class="negative">${money(snapshot.treasury.outflows)}</strong></div></div>
+          <div class="dashboard-callout ${snapshot.treasury.pendingCount ? 'warning' : 'success'}"><strong>${snapshot.treasury.pendingCount}</strong> movimientos sin conciliar</div>
         </div>
       </section>
     </div>
-    <section class="acc-card" style="margin-top:18px">
+    <div class="acc-grid dashboard-three">
+      <section class="acc-card">
+        <div class="acc-card-head"><h2>Cobros y pagos pendientes</h2><button class="btn btn-small" data-view="treasury">Conciliar</button></div>
+        <div class="acc-card-body dashboard-stack">
+          <div class="dashboard-split"><div><span>Por cobrar</span><strong>${money(snapshot.pending.receivable)}</strong></div><div><span>Por pagar</span><strong>${money(snapshot.pending.payable)}</strong></div></div>
+          <small>${snapshot.pending.overdueCount ? `<strong class="negative">${snapshot.pending.overdueCount} vencimientos atrasados</strong>` : 'No hay vencimientos atrasados detectados'}</small>
+        </div>
+      </section>
+      <section class="acc-card">
+        <div class="acc-card-head"><h2>Reserva fiscal orientativa</h2><button class="btn btn-small" data-view="taxes">Ver impuestos</button></div>
+        <div class="acc-card-body dashboard-stack">
+          <div class="dashboard-main-figure"><span>IGIC + estimación IRPF</span><strong>${money(taxReserve)}</strong><small>No equivale a una declaración presentada</small></div>
+          <div class="dashboard-split"><div><span>IGIC neto</span><strong>${money(snapshot.current.taxResult)}</strong></div><div><span>IRPF orientativo</span><strong>${money(snapshot.current.estimatedIrpf)}</strong></div></div>
+        </div>
+      </section>
+      <section class="acc-card">
+        <div class="acc-card-head"><h2>Fiabilidad del resumen</h2><span class="badge ${dataWarnings ? 'warning' : ''}">${dataWarnings ? `${dataWarnings} pendientes` : 'Al día'}</span></div>
+        <div class="acc-card-body dashboard-quality">
+          <button data-view="purchases"><span>Documentos por revisar</span><strong>${snapshot.quality.documentsToReview}</strong><small>${money(snapshot.quality.purchaseAmountToReview)} sin incluir en gastos</small></button>
+          <button data-view="treasury"><span>Banco sin conciliar</span><strong>${snapshot.treasury.pendingCount}</strong></button>
+          <button data-view="drive"><span>Errores de Drive</span><strong>${driveCorrections}</strong></button>
+        </div>
+      </section>
+    </div>
+    <section class="acc-card dashboard-recent">
       <div class="acc-card-head"><h2>Actividad reciente</h2></div>
       ${renderDocumentTable(recent)}
     </section>`;
@@ -735,6 +792,10 @@ function renderEntryModal() {
 }
 
 function wireEvents() {
+  document.querySelectorAll('[data-dashboard-period]').forEach(button => button.addEventListener('click', () => {
+    state.dashboardPeriod = button.dataset.dashboardPeriod;
+    renderApp();
+  }));
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
     state.view = button.dataset.view; state.modal = null; renderApp();
   }));
