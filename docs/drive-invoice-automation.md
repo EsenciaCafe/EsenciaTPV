@@ -9,7 +9,13 @@ API de inteligencia artificial y nunca contabiliza un documento sin revisión.
 - Historial fijo: [HISTORIAL CONTABILIDAD - JSON](https://drive.google.com/drive/folders/1cvMQ4L73EHFMpeocyWtweLmsJNgNVtO0)
 
 La configuración guardada en `accounting_drive_sources` es la fuente de verdad.
-El origen puede cambiar cada mes; el historial de JSON debe mantenerse fijo.
+El origen puede cambiar cada mes desde el selector de carpetas de la aplicación.
+El historial JSON queda bloqueado después de configurarlo y no cambia al elegir
+otro origen.
+
+La aplicación comprueba con Google Drive que el historial pertenece a la cuenta
+conectada y no está compartido con usuarios, grupos, dominios ni mediante enlace.
+Si no puede confirmar esa privacidad, bloquea la sincronización de resultados.
 
 ## Preparar OAuth para la aplicación
 
@@ -55,9 +61,13 @@ El contrato exacto está en
 En **Contabilidad → Google Drive**:
 
 1. Autorizar Google Drive.
-2. Pulsar **Buscar facturas** para ver pendientes y procesadas.
-3. Pulsar **Sincronizar análisis**.
-4. Revisar cada gasto importado antes de aprobarlo.
+2. Pulsar **Elegir carpeta** y seleccionar la carpeta de facturas del periodo.
+3. Comprobar que el historial fijo muestra **Privada · solo tú**.
+4. Pulsar **Buscar facturas** para ver pendientes y procesadas.
+5. Pedir a Codex que analice las facturas nuevas. Codex toma el origen activo de
+   `accounting_drive_sources` y siempre escribe los JSON en el historial fijo.
+6. Pulsar **Sincronizar análisis**.
+7. Revisar cada gasto importado antes de aprobarlo.
 
 La importación se realiza en una única transacción de base de datos. Un fallo en
 el proveedor, documento, líneas o historial revierte toda la operación y evita

@@ -25,6 +25,57 @@ export function driveFileUrl(id = '') {
   return id ? `https://drive.google.com/file/d/${encodeURIComponent(id)}/view` : '';
 }
 
+function normalizedEmail(value = '') {
+  return String(value || '').trim().toLocaleLowerCase('es');
+}
+
+export function resultFolderPrivacy(folder = {}, currentUserEmail = '') {
+  if (!folder?.id) {
+    return { status: 'unknown', sharedWith: [], ownerEmail: '', reason: 'No se pudo leer la carpeta.' };
+  }
+
+  const userEmail = normalizedEmail(currentUserEmail);
+  const ownerEmail = normalizedEmail(
+    folder.owners?.find(owner => owner?.emailAddress)?.emailAddress
+    || (folder.ownedByMe ? currentUserEmail : '')
+  );
+  const permissions = Array.isArray(folder.permissions) ? folder.permissions : [];
+  const sharedWith = permissions.filter(permission => {
+    const email = normalizedEmail(permission?.emailAddress);
+    if (permission?.deleted) return false;
+    if (permission?.role === 'owner' && (folder.ownedByMe || (email && email === userEmail))) return false;
+    if (permission?.type === 'user' && email && email === userEmail) return false;
+    return ['user', 'group', 'domain', 'anyone'].includes(permission?.type);
+  }).map(permission => ({
+    type: String(permission.type || ''),
+    role: String(permission.role || ''),
+    name: String(permission.displayName || permission.emailAddress || permission.domain || permission.type || '')
+  }));
+
+  if (folder.shared === true || sharedWith.length) {
+    return {
+      status: 'shared',
+      sharedWith,
+      ownerEmail,
+      reason: 'La carpeta tiene acceso concedido a otras personas, grupos, dominios o enlaces.'
+    };
+  }
+  if (folder.ownedByMe === true || (ownerEmail && ownerEmail === userEmail)) {
+    return {
+      status: 'private',
+      sharedWith: [],
+      ownerEmail: ownerEmail || userEmail,
+      reason: 'La carpeta pertenece a esta cuenta y no figura compartida.'
+    };
+  }
+  return {
+    status: 'unknown',
+    sharedWith: [],
+    ownerEmail,
+    reason: 'No se pudo confirmar que la carpeta pertenezca únicamente a esta cuenta.'
+  };
+}
+
 export function isSupportedInvoiceFile(file = {}) {
   return SUPPORTED_INVOICE_MIME_TYPES.has(file.mimeType)
     || /\.(pdf|jpe?g|png|webp|heic|heif)$/i.test(file.name || '');

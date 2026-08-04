@@ -35,6 +35,7 @@ import {
   driveReviewStatus,
   folderId,
   isSupportedInvoiceFile,
+  resultFolderPrivacy,
   reviewableSupplierDocument,
   validateSupplierDocument
 } from './driveInvoices.js';
@@ -88,6 +89,7 @@ const state = {
   profitabilityAnalyses: [],
   driveFiles: [],
   driveFolders: {},
+  driveResultPrivacy: null,
   driveBusy: false,
   loading: false,
   modal: null,
@@ -861,6 +863,14 @@ function renderDrive() {
   const connectedLabel = state.googleUser?.emailAddress || state.googleUser?.displayName || 'Google Drive conectado';
   const sourceUrl = driveFolderUrl(source.source_folder_id);
   const resultUrl = driveFolderUrl(source.result_folder_id);
+  const privacyStatus = state.driveResultPrivacy?.status || source.result_folder_privacy_status || 'unverified';
+  const privacyLabel = privacyStatus === 'private'
+    ? 'Privada · solo tú'
+    : privacyStatus === 'shared' ? 'Compartida · requiere corrección' : 'Privacidad pendiente de comprobar';
+  const privacyDetail = state.driveResultPrivacy?.reason
+    || (privacyStatus === 'private'
+      ? `Comprobada${source.result_folder_verified_at ? ` el ${new Date(source.result_folder_verified_at).toLocaleString('es-ES')}` : ''}.`
+      : 'Autoriza Drive y pulsa “Comprobar privacidad”.');
   return `
     <div class="acc-grid acc-kpis drive-kpis">
       <div class="acc-kpi"><span>Conexión</span><strong>${state.googleToken ? 'Activa' : 'Pendiente'}</strong><small>${escapeHtml(state.googleToken ? connectedLabel : googleClientId ? 'Autoriza tu cuenta de Google' : 'Falta el cliente OAuth')}</small></div>
@@ -868,35 +878,42 @@ function renderDrive() {
       <div class="acc-kpi"><span>Análisis registrados</span><strong>${state.driveImports.length}</strong><small>${reviewed} revisadas pendientes de aprobar · ${needsCorrection} por corregir</small></div>
     </div>
     <div class="acc-grid acc-two">
-      <section class="acc-card">
-        <div class="acc-card-head"><h2>Carpetas supervisadas</h2>${state.googleToken ? '<span class="badge">Verificadas con Drive</span>' : ''}</div>
+      <section class="acc-card drive-folders-card">
+        <div class="acc-card-head"><div><h2>Carpeta que vamos a analizar</h2><small>Puede cambiar cuando recibas facturas en otra carpeta.</small></div>${state.googleToken ? '<span class="badge">Drive autorizado</span>' : ''}</div>
         <div class="acc-card-body">
           <form class="acc-form" id="drive-settings-form">
-            <div class="field"><label>ID o URL de la carpeta con facturas</label><input id="drive-source-folder" value="${escapeHtml(source.source_folder_id || '')}" placeholder="https://drive.google.com/drive/folders/..."></div>
-            <div class="field"><label>ID o URL de la carpeta fija de resultados JSON</label><input id="drive-result-folder" value="${escapeHtml(source.result_folder_id || '')}" placeholder="https://drive.google.com/drive/folders/..."></div>
-            <div class="drive-folder-summary">
-              <div><span>Origen</span><strong>${escapeHtml(sourceFolder?.name || 'Facturas')}</strong>${sourceUrl ? `<a href="${sourceUrl}" target="_blank" rel="noreferrer">Abrir ↗</a>` : ''}</div>
-              <div><span>Historial</span><strong>${escapeHtml(resultFolder?.name || 'JSON de resultados')}</strong>${resultUrl ? `<a href="${resultUrl}" target="_blank" rel="noreferrer">Abrir ↗</a>` : ''}</div>
+            <div class="field"><label>Carpeta de entrada</label><div class="drive-source-picker-row"><input id="drive-source-folder" value="${escapeHtml(source.source_folder_id || '')}" placeholder="Pega una URL de Drive o elígela"><button class="btn" id="choose-drive-source-btn" type="button">Elegir carpeta</button></div><small>Codex analizará únicamente los PDF e imágenes que estén directamente dentro de esta carpeta.</small></div>
+            <div class="drive-folder-summary drive-source-summary">
+              <div><span>Seleccionada ahora</span><strong>${escapeHtml(sourceFolder?.name || (source.source_folder_id ? 'Carpeta de facturas configurada' : 'Ninguna carpeta'))}</strong>${sourceUrl ? `<a href="${sourceUrl}" target="_blank" rel="noreferrer">Abrir carpeta ↗</a>` : ''}</div>
             </div>
-            <button class="btn btn-primary" type="submit">Guardar y comprobar</button>
+            <button class="btn btn-primary" type="submit">Guardar carpeta de facturas</button>
           </form>
         </div>
       </section>
-      <section class="acc-card">
-        <div class="acc-card-head"><h2>Conexión y análisis</h2></div>
+      <section class="acc-card drive-private-results-card">
+        <div class="acc-card-head"><div><h2>Carpeta privada de resultados</h2><small>Es fija: todos los JSON se guardarán siempre aquí.</small></div><span class="badge ${privacyStatus === 'shared' ? 'danger' : privacyStatus === 'private' ? '' : 'warning'}">${escapeHtml(privacyLabel)}</span></div>
         <div class="acc-card-body acc-form">
-          <p>Codex analiza los originales bajo demanda y guarda resultados <strong>supplier-document/v1</strong>. La app valida cada suma y siempre lo deja pendiente de revisión humana.</p>
+          ${source.result_folder_id ? `<div class="drive-fixed-folder"><span>Historial bloqueado</span><strong>${escapeHtml(resultFolder?.name || 'HISTORIAL CONTABILIDAD - JSON')}</strong><small>${escapeHtml(source.result_folder_id)}</small>${resultUrl ? `<a href="${resultUrl}" target="_blank" rel="noreferrer">Abrir carpeta privada ↗</a>` : ''}</div>` : '<div class="acc-notice"><strong>Aún falta fijar la carpeta privada.</strong><br>Solo se podrá elegir una vez y debe pertenecer únicamente a tu cuenta.</div>'}
+          <div class="drive-privacy-status is-${privacyStatus}"><strong>${escapeHtml(privacyLabel)}</strong><span>${escapeHtml(privacyDetail)}</span></div>
+          <div class="acc-actions">${source.result_folder_id ? '<button class="btn" id="verify-drive-result-btn">Comprobar privacidad</button>' : '<button class="btn btn-primary" id="choose-drive-result-btn">Elegir y bloquear carpeta privada</button>'}</div>
+          <p class="drive-fixed-explanation">La carpeta de facturas puede ser compartida. Esta carpeta de resultados no: así ninguna otra persona del Drive verá los JSON contables.</p>
+        </div>
+      </section>
+    </div>
+    <section class="acc-card drive-analysis-card" style="margin-top:18px">
+      <div class="acc-card-head"><h2>Conexión y análisis</h2><span class="badge muted">supplier-document/v1</span></div>
+      <div class="acc-card-body acc-form">
+          <p>Codex analiza los originales bajo demanda, no los mueve y guarda cada resultado en el historial privado fijo. La app valida las sumas y lo deja pendiente de revisión humana.</p>
           ${googleClientId
             ? `<div class="acc-actions"><button class="btn" id="google-connect-btn">${state.googleToken ? 'Renovar autorización' : 'Autorizar Google Drive'}</button>${state.googleToken ? '<button class="btn" id="google-disconnect-btn">Desconectar</button>' : ''}</div>`
             : '<div class="acc-notice"><strong>OAuth preparado, falta activar la credencial.</strong><br>Crea un cliente web de Google con origen <code>https://esenciacafe.github.io</code> y guarda su ID en la variable <code>VITE_GOOGLE_CLIENT_ID</code> de GitHub Actions.</div>'}
           <div class="acc-actions">
             <button class="btn" id="scan-drive-inline-btn" ${state.driveBusy ? 'disabled' : ''}>${state.driveBusy ? 'Buscando…' : 'Buscar facturas'}</button>
-            <button class="btn btn-primary" id="sync-drive-btn" ${state.driveBusy ? 'disabled' : ''}>Sincronizar análisis</button>
+            <button class="btn btn-primary" id="sync-drive-btn" ${state.driveBusy || privacyStatus === 'shared' ? 'disabled' : ''}>Sincronizar análisis</button>
           </div>
           <label class="btn" style="display:grid;place-items:center"><input class="hidden" type="file" id="json-files-input" accept=".json,application/json" multiple>Importar JSON manualmente</label>
-        </div>
-      </section>
-    </div>
+      </div>
+    </section>
     <section class="acc-card" style="margin-top:18px">
       <div class="acc-card-head"><h2>Facturas de la carpeta de origen</h2><small>${state.driveFiles.length ? `${pending} pendientes · ${analyzed} analizadas` : 'Todavía no se ha consultado Drive'}</small></div>
       ${state.driveFiles.length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Archivo</th><th>Modificado</th><th>Estado</th><th></th></tr></thead><tbody>
@@ -961,6 +978,7 @@ function renderModal() {
   if (state.modal.type === 'document') return renderDocumentModal(state.modal.document);
   if (state.modal.type === 'reconciliation') return renderReconciliationModal();
   if (state.modal.type === 'bank-review') return renderBankReviewModal();
+  if (state.modal.type === 'drive-folder-picker') return renderDriveFolderPickerModal();
   if (state.modal.type === 'bank-import') return renderBankImportModal();
   if (state.modal.type === 'bank-account') return renderBankAccountModal();
   if (state.modal.type === 'tax') return renderTaxModal(state.modal.model);
@@ -970,6 +988,42 @@ function renderModal() {
 
 function modalFrame(title, body, foot = '', className = '') {
   return `<div class="acc-modal-backdrop"><div class="acc-modal ${className}"><div class="acc-modal-head"><h2>${title}</h2><button class="btn btn-small" data-close-modal>✕</button></div><div class="acc-modal-body">${body}</div>${foot ? `<div class="acc-modal-foot">${foot}</div>` : ''}</div></div>`;
+}
+
+function renderDriveFolderPickerModal() {
+  const picker = state.modal;
+  const isResult = picker.purpose === 'result';
+  const current = picker.currentFolder;
+  const canSelectCurrent = Boolean(current?.id && !current.pseudo);
+  const privacy = isResult && canSelectCurrent
+    ? resultFolderPrivacy(current, state.googleUser?.emailAddress || '')
+    : null;
+  const privacyMarkup = !isResult || !canSelectCurrent ? '' : `<div class="drive-picker-privacy is-${privacy.status}">
+    <strong>${privacy.status === 'private' ? 'Carpeta privada comprobada' : privacy.status === 'shared' ? 'Esta carpeta está compartida' : 'No se puede confirmar su privacidad'}</strong>
+    <span>${escapeHtml(privacy.reason)}</span>
+    ${privacy.sharedWith.length ? `<small>Acceso adicional: ${escapeHtml(privacy.sharedWith.map(item => item.name).join(', '))}</small>` : ''}
+  </div>`;
+  const folderList = picker.loading
+    ? '<div class="acc-empty"><strong>Cargando carpetas…</strong></div>'
+    : picker.error
+      ? `<div class="acc-notice"><strong>No se pudieron cargar las carpetas.</strong><br>${escapeHtml(picker.error)}</div>`
+      : picker.folders?.length
+        ? `<div class="drive-picker-list">${picker.folders.map(folder => `<button type="button" data-open-drive-folder="${escapeHtml(folder.id)}"><span class="drive-folder-icon">▰</span><span><strong>${escapeHtml(folder.name)}</strong><small>${folder.modifiedTime ? `Modificada ${new Date(folder.modifiedTime).toLocaleDateString('es-ES')}` : 'Carpeta de Google Drive'}</small></span><span>›</span></button>`).join('')}</div>`
+        : '<div class="acc-empty"><strong>No hay subcarpetas aquí</strong>Puedes elegir la carpeta actual o volver atrás.</div>';
+  const confirmation = isResult && privacy?.status === 'private'
+    ? '<label class="reconciliation-confirm-check"><input type="checkbox" id="drive-result-lock-confirm"><span><strong>Entiendo que esta carpeta quedará fija.</strong><small>Los JSON futuros se guardarán siempre aquí.</small></span></label>'
+    : '';
+  const selectDisabled = !canSelectCurrent || isResult;
+  return modalFrame(
+    isResult ? 'Elegir carpeta privada de resultados' : 'Elegir carpeta de facturas',
+    `<div class="drive-picker-tabs"><button class="btn btn-small ${picker.location === 'my-drive' ? 'is-active' : ''}" data-drive-picker-location="my-drive">Mi unidad</button><button class="btn btn-small ${picker.location === 'shared' ? 'is-active' : ''}" data-drive-picker-location="shared">Compartidas conmigo</button></div>
+    <div class="drive-picker-current"><button class="btn btn-small" data-drive-folder-back ${picker.history?.length ? '' : 'disabled'}>← Atrás</button><div><span>Carpeta actual</span><strong>${escapeHtml(current?.name || (picker.location === 'shared' ? 'Compartidas conmigo' : 'Mi unidad'))}</strong></div></div>
+    ${privacyMarkup}
+    ${folderList}
+    ${confirmation}`,
+    `<button class="btn" data-close-modal>Cancelar</button><button class="btn btn-primary" id="select-current-drive-folder" ${selectDisabled ? 'disabled' : ''}>${isResult ? 'Fijar como historial privado' : 'Usar esta carpeta'}</button>`,
+    'drive-folder-picker-modal'
+  );
 }
 
 function renderReconciliationLines(lines = []) {
@@ -1346,6 +1400,9 @@ function wireEvents() {
   document.querySelector('#print-tax-btn')?.addEventListener('click', () => window.print());
   document.querySelectorAll('[data-toggle-period]').forEach(button => button.addEventListener('click', () => togglePeriod(button.dataset.togglePeriod, button.dataset.status)));
   document.querySelector('#drive-settings-form')?.addEventListener('submit', saveDriveSettings);
+  document.querySelector('#choose-drive-source-btn')?.addEventListener('click', () => openDriveFolderPicker('source'));
+  document.querySelector('#choose-drive-result-btn')?.addEventListener('click', () => openDriveFolderPicker('result'));
+  document.querySelector('#verify-drive-result-btn')?.addEventListener('click', verifyDriveResultFolder);
   document.querySelector('#json-files-input')?.addEventListener('change', event => importJsonFiles([...event.target.files]));
   document.querySelector('#google-connect-btn')?.addEventListener('click', connectGoogle);
   document.querySelector('#google-disconnect-btn')?.addEventListener('click', disconnectGoogle);
@@ -1383,6 +1440,14 @@ function wireModal() {
   document.querySelector('#bank-account-form')?.addEventListener('submit', saveBankAccount);
   document.querySelector('#tax-form')?.addEventListener('submit', generateTaxDraft);
   document.querySelector('#entry-form')?.addEventListener('submit', saveEntry);
+  document.querySelectorAll('[data-open-drive-folder]').forEach(button => button.addEventListener('click', () => navigateDriveFolder(button.dataset.openDriveFolder)));
+  document.querySelector('[data-drive-folder-back]')?.addEventListener('click', navigateDriveFolderBack);
+  document.querySelectorAll('[data-drive-picker-location]').forEach(button => button.addEventListener('click', () => switchDrivePickerLocation(button.dataset.drivePickerLocation)));
+  document.querySelector('#select-current-drive-folder')?.addEventListener('click', selectCurrentDriveFolder);
+  document.querySelector('#drive-result-lock-confirm')?.addEventListener('change', event => {
+    const selectButton = document.querySelector('#select-current-drive-folder');
+    if (selectButton) selectButton.disabled = !event.currentTarget.checked;
+  });
   document.querySelector('#reconciliation-reviewed')?.addEventListener('change', event => {
     const confirmButton = document.querySelector('#confirm-reconciliation-btn');
     if (confirmButton) confirmButton.disabled = !event.currentTarget.checked;
@@ -2101,23 +2166,17 @@ async function saveEntry(event) {
 async function saveDriveSettings(event) {
   event.preventDefault();
   const sourceFolderId = folderId(document.querySelector('#drive-source-folder').value);
-  const resultFolderId = folderId(document.querySelector('#drive-result-folder').value);
-  if (!sourceFolderId || !resultFolderId) return toast('Indica las dos carpetas de Drive.', 'error');
-  if (sourceFolderId === resultFolderId) return toast('La carpeta de resultados debe ser distinta de la carpeta con facturas.', 'error');
-  const row = {
-    business_id: state.business.id,
-    source_folder_id: sourceFolderId,
-    result_folder_id: resultFolderId,
-    updated_at: new Date().toISOString()
-  };
-  const request = state.driveSources[0]
-    ? state.client.from('accounting_drive_sources').update(row).eq('id', state.driveSources[0].id)
-    : state.client.from('accounting_drive_sources').insert(row);
-  const { error } = await request;
-  if (error) return toast(error.message, 'error');
-  toast('Carpetas guardadas.');
-  await loadAll();
-  if (state.googleToken) await scanDriveInvoices();
+  if (!sourceFolderId) return toast('Indica o elige la carpeta con facturas.', 'error');
+  if (sourceFolderId === state.driveSources[0]?.result_folder_id) return toast('La carpeta de facturas debe ser distinta del historial privado.', 'error');
+  try {
+    if (state.googleToken) await getDriveFolder(sourceFolderId);
+    await rpc('accounting_set_drive_source_folder', { p_source_folder_id: sourceFolderId });
+    toast('Carpeta de facturas guardada. El historial JSON no ha cambiado.');
+    await loadAll();
+    if (state.googleToken) await scanDriveInvoices();
+  } catch (error) {
+    toast(error.message, 'error');
+  }
 }
 
 async function importSupplierJson(payload, resultFileId = '') {
@@ -2210,6 +2269,7 @@ function disconnectGoogle() {
   state.googleUser = null;
   state.driveFiles = [];
   state.driveFolders = {};
+  state.driveResultPrivacy = null;
   if (token && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(token, () => {});
   toast('Google Drive desconectado de esta sesión.');
   renderApp();
@@ -2255,14 +2315,194 @@ async function listDriveFiles(folder, query = '') {
   return files;
 }
 
+async function listDriveFolders(parentId = 'root', sharedWithMe = false) {
+  const files = [];
+  let pageToken = '';
+  do {
+    const folderFilter = "mimeType = 'application/vnd.google-apps.folder'";
+    const locationFilter = sharedWithMe ? 'sharedWithMe = true' : `'${parentId}' in parents`;
+    const params = new URLSearchParams({
+      q: `${locationFilter} and ${folderFilter} and trashed = false`,
+      fields: 'nextPageToken,files(id,name,mimeType,modifiedTime,parents,ownedByMe,shared,webViewLink)',
+      pageSize: '1000',
+      orderBy: 'name_natural',
+      spaces: 'drive',
+      supportsAllDrives: 'true',
+      includeItemsFromAllDrives: 'true'
+    });
+    if (pageToken) params.set('pageToken', pageToken);
+    const page = await driveJson(`https://www.googleapis.com/drive/v3/files?${params}`);
+    files.push(...(page.files || []));
+    pageToken = page.nextPageToken || '';
+  } while (pageToken);
+  return files;
+}
+
 async function getDriveFolder(id) {
   const params = new URLSearchParams({
-    fields: 'id,name,mimeType,modifiedTime,webViewLink',
+    fields: 'id,name,mimeType,modifiedTime,webViewLink,parents,ownedByMe,shared,owners(displayName,emailAddress),permissions(id,type,role,emailAddress,displayName,domain,allowFileDiscovery,deleted,permissionDetails)',
     supportsAllDrives: 'true'
   });
   const folder = await driveJson(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?${params}`);
   if (folder.mimeType !== 'application/vnd.google-apps.folder') throw new Error(`${folder.name || id} no es una carpeta de Drive.`);
   return folder;
+}
+
+async function persistDriveResultPrivacy(privacy) {
+  const source = state.driveSources[0];
+  if (!source?.result_folder_id || !privacy) return;
+  await rpc('accounting_verify_drive_result_folder', {
+    p_result_folder_id: source.result_folder_id,
+    p_privacy_status: privacy.status,
+    p_owner_email: privacy.ownerEmail || state.googleUser?.emailAddress || ''
+  });
+  source.result_folder_privacy_status = privacy.status;
+  source.result_folder_verified_at = new Date().toISOString();
+  source.result_folder_owner_email = privacy.ownerEmail || state.googleUser?.emailAddress || '';
+}
+
+async function verifyDriveResultFolder() {
+  const source = state.driveSources[0];
+  if (!source?.result_folder_id) return toast('Primero fija la carpeta privada de resultados.', 'error');
+  if (!state.googleToken) {
+    await connectGoogle();
+    if (!state.googleToken) return null;
+  }
+  state.driveBusy = true;
+  renderApp();
+  try {
+    const folder = await getDriveFolder(source.result_folder_id);
+    const privacy = resultFolderPrivacy(folder, state.googleUser?.emailAddress || '');
+    state.driveFolders.result = folder;
+    state.driveResultPrivacy = privacy;
+    await persistDriveResultPrivacy(privacy);
+    if (privacy.status === 'private') {
+      toast('Carpeta de resultados comprobada: solo tú tienes acceso.');
+    } else if (privacy.status === 'shared') {
+      toast('La carpeta de resultados está compartida. Quita los accesos desde Google Drive antes de sincronizar.', 'error');
+    } else {
+      toast('No se pudo confirmar que la carpeta sea únicamente tuya.', 'error');
+    }
+    return privacy;
+  } catch (error) {
+    toast(error.message, 'error');
+    return null;
+  } finally {
+    state.driveBusy = false;
+    renderApp();
+  }
+}
+
+async function loadDrivePickerLocation(location = 'my-drive') {
+  state.modal.location = location;
+  state.modal.history = [];
+  state.modal.loading = true;
+  state.modal.error = '';
+  state.modal.currentFolder = location === 'shared'
+    ? { id: 'shared-with-me', name: 'Compartidas conmigo', pseudo: true }
+    : null;
+  renderApp();
+  try {
+    if (location === 'shared') {
+      state.modal.folders = await listDriveFolders('root', true);
+    } else {
+      const [root, folders] = await Promise.all([getDriveFolder('root'), listDriveFolders('root')]);
+      state.modal.currentFolder = root;
+      state.modal.folders = folders;
+    }
+  } catch (error) {
+    state.modal.error = error.message;
+    state.modal.folders = [];
+  } finally {
+    state.modal.loading = false;
+    renderApp();
+  }
+}
+
+async function openDriveFolderPicker(purpose = 'source') {
+  if (!state.googleToken) {
+    await connectGoogle();
+    if (!state.googleToken) return;
+  }
+  openModal({
+    type: 'drive-folder-picker',
+    purpose,
+    location: 'my-drive',
+    currentFolder: null,
+    folders: [],
+    history: [],
+    loading: true,
+    error: ''
+  });
+  await loadDrivePickerLocation('my-drive');
+}
+
+async function switchDrivePickerLocation(location) {
+  if (!state.modal || state.modal.type !== 'drive-folder-picker') return;
+  await loadDrivePickerLocation(location);
+}
+
+async function navigateDriveFolder(folderId) {
+  if (!state.modal || state.modal.type !== 'drive-folder-picker') return;
+  const selected = state.modal.folders.find(folder => folder.id === folderId);
+  if (!selected) return;
+  const previous = {
+    currentFolder: state.modal.currentFolder,
+    folders: state.modal.folders,
+    location: state.modal.location
+  };
+  state.modal.history.push(previous);
+  state.modal.loading = true;
+  state.modal.error = '';
+  renderApp();
+  try {
+    const [folder, folders] = await Promise.all([getDriveFolder(folderId), listDriveFolders(folderId)]);
+    state.modal.currentFolder = folder;
+    state.modal.folders = folders;
+  } catch (error) {
+    state.modal.error = error.message;
+    state.modal.history.pop();
+  } finally {
+    state.modal.loading = false;
+    renderApp();
+  }
+}
+
+function navigateDriveFolderBack() {
+  if (!state.modal?.history?.length) return;
+  const previous = state.modal.history.pop();
+  state.modal.currentFolder = previous.currentFolder;
+  state.modal.folders = previous.folders;
+  state.modal.location = previous.location;
+  state.modal.error = '';
+  renderApp();
+}
+
+async function selectCurrentDriveFolder() {
+  const picker = state.modal;
+  const folder = picker?.currentFolder;
+  if (!picker || picker.type !== 'drive-folder-picker' || !folder?.id || folder.pseudo) return;
+  const purpose = picker.purpose;
+  try {
+    if (purpose === 'result') {
+      const privacy = resultFolderPrivacy(folder, state.googleUser?.emailAddress || '');
+      if (privacy.status !== 'private') throw new Error('El historial debe ser una carpeta privada que pertenezca solo a tu cuenta.');
+      await rpc('accounting_lock_drive_result_folder', {
+        p_result_folder_id: folder.id,
+        p_owner_email: privacy.ownerEmail || state.googleUser?.emailAddress || ''
+      });
+      state.driveResultPrivacy = privacy;
+      toast('Carpeta privada de resultados fijada. Ya no se cambiará accidentalmente.');
+    } else {
+      await rpc('accounting_set_drive_source_folder', { p_source_folder_id: folder.id });
+      toast(`Carpeta de facturas seleccionada: ${folder.name}.`);
+    }
+    state.modal = null;
+    await loadAll();
+    if (state.googleToken) await scanDriveInvoices();
+  } catch (error) {
+    toast(error.message, 'error');
+  }
 }
 
 async function scanDriveInvoices() {
@@ -2279,8 +2519,13 @@ async function scanDriveInvoices() {
     ]);
     if (sourceFolder.id === resultFolder.id) throw new Error('Origen e historial deben ser carpetas distintas.');
     state.driveFolders = { source: sourceFolder, result: resultFolder };
+    state.driveResultPrivacy = resultFolderPrivacy(resultFolder, state.googleUser?.emailAddress || '');
+    await persistDriveResultPrivacy(state.driveResultPrivacy);
     state.driveFiles = files.filter(isSupportedInvoiceFile);
-    toast(`${state.driveFiles.length} facturas encontradas · ${state.driveFiles.filter(file => driveImportStatus(file.id, state.driveImports) === 'unprocessed').length} pendientes.`);
+    const privacyWarning = state.driveResultPrivacy.status === 'private'
+      ? ''
+      : ' · el historial JSON no está confirmado como privado';
+    toast(`${state.driveFiles.length} facturas encontradas · ${state.driveFiles.filter(file => driveImportStatus(file.id, state.driveImports) === 'unprocessed').length} pendientes${privacyWarning}.`, privacyWarning ? 'error' : '');
   } catch (error) {
     toast(error.message, 'error');
   } finally {
@@ -2300,6 +2545,14 @@ async function syncGoogleDrive() {
   renderApp();
   try {
     const folder = state.driveSources[0].result_folder_id;
+    const resultFolder = await getDriveFolder(folder);
+    const privacy = resultFolderPrivacy(resultFolder, state.googleUser?.emailAddress || '');
+    state.driveFolders.result = resultFolder;
+    state.driveResultPrivacy = privacy;
+    await persistDriveResultPrivacy(privacy);
+    if (privacy.status !== 'private') {
+      throw new Error('No se sincronizarán JSON hasta confirmar que la carpeta de resultados es privada y pertenece solo a ti.');
+    }
     const resultFiles = await listDriveFiles(folder);
     const jsonFiles = resultFiles.filter(file => file.mimeType === 'application/json' || /\.json$/i.test(file.name || ''));
     const registeredResultIds = new Set(state.driveImports.map(item => item.source_file_id).filter(Boolean));

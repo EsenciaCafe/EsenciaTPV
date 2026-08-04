@@ -151,6 +151,40 @@ button { cursor: pointer; }
 .drive-folder-summary strong { min-width: 0; overflow-wrap: anywhere; }
 .drive-folder-summary a { color: var(--brand); font-size: 12px; font-weight: 700; text-decoration: none; }
 .drive-error { display: inline-block; color: var(--danger); margin-top: 5px; max-width: 420px; }
+.drive-source-picker-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; }
+.drive-source-summary { grid-template-columns: 1fr; }
+.drive-fixed-folder { display: grid; gap: 5px; border: 1px solid var(--line); background: #f8fbfa; border-radius: 12px; padding: 14px; }
+.drive-fixed-folder > span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.drive-fixed-folder > strong, .drive-fixed-folder > small { overflow-wrap: anywhere; }
+.drive-fixed-folder > small { color: var(--muted); }
+.drive-fixed-folder > a { color: var(--brand); font-size: 12px; font-weight: 700; text-decoration: none; }
+.drive-privacy-status { display: grid; gap: 4px; border-radius: 11px; padding: 12px; border: 1px solid var(--line); background: #f5f7f6; }
+.drive-privacy-status span { color: var(--muted); font-size: 12px; }
+.drive-privacy-status.is-private { border-color: #add9c9; background: var(--brand-soft); }
+.drive-privacy-status.is-private strong { color: var(--brand); }
+.drive-privacy-status.is-shared { border-color: #f0bbb4; background: #fff1ef; }
+.drive-privacy-status.is-shared strong { color: var(--danger); }
+.drive-fixed-explanation { margin: 0; color: var(--muted); font-size: 12px; }
+.drive-analysis-card .acc-card-body { max-width: 760px; }
+.drive-folder-picker-modal { width: min(720px,96vw); }
+.drive-picker-tabs { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 13px; }
+.drive-picker-tabs .is-active { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); }
+.drive-picker-current { display: flex; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 11px; padding: 10px; margin-bottom: 12px; }
+.drive-picker-current > div { display: grid; gap: 2px; min-width: 0; }
+.drive-picker-current span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+.drive-picker-current strong { overflow-wrap: anywhere; }
+.drive-picker-list { display: grid; gap: 7px; max-height: 48vh; overflow: auto; }
+.drive-picker-list > button { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 11px; align-items: center; width: 100%; border: 1px solid var(--line); border-radius: 11px; padding: 12px; background: var(--surface); color: var(--text); text-align: left; cursor: pointer; }
+.drive-picker-list > button:hover { border-color: var(--brand); background: var(--brand-soft); }
+.drive-picker-list > button > span:nth-child(2) { display: grid; gap: 3px; min-width: 0; }
+.drive-picker-list strong, .drive-picker-list small { overflow-wrap: anywhere; }
+.drive-picker-list small { color: var(--muted); }
+.drive-folder-icon { color: var(--brand); font-size: 20px; }
+.drive-picker-privacy { display: grid; gap: 5px; border-radius: 11px; padding: 12px; margin-bottom: 12px; border: 1px solid var(--line); }
+.drive-picker-privacy span, .drive-picker-privacy small { color: var(--muted); }
+.drive-picker-privacy.is-private { border-color: #add9c9; background: var(--brand-soft); }
+.drive-picker-privacy.is-shared { border-color: #f0bbb4; background: #fff1ef; }
+.drive-picker-privacy.is-shared strong { color: var(--danger); }
 .acc-card-head > small { color: var(--muted); text-align: right; }
 
 .acc-modal-backdrop { position: fixed; inset: 0; background: rgba(10,31,27,.48); z-index: 20; display: grid; place-items: center; padding: 20px; }
@@ -454,6 +488,9 @@ button { cursor: pointer; }
   .profitability-classification-row > .btn { width: 100%; }
   .acc-form-grid, .acc-form-grid.three { grid-template-columns: 1fr; }
   .drive-kpis, .drive-folder-summary { grid-template-columns: 1fr; }
+  .drive-source-picker-row { grid-template-columns: 1fr; }
+  .drive-source-picker-row .btn { width: 100%; }
+  .drive-folder-picker-modal { width: 100vw; }
   .acc-modal-backdrop { padding: 0; align-items: end; }
   .acc-modal, .acc-modal.acc-modal-wide { border-radius: 18px 18px 0 0; max-height: 96vh; }
   .acc-modal-body { padding: 16px; }

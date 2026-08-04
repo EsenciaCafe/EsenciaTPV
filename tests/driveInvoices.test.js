@@ -4,6 +4,7 @@ import {
   driveImportStatus,
   driveReviewStatus,
   folderId,
+  resultFolderPrivacy,
   reviewableSupplierDocument,
   validateSupplierDocument
 } from '../src/driveInvoices.js';
@@ -70,6 +71,40 @@ test('extrae IDs de URLs de carpeta y elige el último estado', () => {
     { drive_file_id: 'drive-001', status: 'error', created_at: '2026-07-24T10:00:00Z' },
     { drive_file_id: 'drive-001', status: 'imported', processed_at: '2026-07-25T10:00:00Z' }
   ]), 'imported');
+});
+
+test('confirma que la carpeta de resultados pertenece solo al propietario', () => {
+  assert.deepEqual(resultFolderPrivacy({
+    id: 'private-folder',
+    ownedByMe: true,
+    shared: false,
+    owners: [{ emailAddress: 'propietario@example.com' }],
+    permissions: [{ type: 'user', role: 'owner', emailAddress: 'propietario@example.com' }]
+  }, 'propietario@example.com'), {
+    status: 'private',
+    sharedWith: [],
+    ownerEmail: 'propietario@example.com',
+    reason: 'La carpeta pertenece a esta cuenta y no figura compartida.'
+  });
+});
+
+test('detecta si otra persona o un enlace puede acceder a los JSON', () => {
+  const privacy = resultFolderPrivacy({
+    id: 'shared-folder',
+    ownedByMe: true,
+    shared: true,
+    permissions: [
+      { type: 'user', role: 'owner', emailAddress: 'propietario@example.com' },
+      { type: 'user', role: 'reader', emailAddress: 'otra@example.com' },
+      { type: 'anyone', role: 'reader' }
+    ]
+  }, 'propietario@example.com');
+  assert.equal(privacy.status, 'shared');
+  assert.equal(privacy.sharedWith.length, 2);
+});
+
+test('no afirma que una carpeta sea privada si no puede comprobar su propietario', () => {
+  assert.equal(resultFolderPrivacy({ id: 'unknown-folder', shared: false }, '').status, 'unknown');
 });
 
 test('convierte un resultado de error en un documento editable', () => {
