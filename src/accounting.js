@@ -21,6 +21,13 @@ import {
   reconciliationsByStatus
 } from './reconciliationView.js';
 import {
+  classificationDefinition,
+  classificationsForTransaction,
+  outstandingDocumentsForTransaction,
+  pendingBankTransactions,
+  suggestBankClassification
+} from './bankReview.js';
+import {
   GOOGLE_DRIVE_SCOPE,
   driveFileUrl,
   driveFolderUrl,
@@ -58,6 +65,10 @@ const state = {
   dashboardPeriod: 'month',
   profitabilityFilter: 'pending',
   reconciliationFilter: 'suggested',
+  bankReviewView: 'pending',
+  bankReviewDirection: 'all',
+  bankReviewSearch: '',
+  bankReviewPage: 1,
   token: '',
   client: null,
   business: null,
@@ -66,6 +77,7 @@ const state = {
   bankAccounts: [],
   bankTransactions: [],
   reconciliations: [],
+  bankReviews: [],
   journalEntries: [],
   journalLines: [],
   accounts: [],
@@ -289,6 +301,7 @@ async function loadAll() {
     query('accounting_bank_accounts', '*', { column: 'name', ascending: true }),
     query('accounting_bank_transactions', '*', { column: 'booked_on', ascending: false }).limit(500),
     query('accounting_reconciliations', '*, bookkeeping_documents(number,direction,total_amount), accounting_bank_transactions(booked_on,description,amount)', { column: 'created_at', ascending: false }),
+    query('accounting_bank_reviews', '*', { column: 'reviewed_at', ascending: false }),
     query('accounting_accounts', '*', { column: 'code', ascending: true }),
     query('accounting_journal_entries', '*', { column: 'entry_date', ascending: false }).limit(300),
     query('accounting_journal_lines'),
@@ -302,14 +315,14 @@ async function loadAll() {
   if (failed) throw failed.error;
   [
     state.business, state.documents, state.contacts, state.bankAccounts,
-    state.bankTransactions, state.reconciliations, state.accounts, state.journalEntries, state.journalLines,
+    state.bankTransactions, state.reconciliations, state.bankReviews, state.accounts, state.journalEntries, state.journalLines,
     state.taxDrafts, state.taxPeriods, state.driveSources, state.driveImports, state.profitabilityAnalyses
   ] = [
     results[0].data?.[0] || null, results[1].data || [], results[2].data || [],
-    results[3].data || [], results[4].data || [], results[5].data || [],
-    results[6].data || [], results[7].data || [], results[8].data || [],
-    results[9].data || [], results[10].data || [], results[11].data || [], results[12].data || [],
-    results[13].data || []
+    results[3].data || [], results[4].data || [], results[5].data || [], results[6].data || [],
+    results[7].data || [], results[8].data || [], results[9].data || [],
+    results[10].data || [], results[11].data || [], results[12].data || [], results[13].data || [],
+    results[14].data || []
   ];
   state.loading = false;
   renderApp();
@@ -586,6 +599,7 @@ const STATUS_LABELS = {
   partially_paid: 'Pago parcial', paid: 'Pagada', overdue: 'Vencida',
   voided: 'Anulada', rectified: 'Rectificada', unprocessed: 'Pendiente de análisis',
   pending: 'Revisar', imported: 'Importado', duplicate: 'Duplicado',
+  ignored: 'Ignorado',
   reviewed: 'Revisada · falta aprobar',
   needs_correction: 'Pendiente de corrección', invalid: 'JSON inválido', error: 'Error'
 };
@@ -690,6 +704,75 @@ function renderReconciliationCard(match) {
   </article>`;
 }
 
+function bankReviewForTransaction(transactionId) {
+  return state.bankReviews.find(item => item.bank_transaction_id === transactionId && item.status === 'active') || null;
+}
+
+function bankReviewSearchMatches(transaction) {
+  const term = state.bankReviewSearch.trim().toLocaleLowerCase('es');
+  if (!term) return true;
+  return [transaction.description, transaction.reference, transaction.amount, transaction.booked_on]
+    .some(value => String(value || '').toLocaleLowerCase('es').includes(term));
+}
+
+function renderBankReviewCard(transaction, review = null) {
+  const account = state.bankAccounts.find(item => item.id === transaction.bank_account_id);
+  const suggested = !review ? suggestBankClassification(transaction) : '';
+  const definition = classificationDefinition(review?.classification || suggested);
+  const directionLabel = Number(transaction.amount) >= 0 ? 'Entrada' : 'Salida';
+  return `<article class="bank-review-card ${Number(transaction.amount) >= 0 ? 'is-in' : 'is-out'}">
+    <div class="bank-review-date"><strong>${displayDate(transaction.booked_on)}</strong><span>${escapeHtml(account?.name || 'Cuenta bancaria')}</span></div>
+    <div class="bank-review-concept"><strong>${escapeHtml(transaction.description || 'Sin concepto')}</strong><span>${escapeHtml(transaction.reference || 'Sin referencia')}</span>${definition ? `<small>${review ? 'Clasificado como' : 'Sugerencia'}: ${escapeHtml(definition.label)}</small>` : ''}</div>
+    <div class="bank-review-amount"><span>${directionLabel}</span><strong>${money(transaction.amount)}</strong></div>
+    <button class="btn btn-small ${review ? '' : 'btn-primary'}" data-open-bank-review="${transaction.id}">${review ? 'Ver clasificación' : 'Revisar movimiento'}</button>
+  </article>`;
+}
+
+function renderBankReviewInbox() {
+  const pendingItems = pendingBankTransactions({
+    transactions: state.bankTransactions,
+    reconciliations: state.reconciliations,
+    search: state.bankReviewSearch,
+    direction: state.bankReviewDirection
+  });
+  const reviewedItems = state.bankReviews
+    .filter(review => review.status === 'active')
+    .map(review => ({ review, transaction: state.bankTransactions.find(item => item.id === review.bank_transaction_id) }))
+    .filter(item => item.transaction)
+    .filter(item => state.bankReviewDirection === 'all'
+      || (state.bankReviewDirection === 'in' ? Number(item.transaction.amount) >= 0 : Number(item.transaction.amount) < 0))
+    .filter(item => bankReviewSearchMatches(item.transaction));
+  const activeItems = state.bankReviewView === 'pending'
+    ? pendingItems.map(transaction => ({ transaction, review: null }))
+    : reviewedItems;
+  const pageSize = 12;
+  const pageCount = Math.max(1, Math.ceil(activeItems.length / pageSize));
+  const page = Math.min(state.bankReviewPage, pageCount);
+  const visibleItems = activeItems.slice((page - 1) * pageSize, page * pageSize);
+  return `<section class="acc-card bank-review-section" style="margin-top:18px">
+    <div class="acc-card-head bank-review-head">
+      <div><h2>Revisión de movimientos sin coincidencia</h2><small>Clasifica cada movimiento sin duplicar ventas ni inventar IGIC.</small></div>
+      <div class="period-switch bank-review-view-switch">
+        <button class="btn btn-small ${state.bankReviewView === 'pending' ? 'is-active' : ''}" data-bank-review-view="pending">Pendientes ${pendingBankTransactions({ transactions: state.bankTransactions, reconciliations: state.reconciliations }).length}</button>
+        <button class="btn btn-small ${state.bankReviewView === 'reviewed' ? 'is-active' : ''}" data-bank-review-view="reviewed">Revisados ${state.bankReviews.filter(item => item.status === 'active').length}</button>
+      </div>
+    </div>
+    <form class="bank-review-toolbar" id="bank-review-search-form">
+      <input type="search" id="bank-review-search" value="${escapeHtml(state.bankReviewSearch)}" placeholder="Buscar concepto, referencia o importe">
+      <select id="bank-review-direction" aria-label="Filtrar por dirección">
+        <option value="all" ${state.bankReviewDirection === 'all' ? 'selected' : ''}>Entradas y salidas</option>
+        <option value="in" ${state.bankReviewDirection === 'in' ? 'selected' : ''}>Solo entradas</option>
+        <option value="out" ${state.bankReviewDirection === 'out' ? 'selected' : ''}>Solo salidas</option>
+      </select>
+      <button class="btn btn-small" type="submit">Buscar</button>
+    </form>
+    ${visibleItems.length
+      ? `<div class="bank-review-list">${visibleItems.map(item => renderBankReviewCard(item.transaction, item.review)).join('')}</div>`
+      : `<div class="acc-empty"><strong>${state.bankReviewView === 'pending' ? 'No hay movimientos con este filtro' : 'Todavía no hay movimientos revisados'}</strong>${state.bankReviewView === 'pending' ? 'Prueba otra búsqueda o cambia entre entradas y salidas.' : 'Las clasificaciones confirmadas aparecerán aquí y se podrán deshacer.'}</div>`}
+    ${pageCount > 1 ? `<div class="bank-review-pagination"><button class="btn btn-small" data-bank-review-page="${page - 1}" ${page === 1 ? 'disabled' : ''}>Anterior</button><span>Página ${page} de ${pageCount} · ${activeItems.length} movimientos</span><button class="btn btn-small" data-bank-review-page="${page + 1}" ${page === pageCount ? 'disabled' : ''}>Siguiente</button></div>` : ''}
+  </section>`;
+}
+
 function renderTreasury() {
   const pending = state.bankTransactions.filter(tx => tx.status === 'pending').length;
   const balance = state.bankTransactions.find(tx => tx.balance != null)?.balance || 0;
@@ -718,11 +801,12 @@ function renderTreasury() {
         ? `<div class="reconciliation-list">${filteredReconciliations.map(renderReconciliationCard).join('')}</div>`
         : `<div class="acc-empty"><strong>${state.reconciliationFilter === 'suggested' ? 'Sin propuestas pendientes' : 'No hay conciliaciones en este estado'}</strong>${state.reconciliationFilter === 'suggested' ? 'Pulsa Buscar coincidencias cuando hayas importado movimientos.' : 'Puedes cambiar de pestaña para revisar el historial.'}</div>`}
     </section>
+    ${renderBankReviewInbox()}
     <section class="acc-card bank-movements-card" style="margin-top:18px">
       <details>
         <summary><span><strong>Movimientos bancarios</strong><small>${state.bankTransactions.length} movimientos · ${pending} sin conciliar</small></span><span>Mostrar listado</span></summary>
         ${state.bankTransactions.length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Fecha</th><th>Concepto</th><th>Referencia</th><th>Estado</th><th class="num">Importe</th><th class="num">Saldo</th></tr></thead><tbody>
-          ${state.bankTransactions.slice(0, 50).map(tx => `<tr><td>${displayDate(tx.booked_on)}</td><td>${escapeHtml(tx.description)}</td><td>${escapeHtml(tx.reference)}</td><td>${statusBadge(tx.status === 'matched' ? 'paid' : 'needs_review')}</td><td class="num">${money(tx.amount)}</td><td class="num">${tx.balance == null ? '—' : money(tx.balance)}</td></tr>`).join('')}
+          ${state.bankTransactions.slice(0, 50).map(tx => `<tr><td>${displayDate(tx.booked_on)}</td><td>${escapeHtml(tx.description)}</td><td>${escapeHtml(tx.reference)}</td><td>${statusBadge(tx.status === 'matched' ? 'paid' : tx.status === 'ignored' ? 'ignored' : 'needs_review')}</td><td class="num">${money(tx.amount)}</td><td class="num">${tx.balance == null ? '—' : money(tx.balance)}</td></tr>`).join('')}
         </tbody></table>${state.bankTransactions.length > 50 ? '<div class="bank-list-note">Se muestran los 50 movimientos más recientes.</div>' : ''}</div>` : '<div class="acc-empty"><strong>Importa tu primer extracto</strong>Compatible con CSV y la primera hoja de XLSX.</div>'}
       </details>
     </section>`;
@@ -876,6 +960,7 @@ function renderSettings() {
 function renderModal() {
   if (state.modal.type === 'document') return renderDocumentModal(state.modal.document);
   if (state.modal.type === 'reconciliation') return renderReconciliationModal();
+  if (state.modal.type === 'bank-review') return renderBankReviewModal();
   if (state.modal.type === 'bank-import') return renderBankImportModal();
   if (state.modal.type === 'bank-account') return renderBankAccountModal();
   if (state.modal.type === 'tax') return renderTaxModal(state.modal.model);
@@ -967,6 +1052,73 @@ function renderReconciliationModal() {
     <section class="reconciliation-detail-section"><h3>Artículos del documento</h3>${renderReconciliationLines(state.modal.lines)}</section>
     <section class="reconciliation-original">${originalMarkup}</section>
   `, foot, 'acc-modal-wide reconciliation-modal');
+}
+
+function renderBankMovementSummary(transaction) {
+  const account = state.bankAccounts.find(item => item.id === transaction.bank_account_id);
+  return `<section class="bank-review-movement-summary ${Number(transaction.amount) >= 0 ? 'is-in' : 'is-out'}">
+    <div><span>${Number(transaction.amount) >= 0 ? 'Entrada' : 'Salida'} · ${displayDate(transaction.booked_on)}</span><strong>${money(transaction.amount)}</strong></div>
+    <h3>${escapeHtml(transaction.description || 'Sin concepto')}</h3>
+    <dl>
+      <div><dt>Referencia</dt><dd>${escapeHtml(transaction.reference || '—')}</dd></div>
+      <div><dt>Cuenta</dt><dd>${escapeHtml(account?.name || 'Cuenta bancaria')}${account?.iban_last4 ? ` · ···· ${escapeHtml(account.iban_last4)}` : ''}</dd></div>
+      <div><dt>Fecha valor</dt><dd>${displayDate(transaction.value_on)}</dd></div>
+      <div><dt>Saldo posterior</dt><dd>${transaction.balance == null ? '—' : money(transaction.balance)}</dd></div>
+    </dl>
+  </section>`;
+}
+
+function renderBankReviewModal() {
+  const transaction = state.modal.transaction;
+  const review = state.modal.review;
+  if (!transaction) return modalFrame('Revisar movimiento', '<div class="acc-empty"><strong>Movimiento no encontrado</strong></div>');
+  const summary = renderBankMovementSummary(transaction);
+  if (review?.status === 'active') {
+    const definition = classificationDefinition(review.classification);
+    const generatedDocument = state.documents.find(item => item.id === review.document_id);
+    return modalFrame('Movimiento revisado', `${summary}
+      <section class="bank-review-result">
+        <span class="badge">Clasificación confirmada</span>
+        <h3>${escapeHtml(definition?.label || review.classification)}</h3>
+        <p>${escapeHtml(definition?.effect || '')}</p>
+        ${review.notes ? `<div><strong>Notas</strong><p>${escapeHtml(review.notes)}</p></div>` : ''}
+        ${generatedDocument ? `<div class="bank-review-generated"><span>Documento generado</span><strong>${escapeHtml(generatedDocument.number)} · ${money(generatedDocument.total_amount)}</strong><small>Estado: ${escapeHtml(STATUS_LABELS[generatedDocument.status] || generatedDocument.status)}</small></div>` : ''}
+        <small>Revisado el ${new Date(review.reviewed_at).toLocaleString('es-ES')} · revisión ${Number(review.revision || 1)}</small>
+      </section>
+    `, `<button class="btn" data-close-modal>Cerrar</button><button class="btn btn-danger" data-unclassify-bank="${transaction.id}">Deshacer clasificación</button>`, 'bank-review-modal');
+  }
+
+  const candidates = outstandingDocumentsForTransaction(transaction, state.documents);
+  const bankAmount = Math.abs(Number(transaction.amount || 0));
+  const defaultCandidate = candidates[0];
+  const defaultAmount = bankAmount;
+  const suggested = suggestBankClassification(transaction);
+  const classifications = classificationsForTransaction(transaction);
+  const selectedClassification = state.modal.classification || suggested || classifications[0]?.value || '';
+  const selectedDefinition = classificationDefinition(selectedClassification);
+  return modalFrame('Revisar movimiento bancario', `${summary}
+    <div class="bank-review-choice-intro"><strong>¿Qué representa este movimiento?</strong><span>Elige una de las dos opciones. Nada se contabiliza hasta que confirmes.</span></div>
+    <section class="bank-review-option">
+      <div class="bank-review-option-title"><span>1</span><div><h3>Vincular con una factura existente</h3><p>Es la opción correcta cuando el proveedor o cliente ya tiene un documento pendiente.</p></div></div>
+      ${candidates.length ? `<form class="acc-form" id="manual-bank-match-form">
+        <div class="field"><label>Documento pendiente</label><select id="manual-bank-document">${candidates.map(document => `<option value="${document.id}">${escapeHtml(document.number || 'Sin número')} · ${escapeHtml(document.accounting_contacts?.name || (document.direction === 'sale' ? 'Cliente' : 'Proveedor'))} · pendiente ${money(document.outstanding)} · ${displayDate(document.issue_date)}</option>`).join('')}</select></div>
+        <div class="field"><label>Importe del movimiento</label><input id="manual-bank-amount" type="number" value="${defaultAmount.toFixed(2)}" readonly required><small>Esta versión vincula el movimiento completo a un documento. Los pagos agrupados se tratarán por separado.</small></div>
+        <button class="btn btn-primary" type="submit">Crear comparación banco–factura</button>
+      </form>` : '<div class="acc-notice">No hay documentos pendientes compatibles con esta entrada o salida. Puedes dejar el movimiento pendiente o clasificarlo abajo.</div>'}
+    </section>
+    <div class="bank-review-or"><span>o</span></div>
+    <section class="bank-review-option">
+      <div class="bank-review-option-title"><span>2</span><div><h3>Clasificar sin vincular una factura</h3><p>Úsalo para datáfono, efectivo, titular, impuestos o un gasto que realmente no tendrá factura.</p></div></div>
+      <form class="acc-form" id="bank-classification-form">
+        <div class="field"><label>Clasificación</label><select id="bank-classification">${classifications.map(item => `<option value="${item.value}" ${selectedClassification === item.value ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select></div>
+        ${suggested ? `<div class="bank-review-suggestion"><span class="badge">Sugerencia automática</span><strong>${escapeHtml(classificationDefinition(suggested)?.label || '')}</strong><small>Comprueba que describe realmente el movimiento.</small></div>` : ''}
+        <div class="acc-notice bank-classification-effect" id="bank-classification-effect">${escapeHtml(selectedDefinition?.effect || '')}</div>
+        <div class="field"><label>Notas opcionales</label><textarea id="bank-classification-notes" placeholder="Explica cualquier detalle útil para revisarlo más adelante"></textarea></div>
+        <label class="reconciliation-confirm-check"><input type="checkbox" id="bank-classification-reviewed"><span><strong>He comprobado el concepto y el efecto de esta clasificación.</strong><small>Podrás deshacerla desde la pestaña Revisados.</small></span></label>
+        <button class="btn btn-primary" id="classify-bank-button" type="submit" disabled>Confirmar clasificación</button>
+      </form>
+    </section>
+  `, '<button class="btn" data-close-modal>Cerrar sin cambios</button>', 'acc-modal-wide bank-review-modal');
 }
 
 function documentHistoryFor(line) {
@@ -1165,6 +1317,29 @@ function wireEvents() {
   document.querySelectorAll('[data-review-reconciliation]').forEach(button => button.addEventListener('click', () => openReconciliation(button.dataset.reviewReconciliation)));
   document.querySelectorAll('[data-reject-match]').forEach(button => button.addEventListener('click', () => updateMatch(button.dataset.rejectMatch, 'reject', button)));
   document.querySelectorAll('[data-reopen-match]').forEach(button => button.addEventListener('click', () => updateMatch(button.dataset.reopenMatch, 'reopen', button)));
+  document.querySelectorAll('[data-bank-review-view]').forEach(button => button.addEventListener('click', () => {
+    state.bankReviewView = button.dataset.bankReviewView;
+    state.bankReviewPage = 1;
+    renderApp();
+  }));
+  document.querySelector('#bank-review-search-form')?.addEventListener('submit', event => {
+    event.preventDefault();
+    state.bankReviewSearch = document.querySelector('#bank-review-search').value;
+    state.bankReviewDirection = document.querySelector('#bank-review-direction').value;
+    state.bankReviewPage = 1;
+    renderApp();
+  });
+  document.querySelector('#bank-review-direction')?.addEventListener('change', event => {
+    state.bankReviewDirection = event.currentTarget.value;
+    state.bankReviewPage = 1;
+    renderApp();
+  });
+  document.querySelectorAll('[data-bank-review-page]').forEach(button => button.addEventListener('click', () => {
+    state.bankReviewPage = Number(button.dataset.bankReviewPage);
+    renderApp();
+    document.querySelector('.bank-review-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  document.querySelectorAll('[data-open-bank-review]').forEach(button => button.addEventListener('click', () => openBankReview(button.dataset.openBankReview)));
   document.querySelector('#new-entry-btn')?.addEventListener('click', () => openModal({ type: 'entry' }));
   document.querySelectorAll('[data-tax-model]').forEach(button => button.addEventListener('click', () => openModal({ type: 'tax', model: button.dataset.taxModel })));
   document.querySelector('#export-tax-btn')?.addEventListener('click', exportTaxCsv);
@@ -1215,6 +1390,23 @@ function wireModal() {
   document.querySelectorAll('[data-match-action]').forEach(button => button.addEventListener('click', () => {
     updateMatch(button.dataset.matchId, button.dataset.matchAction, button);
   }));
+  document.querySelector('#manual-bank-match-form')?.addEventListener('submit', createManualBankMatch);
+  document.querySelector('#bank-classification-form')?.addEventListener('submit', classifyBankTransaction);
+  document.querySelector('#bank-classification')?.addEventListener('change', event => {
+    state.modal.classification = event.currentTarget.value;
+    const definition = classificationDefinition(event.currentTarget.value);
+    const effect = document.querySelector('#bank-classification-effect');
+    if (effect) effect.textContent = definition?.effect || '';
+    const checkbox = document.querySelector('#bank-classification-reviewed');
+    const button = document.querySelector('#classify-bank-button');
+    if (checkbox) checkbox.checked = false;
+    if (button) button.disabled = true;
+  });
+  document.querySelector('#bank-classification-reviewed')?.addEventListener('change', event => {
+    const button = document.querySelector('#classify-bank-button');
+    if (button) button.disabled = !event.currentTarget.checked;
+  });
+  document.querySelectorAll('[data-unclassify-bank]').forEach(button => button.addEventListener('click', () => unclassifyBankTransaction(button.dataset.unclassifyBank, button)));
 }
 
 function openModal(modal) { state.modal = modal; renderApp(); }
@@ -1706,6 +1898,76 @@ async function suggestMatches() {
     toast(`${count} posibles coincidencias revisadas.`);
     await loadAll();
   } catch (error) { toast(error.message, 'error'); }
+}
+
+function openBankReview(transactionId) {
+  const transaction = state.bankTransactions.find(item => item.id === transactionId);
+  if (!transaction) return toast('No se encontró el movimiento bancario.', 'error');
+  const review = bankReviewForTransaction(transactionId);
+  openModal({
+    type: 'bank-review',
+    transaction,
+    review,
+    classification: review?.classification || suggestBankClassification(transaction)
+  });
+}
+
+async function createManualBankMatch(event) {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  if (button) button.disabled = true;
+  try {
+    const reconciliationId = await rpc('accounting_create_manual_reconciliation', {
+      p_bank_transaction_id: state.modal.transaction.id,
+      p_document_id: document.querySelector('#manual-bank-document').value,
+      p_amount: Number(document.querySelector('#manual-bank-amount').value)
+    });
+    state.modal = null;
+    await loadAll();
+    await openReconciliation(reconciliationId);
+    toast('Comparación creada. Revisa banco, factura y original antes de confirmar.');
+  } catch (error) {
+    if (button) button.disabled = false;
+    toast(error.message || 'No se pudo crear la comparación.', 'error');
+  }
+}
+
+async function classifyBankTransaction(event) {
+  event.preventDefault();
+  const button = document.querySelector('#classify-bank-button');
+  if (button) button.disabled = true;
+  const transactionId = state.modal.transaction.id;
+  try {
+    await rpc('accounting_classify_bank_transaction', {
+      p_bank_transaction_id: transactionId,
+      p_classification: document.querySelector('#bank-classification').value,
+      p_notes: document.querySelector('#bank-classification-notes').value
+    });
+    state.modal = null;
+    await loadAll();
+    openBankReview(transactionId);
+    toast('Movimiento clasificado y registrado. Puedes deshacerlo desde esta ficha.');
+  } catch (error) {
+    if (button) button.disabled = false;
+    toast(error.message || 'No se pudo clasificar el movimiento.', 'error');
+  }
+}
+
+async function unclassifyBankTransaction(transactionId, button) {
+  if (button) button.disabled = true;
+  try {
+    await rpc('accounting_unclassify_bank_transaction', {
+      p_bank_transaction_id: transactionId
+    });
+    state.modal = null;
+    state.bankReviewView = 'pending';
+    state.bankReviewPage = 1;
+    await loadAll();
+    toast('Clasificación deshecha. El movimiento vuelve a estar pendiente.');
+  } catch (error) {
+    if (button) button.disabled = false;
+    toast(error.message || 'No se pudo deshacer la clasificación.', 'error');
+  }
 }
 
 async function openReconciliation(id) {
