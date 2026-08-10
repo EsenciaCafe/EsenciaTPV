@@ -85,6 +85,20 @@ test('suma el último saldo de cada cuenta y los flujos bancarios del periodo', 
   assert.equal(snapshot.treasury.pendingCount, 1);
 });
 
+test('no suma ni deja pendiente un movimiento excluido del extracto', () => {
+  const snapshot = buildBusinessSnapshot({
+    anchor: '2026-08-04',
+    bankAccounts: [{ id: 'a', opening_balance: 20, active: true }],
+    bankTransactions: [
+      { bank_account_id: 'a', booked_on: '2026-08-01', amount: 100, balance: 120, status: 'pending', review_scope: 'excluded' },
+      { bank_account_id: 'a', booked_on: '2026-08-02', amount: 50, balance: 70, status: 'matched', review_scope: 'included' }
+    ]
+  });
+  assert.equal(snapshot.treasury.balance, 70);
+  assert.equal(snapshot.treasury.inflows, 50);
+  assert.equal(snapshot.treasury.pendingCount, 0);
+});
+
 test('calcula cambios porcentuales sin inventar un porcentaje desde cero', () => {
   assert.equal(percentageChange(120, 100), 20);
   assert.equal(percentageChange(0, 0), 0);

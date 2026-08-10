@@ -42,6 +42,17 @@ test('mantiene visible un pago marcado como pendiente de factura', () => {
   assert.ok(result.items[0].waitingReview);
 });
 
+test('no convierte movimientos excluidos del extracto en tareas pendientes', () => {
+  const result = buildBankWorkspace({
+    transactions: [
+      { id: 'june', status: 'pending', review_scope: 'excluded', amount: -25, description: 'Compra antigua', booked_on: '2026-06-30' },
+      { id: 'july', status: 'pending', review_scope: 'included', amount: -30, description: 'Compra actual', booked_on: '2026-07-01' }
+    ]
+  });
+  assert.deepEqual(result.allItems.map(item => item.transaction.id), ['july']);
+  assert.equal(result.stats.pending, 1);
+});
+
 test('filtra por tarea, dirección y texto sin alterar los contadores generales', () => {
   const result = buildBankWorkspace({
     transactions,

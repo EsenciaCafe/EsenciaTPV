@@ -404,6 +404,40 @@ button { cursor: pointer; }
 .bank-movements-card summary small { color: var(--muted); }
 .bank-movements-card summary > span:last-child { color: var(--brand); font-size: 12px; font-weight: 750; }
 .bank-movements-card details[open] summary { border-bottom: 1px solid var(--line); }
+.bank-imports-card { margin-bottom: 14px; }
+.bank-imports-card .acc-card-head p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.bank-import-list { display: grid; }
+.bank-import-row { display: grid; grid-template-columns: minmax(260px,1fr) auto auto; gap: 18px; align-items: center; padding: 15px 20px; border-top: 1px solid var(--line); }
+.bank-import-file, .bank-import-preview-file { min-width: 0; display: flex; align-items: center; gap: 12px; }
+.bank-import-file > div, .bank-import-preview-file > div { min-width: 0; display: grid; gap: 4px; }
+.bank-import-file strong, .bank-import-file span, .bank-import-preview-file strong, .bank-import-preview-file span { overflow-wrap: anywhere; }
+.bank-import-file span, .bank-import-preview-file span { color: var(--muted); font-size: 12px; }
+.bank-import-icon { width: 42px; height: 42px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 11px; background: var(--brand-soft); color: var(--brand); font-size: 10px; font-weight: 850; letter-spacing: .06em; }
+.bank-import-counts { display: flex; gap: 8px; }
+.bank-import-counts span { min-width: 68px; display: grid; justify-items: center; gap: 2px; padding: 7px 9px; border-radius: 9px; background: #f5f8f7; color: var(--muted); font-size: 10px; }
+.bank-import-counts strong { color: var(--ink); font-size: 15px; }
+.bank-import-counts .is-excluded { background: #fff4ed; color: #9c552c; }
+.bank-import-counts .is-excluded strong { color: #a7451b; }
+.bank-import-removed { padding: 12px 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.bank-import-removed summary { cursor: pointer; font-weight: 700; }
+.bank-import-removed > div { display: grid; gap: 5px; padding-top: 9px; }
+.bank-import-modal { width: min(700px,96vw); }
+.bank-import-preview-file { padding: 13px; border: 1px solid var(--line); border-radius: 13px; background: #f8fbfa; }
+.bank-import-preview-file .btn { margin-left: auto; flex: 0 0 auto; }
+.bank-import-period-picker { display: grid; gap: 14px; margin-top: 16px; padding: 17px; border: 1px solid var(--line); border-radius: 14px; }
+.bank-import-period-picker h3 { margin: 0; font-size: 17px; }
+.bank-import-period-picker p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.bank-import-presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.bank-import-selection-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.bank-import-selection-summary > div { display: grid; justify-items: center; gap: 3px; padding: 13px; border-radius: 12px; background: #f4f7f6; color: var(--muted); font-size: 11px; }
+.bank-import-selection-summary strong { color: var(--ink); font-size: 23px; }
+.bank-import-selection-summary .is-included { background: var(--brand-soft); }
+.bank-import-selection-summary .is-included strong { color: var(--brand); }
+.bank-import-selection-summary .is-excluded { background: #fff4ed; }
+.bank-import-selection-summary .is-excluded strong { color: #a7451b; }
+.bank-import-danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 18px; padding: 14px 16px; border: 1px solid #f0d4d0; border-radius: 13px; background: #fffafa; }
+.bank-import-danger-zone > div { display: grid; gap: 3px; }
+.bank-import-danger-zone span { color: var(--muted); font-size: 11px; }
 .bank-list-note { padding: 12px 15px; color: var(--muted); font-size: 12px; text-align: center; background: #f8fbfa; }
 .bank-review-head > div:first-child { display: grid; gap: 4px; }
 .bank-review-head small { color: var(--muted); }
@@ -684,6 +718,17 @@ button { cursor: pointer; }
   .bank-work-support .btn { width: 100%; }
   .bank-waiting-banner { grid-template-columns: auto minmax(0,1fr); }
   .bank-waiting-banner .btn { grid-column: 1 / -1; width: 100%; }
+  .bank-imports-card .acc-card-head { align-items: flex-start; }
+  .bank-import-row { grid-template-columns: 1fr; gap: 12px; padding: 14px; }
+  .bank-import-counts { display: grid; grid-template-columns: repeat(3,1fr); }
+  .bank-import-row > .btn { width: 100%; }
+  .bank-import-preview-file { align-items: flex-start; flex-wrap: wrap; }
+  .bank-import-preview-file .btn { width: 100%; margin-left: 0; }
+  .bank-import-period-picker { padding: 13px; }
+  .bank-import-presets { display: grid; grid-template-columns: 1fr; }
+  .bank-import-presets .btn { width: 100%; }
+  .bank-import-danger-zone { align-items: stretch; flex-direction: column; }
+  .bank-import-danger-zone .btn { width: 100%; }
   .recurring-widget .acc-card-head { align-items: flex-start; }
   .recurring-widget .acc-card-head .acc-actions { flex-wrap: wrap; justify-content: flex-end; }
   .recurring-row { grid-template-columns: 46px minmax(0,1fr); gap: 10px; padding: 12px 14px; }

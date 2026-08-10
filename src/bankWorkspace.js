@@ -4,6 +4,7 @@ import {
   outstandingDocumentsForTransaction,
   suggestBankClassification
 } from './bankReview.js';
+import { isBankTransactionIncluded } from './bankImports.js';
 
 const STATUS_PRIORITY = {
   ready_match: 0,
@@ -71,7 +72,7 @@ export function buildBankWorkspace({
     .map(item => [item.bank_transaction_id, item]));
 
   const allItems = transactions
-    .filter(transaction => transaction.status === 'pending')
+    .filter(transaction => transaction.status === 'pending' && isBankTransactionIncluded(transaction))
     .map(transaction => {
       const reconciliation = suggestedByTransaction.get(transaction.id) || null;
       const waitingReview = waitingByTransaction.get(transaction.id) || null;
@@ -111,7 +112,9 @@ export function buildBankWorkspace({
     .filter(item => statusMatchesFilter(item.status, filter))
     .filter(item => !term || itemSearchText(item).includes(term));
 
-  const completedCount = transactions.filter(transaction => ['matched', 'ignored'].includes(transaction.status)).length;
+  const completedCount = transactions.filter(transaction => (
+    isBankTransactionIncluded(transaction) && ['matched', 'ignored'].includes(transaction.status)
+  )).length;
   const stats = {
     pending: allItems.length,
     ready: allItems.filter(item => ['ready_match', 'possible_document'].includes(item.status)).length,

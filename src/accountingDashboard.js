@@ -1,3 +1,5 @@
+import { isBankTransactionIncluded } from './bankImports.js';
+
 const ACCOUNTED_STATUSES = new Set([
   'approved',
   'partially_paid',
@@ -168,15 +170,16 @@ export function buildBusinessSnapshot({
   period = 'month',
   anchor = new Date()
 } = {}) {
+  const includedBankTransactions = bankTransactions.filter(isBankTransactionIncluded);
   const bounds = periodBounds(period, anchor);
   const current = summarizeDocuments(documents, bounds.start, bounds.end);
   const previous = summarizeDocuments(documents, bounds.comparisonStart, bounds.comparisonEnd);
-  const bankPeriod = bankTransactions.filter(transaction => (
+  const bankPeriod = includedBankTransactions.filter(transaction => (
     inRange(transaction.booked_on, bounds.start, bounds.end)
   ));
   const accounted = documents.filter(isAccountedDocument);
   const unpaid = accounted.filter(document => remainingAmount(document) > 0.005);
-  const cash = latestAccountBalances(bankAccounts, bankTransactions);
+  const cash = latestAccountBalances(bankAccounts, includedBankTransactions);
   const today = bounds.anchor;
 
   return {
@@ -194,7 +197,7 @@ export function buildBusinessSnapshot({
         .reduce((sum, transaction) => sum + amount(transaction.amount), 0),
       outflows: Math.abs(bankPeriod.filter(transaction => amount(transaction.amount) < 0)
         .reduce((sum, transaction) => sum + amount(transaction.amount), 0)),
-      pendingCount: bankTransactions.filter(transaction => transaction.status === 'pending').length
+      pendingCount: includedBankTransactions.filter(transaction => transaction.status === 'pending').length
     },
     pending: {
       receivable: unpaid.filter(document => document.direction === 'sale')

@@ -29,6 +29,13 @@ import {
 } from './bankReview.js';
 import { buildBankWorkspace, bankWorkspaceStatus } from './bankWorkspace.js';
 import {
+  bankImportSelection,
+  buildBankImportBatches,
+  clampBankImportRange,
+  isBankTransactionIncluded,
+  quarterRange
+} from './bankImports.js';
+import {
   GOOGLE_DRIVE_SCOPE,
   driveFileUrl,
   driveFolderUrl,
@@ -85,6 +92,7 @@ const state = {
   contacts: [],
   bankAccounts: [],
   bankTransactions: [],
+  bankImports: [],
   reconciliations: [],
   bankReviews: [],
   journalEntries: [],
@@ -312,6 +320,7 @@ async function loadAll() {
     query('accounting_contacts', '*', { column: 'name', ascending: true }),
     query('accounting_bank_accounts', '*', { column: 'name', ascending: true }),
     query('accounting_bank_transactions', '*', { column: 'booked_on', ascending: false }).limit(500),
+    query('accounting_bank_imports', '*', { column: 'created_at', ascending: false }).limit(100),
     query('accounting_reconciliations', '*, bookkeeping_documents(number,direction,total_amount), accounting_bank_transactions(booked_on,description,amount)', { column: 'created_at', ascending: false }),
     query('accounting_bank_reviews', '*', { column: 'reviewed_at', ascending: false }),
     query('accounting_accounts', '*', { column: 'code', ascending: true }),
@@ -329,15 +338,15 @@ async function loadAll() {
   if (failed) throw failed.error;
   [
     state.business, state.documents, state.contacts, state.bankAccounts,
-    state.bankTransactions, state.reconciliations, state.bankReviews, state.accounts, state.journalEntries, state.journalLines,
+    state.bankTransactions, state.bankImports, state.reconciliations, state.bankReviews, state.accounts, state.journalEntries, state.journalLines,
     state.taxDrafts, state.taxPeriods, state.driveSources, state.driveImports, state.profitabilityAnalyses,
     state.recurringExpenses, state.recurringExpenseOccurrences
   ] = [
     results[0].data?.[0] || null, results[1].data || [], results[2].data || [],
-    results[3].data || [], results[4].data || [], results[5].data || [], results[6].data || [],
-    results[7].data || [], results[8].data || [], results[9].data || [],
-    results[10].data || [], results[11].data || [], results[12].data || [], results[13].data || [],
-    results[14].data || [], results[15].data || [], results[16].data || []
+    results[3].data || [], results[4].data || [], results[5].data || [], results[6].data || [], results[7].data || [],
+    results[8].data || [], results[9].data || [], results[10].data || [],
+    results[11].data || [], results[12].data || [], results[13].data || [], results[14].data || [],
+    results[15].data || [], results[16].data || [], results[17].data || []
   ];
   state.loading = false;
   renderApp();
@@ -981,10 +990,49 @@ function renderBankWorkspace() {
   </section>`;
 }
 
+function currentBankImportBatches() {
+  return buildBankImportBatches({
+    imports: state.bankImports,
+    transactions: state.bankTransactions,
+    accounts: state.bankAccounts
+  });
+}
+
+function quarterLabel(range) {
+  if (!range?.start) return 'trimestre';
+  const date = new Date(`${range.start}T12:00:00`);
+  return `${Math.floor(date.getMonth() / 3) + 1}T ${date.getFullYear()}`;
+}
+
+function renderBankImports() {
+  const batches = currentBankImportBatches().filter(batch => batch.status !== 'removed');
+  const removed = currentBankImportBatches().filter(batch => batch.status === 'removed');
+  const rows = batches.length ? batches.map(batch => {
+    const period = batch.detected_start_on && batch.detected_end_on
+      ? `${displayDate(batch.detected_start_on)} – ${displayDate(batch.detected_end_on)}`
+      : 'Periodo sin detectar';
+    return `<article class="bank-import-row">
+      <div class="bank-import-file"><span class="bank-import-icon">XLS</span><div><strong>${escapeHtml(batch.file_name)}</strong><span>${escapeHtml(batch.account?.name || 'Cuenta bancaria')} · ${period}</span></div></div>
+      <div class="bank-import-counts">
+        <span><strong>${batch.included_count}</strong> en uso</span>
+        <span class="${batch.excluded_count ? 'is-excluded' : ''}"><strong>${batch.excluded_count}</strong> excluidos</span>
+        <span><strong>${batch.processed_count}</strong> revisados</span>
+      </div>
+      <button class="btn btn-small" data-manage-bank-import="${escapeHtml(batch.id)}">Gestionar</button>
+    </article>`;
+  }).join('') : '<div class="acc-empty"><strong>Aún no hay extractos</strong>Cuando importes uno podrás elegir el periodo y gestionarlo desde aquí.</div>';
+  return `<section class="acc-card bank-imports-card">
+    <div class="acc-card-head"><div><h2>Extractos importados</h2><p>Decide qué periodo entra en la revisión sin borrar el historial bancario.</p></div><button class="btn btn-small" id="import-bank-inline-btn">+ Importar</button></div>
+    <div class="bank-import-list">${rows}</div>
+    ${removed.length ? `<details class="bank-import-removed"><summary>${removed.length} importación${removed.length === 1 ? '' : 'es'} deshecha${removed.length === 1 ? '' : 's'}</summary><div>${removed.map(batch => `<span>${escapeHtml(batch.file_name)} · ${displayDate(batch.created_at)}</span>`).join('')}</div></details>` : ''}
+  </section>`;
+}
+
 function renderTreasury() {
   const workspace = currentBankWorkspace({ search: '', direction: 'all', filter: 'all' });
   const pending = workspace.stats.pending;
-  const balance = state.bankTransactions.find(tx => tx.balance != null)?.balance || 0;
+  const includedTransactions = state.bankTransactions.filter(isBankTransactionIncluded);
+  const balance = includedTransactions.find(tx => tx.balance != null)?.balance || 0;
   const rejected = reconciliationsByStatus(state.reconciliations, 'rejected');
   return `
     <div class="acc-grid acc-kpis">
@@ -994,14 +1042,15 @@ function renderTreasury() {
       <div class="acc-kpi"><span>Terminados</span><strong>${workspace.stats.completed}</strong></div>
     </div>
     <div class="bank-workspace-actions"><button class="btn" id="suggest-matches-btn">Buscar facturas que coincidan</button><button class="btn" id="new-bank-account-btn">Añadir cuenta</button></div>
+    ${renderBankImports()}
     ${renderBankWorkspace()}
     ${rejected.length ? `<section class="acc-card bank-movements-card" style="margin-top:18px"><details><summary><span><strong>Coincidencias descartadas</strong><small>${rejected.length} propuestas conservadas en el historial</small></span><span>Mostrar</span></summary><div class="reconciliation-list">${rejected.map(renderReconciliationCard).join('')}</div></details></section>` : ''}
     <section class="acc-card bank-movements-card" style="margin-top:18px">
       <details>
-        <summary><span><strong>Movimientos bancarios</strong><small>${state.bankTransactions.length} movimientos · ${pending} sin conciliar</small></span><span>Mostrar listado</span></summary>
-        ${state.bankTransactions.length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Fecha</th><th>Concepto</th><th>Referencia</th><th>Estado</th><th class="num">Importe</th><th class="num">Saldo</th></tr></thead><tbody>
-          ${state.bankTransactions.slice(0, 50).map(tx => `<tr><td>${displayDate(tx.booked_on)}</td><td>${escapeHtml(tx.description)}</td><td>${escapeHtml(tx.reference)}</td><td>${statusBadge(tx.status === 'matched' ? 'paid' : tx.status === 'ignored' ? 'ignored' : 'needs_review')}</td><td class="num">${money(tx.amount)}</td><td class="num">${tx.balance == null ? '—' : money(tx.balance)}</td></tr>`).join('')}
-        </tbody></table>${state.bankTransactions.length > 50 ? '<div class="bank-list-note">Se muestran los 50 movimientos más recientes.</div>' : ''}</div>` : '<div class="acc-empty"><strong>Importa tu primer extracto</strong>Compatible con CSV y la primera hoja de XLSX.</div>'}
+        <summary><span><strong>Movimientos bancarios en uso</strong><small>${includedTransactions.length} movimientos · ${pending} sin conciliar</small></span><span>Mostrar listado</span></summary>
+        ${includedTransactions.length ? `<div class="acc-table-wrap"><table class="acc-table"><thead><tr><th>Fecha</th><th>Concepto</th><th>Referencia</th><th>Estado</th><th class="num">Importe</th><th class="num">Saldo</th></tr></thead><tbody>
+          ${includedTransactions.slice(0, 50).map(tx => `<tr><td>${displayDate(tx.booked_on)}</td><td>${escapeHtml(tx.description)}</td><td>${escapeHtml(tx.reference)}</td><td>${statusBadge(tx.status === 'matched' ? 'paid' : tx.status === 'ignored' ? 'ignored' : 'needs_review')}</td><td class="num">${money(tx.amount)}</td><td class="num">${tx.balance == null ? '—' : money(tx.balance)}</td></tr>`).join('')}
+        </tbody></table>${includedTransactions.length > 50 ? '<div class="bank-list-note">Se muestran los 50 movimientos más recientes.</div>' : ''}</div>` : '<div class="acc-empty"><strong>Importa tu primer extracto</strong>Compatible con CSV y la primera hoja de XLSX.</div>'}
       </details>
     </section>`;
 }
@@ -1174,6 +1223,7 @@ function renderModal() {
   if (state.modal.type === 'bank-review') return renderBankReviewModal();
   if (state.modal.type === 'drive-folder-picker') return renderDriveFolderPickerModal();
   if (state.modal.type === 'bank-import') return renderBankImportModal();
+  if (state.modal.type === 'bank-import-manage') return renderBankImportManageModal();
   if (state.modal.type === 'bank-account') return renderBankAccountModal();
   if (state.modal.type === 'tax') return renderTaxModal(state.modal.model);
   if (state.modal.type === 'entry') return renderEntryModal();
@@ -1569,12 +1619,72 @@ function renderDocumentModal(document = {}) {
 }
 
 function renderBankImportModal() {
+  const preview = state.modal.preview;
+  const accountId = state.modal.accountId || '';
+  if (preview) {
+    const selection = bankImportSelection(preview.rows, state.modal.start, state.modal.end);
+    const quarter = quarterRange(preview.range.end);
+    const boundedQuarter = clampBankImportRange(quarter, preview.range);
+    const quarterSelection = bankImportSelection(preview.rows, boundedQuarter.start, boundedQuarter.end);
+    return modalFrame('Importar extracto bancario', `
+      <form class="acc-form" id="bank-import-form">
+        <div class="field"><label>Cuenta bancaria</label><select id="bank-account-select" required><option value="">Seleccionar</option>${state.bankAccounts.map(account=>`<option value="${account.id}" ${accountId === account.id ? 'selected' : ''}>${escapeHtml(account.name)}</option>`).join('')}</select></div>
+        <div class="bank-import-preview-file"><span class="bank-import-icon">XLS</span><div><strong>${escapeHtml(preview.fileName)}</strong><span>${preview.rows.length} movimientos detectados · ${displayDate(preview.range.start)} – ${displayDate(preview.range.end)}</span></div><button class="btn btn-small" type="button" id="change-bank-file">Cambiar</button></div>
+        <section class="bank-import-period-picker">
+          <div><h3>¿Qué fechas quieres revisar?</h3><p>Los movimientos de fuera se guardan como historial, pero no cuentan ni aparecen como tareas.</p></div>
+          <div class="bank-import-presets">
+            <button class="btn btn-small" type="button" data-bank-import-preset="all">Todo el extracto</button>
+            ${quarterSelection.included.length ? `<button class="btn btn-small" type="button" data-bank-import-preset="quarter">Solo ${quarterLabel(quarter)}</button>` : ''}
+          </div>
+          <div class="acc-form-grid">
+            <div class="field"><label>Desde</label><input type="date" id="bank-import-start" value="${selection.selectedStart}" min="${preview.range.start}" max="${preview.range.end}" required></div>
+            <div class="field"><label>Hasta</label><input type="date" id="bank-import-end" value="${selection.selectedEnd}" min="${preview.range.start}" max="${preview.range.end}" required></div>
+          </div>
+          <div class="bank-import-selection-summary">
+            <div class="is-included"><strong>${selection.included.length}</strong><span>se revisarán</span></div>
+            <div class="${selection.excluded.length ? 'is-excluded' : ''}"><strong>${selection.excluded.length}</strong><span>quedarán fuera</span></div>
+          </div>
+          ${selection.excluded.length ? `<div class="acc-notice"><strong>No se borrarán ${selection.excluded.length} movimientos.</strong><br>Quedarán excluidos y podrás recuperarlos después desde “Gestionar extracto”.</div>` : ''}
+        </section>
+      </form>`, '<button class="btn" data-close-modal>Cancelar</button><button class="btn btn-primary" type="submit" form="bank-import-form">Importar y continuar</button>', 'bank-import-modal');
+  }
   return modalFrame('Importar extracto bancario', `
     <form class="acc-form" id="bank-import-form">
       <div class="field"><label>Cuenta bancaria</label><select id="bank-account-select" required><option value="">Seleccionar</option>${state.bankAccounts.map(a=>`<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('')}</select></div>
       <div class="field"><label>Archivo CSV o XLSX</label><input type="file" id="bank-file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></div>
-      <div class="acc-notice">Columnas reconocidas: fecha, fecha valor, concepto/descripción, referencia, importe, saldo. También se admite Debe/Haber.</div>
-    </form>`, '<button class="btn btn-primary" type="submit" form="bank-import-form">Importar</button>');
+      <div class="acc-notice">Primero verás las fechas y cuántos movimientos entrarán. Columnas reconocidas: fecha, fecha valor, concepto/descripción, referencia, importe, saldo y Debe/Haber.</div>
+    </form>`, '<button class="btn" data-close-modal>Cancelar</button><button class="btn btn-primary" type="button" id="preview-bank-file">Revisar antes de importar</button>', 'bank-import-modal');
+}
+
+function renderBankImportManageModal() {
+  const batch = currentBankImportBatches().find(item => item.id === state.modal.batchId);
+  if (!batch) return modalFrame('Gestionar extracto', '<div class="acc-empty"><strong>Extracto no encontrado</strong>Puede que ya se haya deshecho.</div>', '<button class="btn" data-close-modal>Cerrar</button>');
+  const start = state.modal.start || batch.selected_start_on || batch.detected_start_on;
+  const end = state.modal.end || batch.selected_end_on || batch.detected_end_on;
+  const selection = bankImportSelection(batch.transactions, start, end);
+  const quarter = quarterRange(batch.detected_end_on);
+  const reviewedOutside = selection.excluded.filter(transaction => transaction.status !== 'pending').length;
+  return modalFrame('Gestionar extracto', `
+    <div class="bank-import-preview-file"><span class="bank-import-icon">XLS</span><div><strong>${escapeHtml(batch.file_name)}</strong><span>${escapeHtml(batch.account?.name || 'Cuenta bancaria')} · ${batch.row_count} movimientos · ${displayDate(batch.detected_start_on)} – ${displayDate(batch.detected_end_on)}</span></div></div>
+    <form class="acc-form bank-import-period-picker" id="bank-import-manage-form">
+      <div><h3>Periodo que quieres utilizar</h3><p>Lo excluido deja de aparecer en la revisión y no entra en los cálculos bancarios.</p></div>
+      <div class="bank-import-presets">
+        <button class="btn btn-small" type="button" data-bank-manage-preset="all">Usar todo</button>
+        <button class="btn btn-small" type="button" data-bank-manage-preset="quarter">Solo ${quarterLabel(quarter)}</button>
+      </div>
+      <div class="acc-form-grid">
+        <div class="field"><label>Desde</label><input type="date" id="bank-manage-start" value="${start}" min="${batch.detected_start_on}" max="${batch.detected_end_on}" required></div>
+        <div class="field"><label>Hasta</label><input type="date" id="bank-manage-end" value="${end}" min="${batch.detected_start_on}" max="${batch.detected_end_on}" required></div>
+      </div>
+      <div class="bank-import-selection-summary">
+        <div class="is-included"><strong>${selection.included.length}</strong><span>en uso</span></div>
+        <div class="${selection.excluded.length ? 'is-excluded' : ''}"><strong>${selection.excluded.length}</strong><span>fuera del periodo</span></div>
+      </div>
+      ${reviewedOutside ? `<div class="acc-notice"><strong>${reviewedOutside} movimiento${reviewedOutside === 1 ? '' : 's'} ya revisado${reviewedOutside === 1 ? '' : 's'} quedará fuera.</strong><br>Su factura, conciliación o asiento seguirá guardado en el historial.</div>` : ''}
+      <div class="acc-notice acc-success"><strong>La exclusión se puede deshacer.</strong><br>Vuelve a “Usar todo” para recuperar los movimientos pendientes.</div>
+    </form>
+    <section class="bank-import-danger-zone"><div><strong>Deshacer esta importación</strong><span>${batch.canUndo ? 'Elimina estos movimientos; después podrás volver a subir el archivo.' : 'No está disponible porque ya hay movimientos revisados.'}</span></div><button class="btn btn-danger" id="undo-bank-import" ${batch.canUndo ? '' : 'disabled'}>Deshacer importación</button></section>
+  `, '<button class="btn" data-close-modal>Cerrar</button><button class="btn btn-primary" type="submit" form="bank-import-manage-form">Guardar periodo</button>', 'bank-import-modal');
 }
 
 function renderBankAccountModal() {
@@ -1674,6 +1784,16 @@ function wireEvents() {
     if (item) openDriveDocumentReview(item);
   }));
   document.querySelector('#import-bank-btn')?.addEventListener('click', () => openModal({ type: 'bank-import' }));
+  document.querySelector('#import-bank-inline-btn')?.addEventListener('click', () => openModal({ type: 'bank-import' }));
+  document.querySelectorAll('[data-manage-bank-import]').forEach(button => button.addEventListener('click', () => {
+    const batch = currentBankImportBatches().find(item => item.id === button.dataset.manageBankImport);
+    if (batch) openModal({
+      type: 'bank-import-manage',
+      batchId: batch.id,
+      start: batch.selected_start_on || batch.detected_start_on,
+      end: batch.selected_end_on || batch.detected_end_on
+    });
+  }));
   document.querySelector('#new-bank-account-btn')?.addEventListener('click', () => openModal({ type: 'bank-account' }));
   document.querySelector('#suggest-matches-btn')?.addEventListener('click', suggestMatches);
   document.querySelectorAll('[data-reconciliation-filter]').forEach(button => button.addEventListener('click', () => {
@@ -1772,6 +1892,50 @@ function wireModal() {
     input.addEventListener('change', refreshDocumentCalculations);
   });
   document.querySelector('#bank-import-form')?.addEventListener('submit', importBankFile);
+  document.querySelector('#bank-file')?.addEventListener('change', prepareBankImportPreview);
+  document.querySelector('#preview-bank-file')?.addEventListener('click', prepareBankImportPreview);
+  document.querySelector('#change-bank-file')?.addEventListener('click', () => {
+    state.modal.preview = null;
+    state.modal.start = '';
+    state.modal.end = '';
+    renderApp();
+  });
+  document.querySelector('#bank-account-select')?.addEventListener('change', event => {
+    if (state.modal?.type === 'bank-import') state.modal.accountId = event.currentTarget.value;
+  });
+  document.querySelectorAll('[data-bank-import-preset]').forEach(button => button.addEventListener('click', () => {
+    const preview = state.modal.preview;
+    const range = button.dataset.bankImportPreset === 'quarter'
+      ? clampBankImportRange(quarterRange(preview.range.end), preview.range)
+      : preview.range;
+    state.modal.start = range.start;
+    state.modal.end = range.end;
+    renderApp();
+  }));
+  ['start', 'end'].forEach(field => document.querySelector(`#bank-import-${field}`)?.addEventListener('change', event => {
+    state.modal[field] = event.currentTarget.value;
+    renderApp();
+  }));
+  document.querySelector('#bank-import-manage-form')?.addEventListener('submit', saveBankImportPeriod);
+  document.querySelectorAll('[data-bank-manage-preset]').forEach(button => button.addEventListener('click', () => {
+    const batch = currentBankImportBatches().find(item => item.id === state.modal.batchId);
+    if (!batch) return;
+    const range = button.dataset.bankManagePreset === 'quarter' ? clampBankImportRange(quarterRange(batch.detected_end_on), {
+      start: batch.detected_start_on,
+      end: batch.detected_end_on
+    }) : {
+      start: batch.detected_start_on,
+      end: batch.detected_end_on
+    };
+    state.modal.start = range.start;
+    state.modal.end = range.end;
+    renderApp();
+  }));
+  ['start', 'end'].forEach(field => document.querySelector(`#bank-manage-${field}`)?.addEventListener('change', event => {
+    state.modal[field] = event.currentTarget.value;
+    renderApp();
+  }));
+  document.querySelector('#undo-bank-import')?.addEventListener('click', undoBankImport);
   document.querySelector('#bank-account-form')?.addEventListener('submit', saveBankAccount);
   document.querySelector('#tax-form')?.addEventListener('submit', generateTaxDraft);
   document.querySelector('#entry-form')?.addEventListener('submit', saveEntry);
@@ -2590,27 +2754,93 @@ async function sha256(text) {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
+async function sha256Buffer(buffer) {
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function prepareBankImportPreview(event) {
+  event?.preventDefault?.();
+  try {
+    const input = document.querySelector('#bank-file');
+    const file = input?.files?.[0];
+    if (!file) return toast('Elige primero un archivo CSV o XLSX.', 'error');
+    const accountId = document.querySelector('#bank-account-select')?.value || state.modal.accountId || '';
+    const buffer = await file.arrayBuffer();
+    const rows = file.name.toLowerCase().endsWith('.xlsx')
+      ? parseXlsx(buffer)
+      : parseCsv(new TextDecoder('utf-8').decode(buffer));
+    const mapped = mapBankRows(rows);
+    if (!mapped.length) throw new Error('No se encontraron movimientos con fecha e importe reconocibles.');
+    const selection = bankImportSelection(mapped);
+    state.modal = {
+      ...state.modal,
+      accountId,
+      preview: {
+        rows: mapped,
+        range: selection.range,
+        fileName: file.name,
+        fileSize: file.size,
+        checksum: await sha256Buffer(buffer)
+      },
+      start: selection.range.start,
+      end: selection.range.end
+    };
+    renderApp();
+  } catch (error) {
+    toast(error.message || 'No se pudo leer el extracto.', 'error');
+  }
+}
+
 async function importBankFile(event) {
   event.preventDefault();
+  if (!state.modal?.preview) return prepareBankImportPreview(event);
   try {
-    const file = document.querySelector('#bank-file').files[0];
-    const rows = file.name.toLowerCase().endsWith('.xlsx')
-      ? parseXlsx(await file.arrayBuffer())
-      : parseCsv(await file.text());
-    const mapped = mapBankRows(rows);
+    const preview = state.modal.preview;
+    const mapped = preview.rows;
     const accountId = document.querySelector('#bank-account-select').value;
+    const selection = bankImportSelection(mapped, state.modal.start, state.modal.end);
+    if (!accountId) throw new Error('Selecciona la cuenta bancaria.');
+    if (!selection.included.length) throw new Error('El periodo elegido no contiene ningún movimiento.');
     const batch = uuid();
     const payload = [];
     for (const item of mapped) {
       payload.push({
         ...item, business_id: state.business.id, bank_account_id: accountId,
         fingerprint: await sha256([accountId,item.booked_on,item.amount,item.description,item.reference].join('|')),
-        import_batch: batch, raw_payload: item
+        import_batch: batch,
+        review_scope: item.booked_on >= selection.selectedStart && item.booked_on <= selection.selectedEnd ? 'included' : 'excluded',
+        excluded_at: item.booked_on >= selection.selectedStart && item.booked_on <= selection.selectedEnd ? null : new Date().toISOString(),
+        exclusion_reason: item.booked_on >= selection.selectedStart && item.booked_on <= selection.selectedEnd ? null : 'Fuera del periodo elegido al importar',
+        raw_payload: item
       });
     }
     const { data, error } = await state.client.from('accounting_bank_transactions')
       .upsert(payload, { onConflict: 'business_id,fingerprint', ignoreDuplicates: true }).select();
     if (error) throw error;
+    const importedCount = data?.length || 0;
+    const excludedCount = (data || []).filter(item => item.review_scope === 'excluded').length;
+    const duplicateCount = Math.max(0, mapped.length - importedCount);
+    if (importedCount) {
+      const { error: importError } = await state.client.from('accounting_bank_imports').insert({
+        id: batch,
+        business_id: state.business.id,
+        bank_account_id: accountId,
+        file_name: preview.fileName,
+        file_size: preview.fileSize,
+        file_checksum: preview.checksum,
+        detected_start_on: preview.range.start,
+        detected_end_on: preview.range.end,
+        selected_start_on: selection.selectedStart,
+        selected_end_on: selection.selectedEnd,
+        row_count: mapped.length,
+        imported_count: importedCount,
+        duplicate_count: duplicateCount,
+        excluded_count: excludedCount,
+        status: excludedCount === importedCount ? 'excluded' : excludedCount ? 'partially_excluded' : 'active'
+      });
+      if (importError) console.warn('No se pudo guardar el nombre del extracto:', importError.message);
+    }
     let matchCount = 0;
     try { matchCount = Number(await rpc('accounting_suggest_reconciliations')) || 0; } catch { /* La bandeja seguirá funcionando sin sugerencias. */ }
     state.modal = null;
@@ -2619,9 +2849,50 @@ async function importBankFile(event) {
     state.bankWorkFilter = 'all';
     state.bankReviewSearch = '';
     state.bankReviewDirection = 'all';
-    toast(`${data?.length || 0} movimientos nuevos · ${matchCount} facturas posibles encontradas.`);
+    toast(`${importedCount} nuevos · ${excludedCount} fuera del periodo · ${duplicateCount} duplicados · ${matchCount} facturas posibles.`);
     await loadAll();
   } catch (error) { toast(error.message, 'error'); }
+}
+
+async function saveBankImportPeriod(event) {
+  event.preventDefault();
+  const start = document.querySelector('#bank-manage-start')?.value;
+  const end = document.querySelector('#bank-manage-end')?.value;
+  const button = document.querySelector('button[form="bank-import-manage-form"]');
+  if (button) button.disabled = true;
+  try {
+    const result = await rpc('accounting_set_bank_import_period', {
+      p_import_batch: state.modal.batchId,
+      p_start: start,
+      p_end: end
+    });
+    state.modal = null;
+    await loadAll();
+    const reviewedText = Number(result?.reviewed_outside_count || 0)
+      ? ` · ${result.reviewed_outside_count} revisados conservaron su historial`
+      : '';
+    toast(`${result.included_count} movimientos en uso · ${result.excluded_count} excluidos${reviewedText}.`);
+  } catch (error) {
+    if (button) button.disabled = false;
+    toast(error.message || 'No se pudo guardar el periodo.', 'error');
+  }
+}
+
+async function undoBankImport() {
+  const batch = currentBankImportBatches().find(item => item.id === state.modal?.batchId);
+  if (!batch?.canUndo) return;
+  if (!window.confirm(`Se eliminarán ${batch.row_count} movimientos de “${batch.file_name}”. Podrás volver a importar el archivo. ¿Continuar?`)) return;
+  const button = document.querySelector('#undo-bank-import');
+  if (button) button.disabled = true;
+  try {
+    const result = await rpc('accounting_undo_bank_import', { p_import_batch: batch.id });
+    state.modal = null;
+    await loadAll();
+    toast(`Importación deshecha: ${result.deleted_count} movimientos eliminados.`);
+  } catch (error) {
+    if (button) button.disabled = false;
+    toast(error.message || 'No se pudo deshacer la importación.', 'error');
+  }
 }
 
 async function generateTaxDraft(event) {
@@ -3135,6 +3406,12 @@ function renderBankWorkspacePreview() {
   state.business = { id: 'preview-business', name: 'Esencia Café' };
   state.view = 'treasury';
   state.bankAccounts = [{ id: 'bank-main', name: 'BBVA principal', iban_last4: '1842' }];
+  state.bankImports = [{
+    id: 'preview-batch', bank_account_id: 'bank-main', file_name: 'BBVA mayo-julio.xlsx',
+    detected_start_on: '2026-05-25', detected_end_on: '2026-08-08',
+    selected_start_on: '2026-07-01', selected_end_on: '2026-09-30',
+    row_count: 6, excluded_count: 1, status: 'partially_excluded', created_at: new Date().toISOString()
+  }];
   state.documents = [
     { id: 'invoice-ready', direction: 'purchase', status: 'approved', number: 'F-2026-184', issue_date: '2026-08-07', total_amount: 259.2, paid_amount: 0, accounting_contacts: { name: 'Proveedor Atlántico' } },
     { id: 'invoice-possible', direction: 'purchase', status: 'approved', number: 'A-8841', issue_date: '2026-08-05', total_amount: 80, paid_amount: 0, accounting_contacts: { name: 'Suministros Canarias' } }
@@ -3144,8 +3421,9 @@ function renderBankWorkspacePreview() {
     { id: 'bank-possible', bank_account_id: 'bank-main', status: 'pending', booked_on: '2026-08-07', value_on: '2026-08-07', amount: -80, balance: 10500, description: 'SUMINISTROS CANARIAS', reference: 'PAGO TARJETA' },
     { id: 'bank-missing', bank_account_id: 'bank-main', status: 'pending', booked_on: '2026-08-06', value_on: '2026-08-06', amount: -45.3, balance: 10580, description: 'COMPRA MATERIAL LOCAL', reference: 'TARJETA 4832' },
     { id: 'bank-square', bank_account_id: 'bank-main', status: 'pending', booked_on: '2026-08-05', value_on: '2026-08-05', amount: 640.5, balance: 10625.3, description: 'LIQUIDACION REMESA DE COMERCIOS', reference: 'SQUARE' },
-    { id: 'bank-done', bank_account_id: 'bank-main', status: 'matched', booked_on: '2026-08-04', value_on: '2026-08-04', amount: -2.82, balance: 9984.8, description: 'COMISION SERVICIO BANCARIO', reference: '' }
-  ];
+    { id: 'bank-done', bank_account_id: 'bank-main', status: 'matched', booked_on: '2026-08-04', value_on: '2026-08-04', amount: -2.82, balance: 9984.8, description: 'COMISION SERVICIO BANCARIO', reference: '' },
+    { id: 'bank-june', bank_account_id: 'bank-main', status: 'pending', booked_on: '2026-06-20', value_on: '2026-06-20', amount: -32.5, balance: 9900, description: 'MOVIMIENTO ANTIGUO', reference: '', review_scope: 'excluded' }
+  ].map(item => ({ ...item, import_batch: 'preview-batch', review_scope: item.review_scope || 'included' }));
   state.reconciliations = [{ id: 'match-ready', bank_transaction_id: 'bank-ready', document_id: 'invoice-ready', amount: 259.2, status: 'suggested', score: 98, reason: 'Importe, fecha y referencia compatibles' }];
   state.bankReviews = [
     { id: 'review-missing', bank_transaction_id: 'bank-missing', classification: 'awaiting_document', status: 'waiting_document', notes: 'Pedir factura al proveedor', revision: 1, reviewed_at: new Date().toISOString() },

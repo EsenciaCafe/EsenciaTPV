@@ -1,3 +1,5 @@
+import { isBankTransactionIncluded } from './bankImports.js';
+
 export const BANK_CLASSIFICATIONS = [
   {
     value: 'tpv_card_settlement',
@@ -155,7 +157,9 @@ export function pendingBankTransactions({
     .map(item => item.bank_transaction_id));
   const term = normalize(search);
   return transactions
-    .filter(transaction => transaction.status === 'pending' && !activeBankIds.has(transaction.id))
+    .filter(transaction => transaction.status === 'pending'
+      && isBankTransactionIncluded(transaction)
+      && !activeBankIds.has(transaction.id))
     .filter(transaction => direction === 'all' || bankDirection(transaction) === direction)
     .filter(transaction => !term || normalize(`${transaction.description} ${transaction.reference} ${transaction.amount}`).includes(term));
 }
