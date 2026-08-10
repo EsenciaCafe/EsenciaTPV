@@ -632,6 +632,22 @@ export async function createFiscalDocumentForSale(transaction) {
   return mapFiscalDocument(data);
 }
 
+export async function finalizeOnlineSale(transaction) {
+  if (!transaction?.id) return null;
+
+  const { data, error } = await supabase.rpc('finalize_tpv_sale', {
+    p_transaction: transaction
+  });
+
+  if (error) {
+    notifyDbError('finalizeOnlineSale', error.message);
+    return null;
+  }
+
+  const document = Array.isArray(data) ? data[0] : data;
+  return document ? mapFiscalDocument(document) : null;
+}
+
 export async function applyOfflineBatch(deviceId, sessionId, operations = []) {
   if (!deviceId || !Array.isArray(operations) || operations.length === 0) return [];
   if (operations.length > 50) throw new Error('La sincronizacion admite un maximo de 50 operaciones por lote.');

@@ -10,10 +10,12 @@ import {
   loadTPVState,
   saveTPVState,
   upsertReceiptTicket,
+  upsertSaleRecord,
+  finalizeOnlineSale,
   loadSalesByDateRange,
   loadSaleById,
-  createFiscalDocumentForSale,
   loadCashClosures,
+  upsertCashClosure,
   loadSquareGiftCardEvents,
   setOfflineDeviceDesignation,
   loadStaffProfiles,
@@ -54,6 +56,8 @@ import { SyncCoordinator } from './syncCoordinator.js';
 const DINING_STATE_STORAGE_KEY = 'tpv-dining-state-v1';
 const STAFF_SESSION_STORAGE_KEY = 'tpv-staff-session-v1';
 const SYNC_CLIENT_STORAGE_KEY = 'tpv-sync-client-id-v1';
+
+const wait = (delay) => new Promise(resolve => setTimeout(resolve, delay));
 
 function formatLocalDateKey(date = new Date()) {
   const value = new Date(date);
@@ -679,13 +683,14 @@ class Store {
     const remoteSnapshot = JSON.stringify(remotePayload);
     if (!remote || remoteSnapshot === this.lastRemotePersistSnapshot) return;
 
-    if (this.isEmergencyMode() || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+    if (this.isEmergencyMode()) {
       void queueSharedState(remotePayload, {
         deviceId: this.state.offline.deviceId,
         sessionId: this.state.offline.sessionId
       }).then(() => this.refreshOfflineReadiness({ notify: false }));
       return;
     }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
 
     this.pendingRemotePersist = { payload: remotePayload, snapshot: remoteSnapshot };
     if (this.remotePersistTimer) clearTimeout(this.remotePersistTimer);
@@ -1206,16 +1211,27 @@ class Store {
     const snapshot = typeof structuredClone === 'function'
       ? structuredClone(transaction)
       : JSON.parse(JSON.stringify(transaction));
+    const useEmergencyPersistence = this.isEmergencyMode();
     const previousWrite = this.pendingSaleWrites.get(transactionId) || Promise.resolve();
     const write = previousWrite
       .catch(() => null)
-      .then(() => persistSaleLocally(snapshot, {
-        deviceId: this.state.offline.deviceId,
-        sessionId: this.state.offline.sessionId
-      }))
-      .then(result => result?.id || transactionId)
+      .then(() => {
+        if (useEmergencyPersistence) {
+          return persistSaleLocally(snapshot, {
+            deviceId: this.state.offline.deviceId,
+            sessionId: this.state.offline.sessionId
+          });
+        }
+        if (!this.salesPersistenceReady) return null;
+        return upsertSaleRecord(snapshot);
+      })
+      .then(result => {
+        const persistedId = useEmergencyPersistence ? (result?.id || transactionId) : result;
+        if (persistedId && !useEmergencyPersistence) this.broadcastSaleChange(snapshot);
+        return persistedId;
+      })
       .catch(err => {
-        console.error('[Store] No se pudo guardar la venta localmente.', err);
+        console.error(`[Store] No se pudo guardar la venta ${useEmergencyPersistence ? 'localmente' : 'en Supabase'}.`, err);
         return null;
       });
 
@@ -1223,9 +1239,13 @@ class Store {
     void write.finally(() => {
       if (this.pendingSaleWrites.get(transactionId) !== write) return;
       this.pendingSaleWrites.delete(transactionId);
-      void this.refreshOfflineReadiness({ notify: false });
-      if (typeof navigator === 'undefined' || navigator.onLine !== false) {
-        this.syncCoordinator.schedule(50);
+      if (useEmergencyPersistence) {
+        void this.refreshOfflineReadiness({ notify: false });
+        if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+          this.syncCoordinator.schedule(50);
+        }
+      } else {
+        this.scheduleSalesRefresh(120, transactionId);
       }
     });
     return write;
@@ -1253,9 +1273,7 @@ class Store {
     const currentTx = this.state.transactions[txIndex];
     if (currentTx.fiscalData?.fiscalNumber) return currentTx.fiscalData;
 
-    await this.persistSaleRecord(currentTx);
-    await this.syncCoordinator.flush();
-    const fiscalData = await createFiscalDocumentForSale(currentTx);
+    const fiscalData = await this.finalizeOnlineSaleWithRetry(currentTx);
     if (!fiscalData?.fiscalNumber) return null;
 
     const updatedTx = {
@@ -1264,13 +1282,40 @@ class Store {
     };
     this.state.transactions[txIndex] = updatedTx;
 
-    await this.persistSaleRecord(updatedTx);
     if (updatedTx.receiptToken) {
       this.publishReceiptTicket(updatedTx);
     }
 
     this.notify({ source: 'background-fiscal' });
     return fiscalData;
+  }
+
+  async finalizeOnlineSaleWithRetry(transaction, attempts = 3) {
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const fiscalData = await finalizeOnlineSale(transaction);
+      if (fiscalData?.fiscalNumber) return fiscalData;
+      if (attempt < attempts) await wait(250 * (2 ** (attempt - 1)));
+    }
+    return null;
+  }
+
+  getOrCreateCheckoutAttemptId(orderFingerprint) {
+    const target = this.state.selectedTableId !== null
+      ? this.state.tables.find(table => table.id === this.state.selectedTableId)
+      : this.state.directSaleTicket;
+    const existing = target?.checkoutAttempt;
+    if (existing?.orderFingerprint === orderFingerprint && existing?.transactionId) {
+      return existing.transactionId;
+    }
+
+    const checkoutAttempt = {
+      transactionId: createUuid('TX'),
+      orderFingerprint,
+      createdAt: new Date().toISOString()
+    };
+    if (target) target.checkoutAttempt = checkoutAttempt;
+    this.persistDiningState({ remote: false });
+    return checkoutAttempt.transactionId;
   }
 
   ensureTransactionReceiptToken(transactionId) {
@@ -2046,23 +2091,28 @@ class Store {
       closedAt: new Date().toISOString()
     };
 
-    await persistClosureLocally(closure, {
-      deviceId: this.state.offline.deviceId,
-      sessionId: this.state.offline.sessionId
-    });
-    const closureIndex = this.state.cashClosures.findIndex(item => item.id === closure.id);
-    if (closureIndex >= 0) this.state.cashClosures[closureIndex] = closure;
-    else this.state.cashClosures.unshift(closure);
-    await cacheClosuresSnapshot(this.state.cashClosures);
-    if (this.canUseExternalServices()) {
+    if (this.isEmergencyMode()) {
+      await persistClosureLocally(closure, {
+        deviceId: this.state.offline.deviceId,
+        sessionId: this.state.offline.sessionId
+      });
+      const closureIndex = this.state.cashClosures.findIndex(item => item.id === closure.id);
+      if (closureIndex >= 0) this.state.cashClosures[closureIndex] = closure;
+      else this.state.cashClosures.unshift(closure);
+      await cacheClosuresSnapshot(this.state.cashClosures);
+      await this.refreshOfflineReadiness({ notify: false });
       this.syncCoordinator.schedule(50);
+    } else {
+      if (!this.canUseExternalServices()) return false;
+      const closureId = await upsertCashClosure(closure);
+      if (!closureId) return false;
+      await this.loadCashClosures();
       try {
         await notifyTelegramCashClosure(closure);
       } catch (error) {
         console.warn('[Cierre] Guardado, pero no se pudo enviar el resumen privado.', error);
       }
     }
-    await this.refreshOfflineReadiness({ notify: false });
     this.notify();
     return true;
   }
@@ -3139,7 +3189,7 @@ class Store {
 
     const dateNow = new Date();
     const tipAmount = Math.max(0, Number(options.tipAmount || 0));
-    const txId = createUuid('TX');
+    const txId = this.getOrCreateCheckoutAttemptId(orderFingerprint);
     const dateStr = `${String(dateNow.getDate()).padStart(2, '0')}/${String(dateNow.getMonth() + 1).padStart(2, '0')}/${dateNow.getFullYear()}`;
     const timeStr = `${String(dateNow.getHours()).padStart(2, '0')}:${String(dateNow.getMinutes()).padStart(2, '0')}`;
     
@@ -3184,14 +3234,20 @@ class Store {
       transaction.fiscalData = fiscalData;
       transaction.offlineSessionId = this.state.offline.sessionId;
       transaction.syncStatus = 'pending';
+      const persistedId = await this.persistSaleRecord(transaction);
+      if (!persistedId) return null;
+    } else {
+      const fiscalData = await this.finalizeOnlineSaleWithRetry(transaction);
+      if (!fiscalData?.fiscalNumber) return null;
+      transaction.fiscalData = fiscalData;
     }
-
-    const persistedId = await this.persistSaleRecord(transaction);
-    if (!persistedId) return null;
 
     this.state.transactions.unshift(transaction);
     if (this.canUseExternalServices()) this.publishReceiptTicket(transaction);
-    if (!this.isEmergencyMode()) void this.ensureFiscalDocument(transaction.id);
+    if (!this.isEmergencyMode()) {
+      this.broadcastSaleChange(transaction);
+      this.scheduleSalesRefresh(120, transaction.id);
+    }
 
     if (this.state.selectedTableId !== null) {
       const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
@@ -3380,6 +3436,12 @@ class Store {
       if (!refundTx.fiscalData) return null;
       refundTx.offlineSessionId = this.state.offline.sessionId;
       refundTx.syncStatus = 'pending';
+      const refundPersisted = await this.persistSaleRecord(refundTx);
+      if (!refundPersisted) return null;
+    } else {
+      const fiscalData = await this.finalizeOnlineSaleWithRetry(refundTx);
+      if (!fiscalData?.fiscalNumber) return null;
+      refundTx.fiscalData = fiscalData;
     }
 
     // Mark the original transaction
@@ -3393,10 +3455,12 @@ class Store {
     }
 
     const parentPersisted = await this.persistSaleRecord(this.state.transactions[parentIdx] || parent);
-    const refundPersisted = await this.persistSaleRecord(refundTx);
-    if (!parentPersisted || !refundPersisted) return null;
+    if (!parentPersisted) return null;
     this.state.transactions.unshift(refundTx);
-    if (!this.isEmergencyMode()) void this.ensureFiscalDocument(refundTx.id);
+    if (!this.isEmergencyMode()) {
+      this.broadcastSaleChange(refundTx);
+      this.scheduleSalesRefresh(120, refundTx.id);
+    }
     this.notify();
     return refundTx;
   }

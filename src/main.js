@@ -1075,8 +1075,7 @@ function renderOfflineBanner(state = store.state) {
   if (offline.designated) {
     return `
       <div class="offline-banner">
-        <div><strong>Sin conexión con Supabase</strong><span>Activa la emergencia para seguir cobrando desde este dispositivo.</span></div>
-        <button class="offline-banner__button" id="offline-activate-btn">Activar</button>
+        <div><strong>Sin conexión con Supabase</strong><span>Los cobros están bloqueados. Un responsable puede activar Emergencia desde Ajustes.</span></div>
       </div>`;
   }
   return `
@@ -1710,6 +1709,8 @@ function renderAjustesView(state) {
                 <span>Conflictos <strong>${state.offline.conflicts || 0}</strong></span>
               </div>
               <div class="offline-readiness-actions">
+                ${state.offline.designated && state.offline.degraded && state.offline.mode !== 'emergency' ? `
+                  <button class="btn btn-primary" id="offline-settings-activate-btn">Activar Emergencia</button>` : ''}
                 ${store.state.auth.role === 'admin' ? `
                   <button class="btn btn-secondary" id="offline-designate-btn">
                     ${state.offline.designated ? 'Quitar designación' : 'Designar este TPV'}
@@ -5108,7 +5109,7 @@ function downloadEmergencyBackup() {
 }
 
 function bindOfflineControls(container = document) {
-  const activate = container.querySelector('#offline-activate-btn');
+  const activate = container.querySelector('#offline-settings-activate-btn');
   if (activate) activate.addEventListener('click', requestEmergencyActivation);
 
   const sync = container.querySelector('#offline-sync-now-btn, #offline-settings-sync-btn');
@@ -5772,7 +5773,7 @@ function showPaymentModal(totalAmount) {
     }
 
     if (!transaction) {
-      showToast('No se pudo guardar la venta localmente. La comanda sigue abierta.', 'error');
+      showToast('No se pudo confirmar y fiscalizar la venta. La comanda sigue abierta para reintentarlo.', 'error');
       return null;
     }
 
