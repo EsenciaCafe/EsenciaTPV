@@ -28,6 +28,20 @@ export const BANK_CLASSIFICATIONS = [
     keywords: [/traspaso a cuenta/, /retirada titular/]
   },
   {
+    value: 'internal_transfer',
+    label: 'Traspaso entre cuentas propias',
+    directions: ['in', 'out'],
+    effect: 'Mueve dinero entre cuentas del negocio. No crea un ingreso, un gasto ni impuestos.',
+    keywords: [/transferencia interna/, /traspaso entre cuentas/, /traspaso cuenta propia/]
+  },
+  {
+    value: 'loan_payment',
+    label: 'Cuota de préstamo',
+    directions: ['out'],
+    effect: 'No convierte toda la cuota en gasto. La deja identificada para separar capital, intereses y comisiones.',
+    keywords: [/prestamo/, /cuota.*credito/, /amortizacion.*prestamo/]
+  },
+  {
     value: 'tax_payment',
     label: 'Pago de impuestos',
     directions: ['out'],
@@ -47,6 +61,21 @@ export const BANK_CLASSIFICATIONS = [
     directions: ['out'],
     effect: 'Crea un gasto pagado sin IGIC y lo incluye en la rentabilidad.',
     keywords: [/seguridad social/, /tgss/]
+  },
+  {
+    value: 'payroll',
+    label: 'Nómina o salario',
+    directions: ['out'],
+    effect: 'Registra el pago salarial sin IGIC y lo incluye como gasto de personal.',
+    keywords: [/nomina/, /salario/, /pago.*personal/]
+  },
+  {
+    value: 'awaiting_document',
+    label: 'Pendiente de factura',
+    directions: ['out'],
+    effect: 'Mantiene el pago pendiente y no deduce gasto ni IGIC hasta que vincules un justificante.',
+    keywords: [],
+    hidden: true
   },
   {
     value: 'expense_without_invoice',
@@ -91,7 +120,7 @@ export function classificationDefinition(value) {
 
 export function classificationsForTransaction(transaction = {}) {
   const direction = bankDirection(transaction);
-  return BANK_CLASSIFICATIONS.filter(item => item.directions.includes(direction));
+  return BANK_CLASSIFICATIONS.filter(item => !item.hidden && item.directions.includes(direction));
 }
 
 export function suggestBankClassification(transaction = {}) {

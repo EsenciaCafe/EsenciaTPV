@@ -27,6 +27,7 @@ import {
   pendingBankTransactions,
   suggestBankClassification
 } from './bankReview.js';
+import { buildBankWorkspace, bankWorkspaceStatus } from './bankWorkspace.js';
 import {
   GOOGLE_DRIVE_SCOPE,
   driveFileUrl,
@@ -39,6 +40,12 @@ import {
   reviewableSupplierDocument,
   validateSupplierDocument
 } from './driveInvoices.js';
+import {
+  RECURRING_FREQUENCIES,
+  buildRecurringExpenseReview,
+  recurringFrequencyLabel
+} from './recurringExpenses.js';
+import { buildControlCenter } from './controlCenter.js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -67,6 +74,7 @@ const state = {
   profitabilityFilter: 'pending',
   reconciliationFilter: 'suggested',
   bankReviewView: 'pending',
+  bankWorkFilter: 'all',
   bankReviewDirection: 'all',
   bankReviewSearch: '',
   bankReviewPage: 1,
@@ -87,6 +95,8 @@ const state = {
   driveSources: [],
   driveImports: [],
   profitabilityAnalyses: [],
+  recurringExpenses: [],
+  recurringExpenseOccurrences: [],
   driveFiles: [],
   driveFolders: {},
   driveResultPrivacy: null,
@@ -311,20 +321,23 @@ async function loadAll() {
     query('accounting_tax_periods', '*', { column: 'starts_on', ascending: false }),
     query('accounting_drive_sources').limit(1),
     query('accounting_drive_imports', '*, bookkeeping_documents(number,status,total_amount,accounting_contacts(name))', { column: 'created_at', ascending: false }).limit(500),
-    query('accounting_document_analysis')
+    query('accounting_document_analysis'),
+    query('accounting_recurring_expenses', '*, accounting_contacts(name)', { column: 'name', ascending: true }),
+    query('accounting_recurring_expense_occurrences', '*', { column: 'expected_on', ascending: false })
   ]);
   const failed = results.find(result => result.error);
   if (failed) throw failed.error;
   [
     state.business, state.documents, state.contacts, state.bankAccounts,
     state.bankTransactions, state.reconciliations, state.bankReviews, state.accounts, state.journalEntries, state.journalLines,
-    state.taxDrafts, state.taxPeriods, state.driveSources, state.driveImports, state.profitabilityAnalyses
+    state.taxDrafts, state.taxPeriods, state.driveSources, state.driveImports, state.profitabilityAnalyses,
+    state.recurringExpenses, state.recurringExpenseOccurrences
   ] = [
     results[0].data?.[0] || null, results[1].data || [], results[2].data || [],
     results[3].data || [], results[4].data || [], results[5].data || [], results[6].data || [],
     results[7].data || [], results[8].data || [], results[9].data || [],
     results[10].data || [], results[11].data || [], results[12].data || [], results[13].data || [],
-    results[14].data || []
+    results[14].data || [], results[15].data || [], results[16].data || []
   ];
   state.loading = false;
   renderApp();
@@ -388,6 +401,133 @@ function renderView() {
   return (views[state.view] || renderDashboard)();
 }
 
+function currentRecurringReview() {
+  return buildRecurringExpenseReview({
+    expenses: state.recurringExpenses,
+    occurrences: state.recurringExpenseOccurrences,
+    documents: state.documents,
+    anchor: new Date(),
+    lookbackMonths: 1
+  });
+}
+
+function recurringStatus(item) {
+  const definitions = {
+    missing: ['danger', 'Falta la factura'],
+    pending: ['warning', 'Pendiente de revisar'],
+    upcoming: ['', 'Próximo'],
+    accounted: ['success', 'Contabilizado'],
+    skipped: ['', 'No corresponde']
+  };
+  return definitions[item.status] || definitions.upcoming;
+}
+
+function renderRecurringExpensesWidget() {
+  const review = currentRecurringReview();
+  const today = new Date();
+  const currentKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const visible = review.items.filter(item => item.status === 'missing' || item.periodKey === currentKey).slice(0, 6);
+  const actionCount = review.summary.missing + review.summary.pending;
+  if (!state.recurringExpenses.length) {
+    return `<section class="acc-card recurring-widget recurring-widget-empty">
+      <div class="acc-card-head"><div><h2>Gastos habituales</h2><small>Evita que falte un gasto en tus cuentas</small></div></div>
+      <div class="acc-card-body recurring-empty">
+        <span>↻</span><div><strong>¿Qué pagas todos los meses?</strong><p>Añade alquiler, luz, gestoría, seguros o software. Te avisaremos si no aparece su factura.</p></div>
+        <button class="btn btn-primary" id="add-first-recurring-expense">Añadir el primero</button>
+      </div>
+    </section>`;
+  }
+  return `<section class="acc-card recurring-widget">
+    <div class="acc-card-head">
+      <div><h2>Gastos habituales</h2><small>Este mes y facturas atrasadas</small></div>
+      <div class="acc-actions"><span class="badge ${actionCount ? 'warning' : ''}">${actionCount ? `${actionCount} por resolver` : 'Al día'}</span><button class="btn btn-small" id="manage-recurring-expenses">Configurar</button></div>
+    </div>
+    <div class="recurring-summary">
+      <div class="${review.summary.missing ? 'is-danger' : ''}"><strong>${review.summary.missing}</strong><span>faltan</span></div>
+      <div class="${review.summary.pending ? 'is-warning' : ''}"><strong>${review.summary.pending}</strong><span>por revisar</span></div>
+      <div><strong>${review.summary.accounted}</strong><span>guardados</span></div>
+    </div>
+    <div class="recurring-list">${visible.length ? visible.map(item => {
+      const [tone, label] = recurringStatus(item);
+      const documentAction = item.document
+        ? `<button class="btn btn-small" data-edit-document="${item.document.id}">Ver factura</button>`
+        : item.status === 'skipped'
+          ? `<button class="btn btn-small" data-restore-recurring="${item.expense.id}" data-period-key="${item.periodKey}">Restaurar</button>`
+          : `<button class="btn btn-primary btn-small" data-create-recurring-document="${item.expense.id}" data-period-key="${item.periodKey}">Guardar factura</button>
+             <button class="btn btn-small" data-skip-recurring="${item.expense.id}" data-period-key="${item.periodKey}">Este mes no</button>`;
+      return `<article class="recurring-row is-${item.status}">
+        <div class="recurring-date"><strong>${item.expectedOn.getDate()}</strong><span>${item.expectedOn.toLocaleDateString('es-ES',{month:'short'}).replace('.','')}</span></div>
+        <div class="recurring-name"><strong>${escapeHtml(item.expense.name)}</strong><span>${escapeHtml(item.expense.accounting_contacts?.name || recurringFrequencyLabel(item.expense.frequency))}${item.expectedAmount ? ` · aprox. ${money(item.expectedAmount)}` : ''}</span></div>
+        <span class="badge ${tone}">${label}</span>
+        <div class="recurring-actions">${documentAction}</div>
+      </article>`;
+    }).join('') : '<div class="acc-empty"><strong>No hay gastos previstos este mes.</strong>Puedes configurarlos cuando quieras.</div>'}</div>
+  </section>`;
+}
+
+function currentControlCenter() {
+  const profitability = buildProfitabilityAnalysis({
+    documents: state.documents,
+    analyses: state.profitabilityAnalyses,
+    period: state.dashboardPeriod
+  });
+  const bankWorkspace = buildBankWorkspace({
+    transactions: state.bankTransactions,
+    reconciliations: state.reconciliations,
+    reviews: state.bankReviews,
+    documents: state.documents
+  });
+  return buildControlCenter({
+    documents: state.documents,
+    recurringItems: currentRecurringReview().items,
+    driveItems: state.driveImports.map(item => ({
+      ...item,
+      reviewStatus: driveReviewStatus(item)
+    })),
+    pendingBankTransactions: pendingBankTransactions({
+      transactions: state.bankTransactions,
+      reconciliations: state.reconciliations
+    }),
+    bankQueue: bankWorkspace.allItems,
+    reconciliations: state.reconciliations,
+    unclassifiedCount: profitability.needsConfirmation.length,
+    recurringConfigured: state.recurringExpenses.length > 0,
+    bankAccounts: state.bankAccounts,
+    bankTransactions: state.bankTransactions
+  });
+}
+
+function renderControlCenter() {
+  const center = currentControlCenter();
+  const taskMarkup = center.tasks.length
+    ? `<div class="control-task-list">${center.tasks.map(task => `<article class="control-task ${task.tone ? `is-${task.tone}` : ''}">
+        <span class="control-task-icon" aria-hidden="true">${task.icon}</span>
+        <div class="control-task-copy"><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.detail)}</span></div>
+        <button class="btn ${task.tone === 'danger' ? 'btn-primary' : ''}" data-control-action="${task.action}" data-target-id="${task.targetId || ''}" data-period-key="${task.periodKey || ''}">${escapeHtml(task.actionLabel)}</button>
+      </article>`).join('')}</div>`
+    : `<div class="control-center-clear"><span aria-hidden="true">✓</span><div><strong>No queda nada urgente por hacer</strong><p>Las facturas, el banco y la rentabilidad están al día con los datos disponibles.</p></div></div>`;
+  return `<section class="acc-card control-center ${center.total ? '' : 'is-clear'}">
+    <div class="control-center-head">
+      <div>
+        <span class="control-center-kicker">TU MESA DE TRABAJO</span>
+        <h2>${center.total ? 'Qué necesita tu atención' : 'Todo está al día'}</h2>
+        <p>Resuelve lo importante desde aquí, sin buscarlo por los menús.</p>
+      </div>
+      <div class="control-center-total ${center.total ? 'has-pending' : ''}"><strong>${center.total}</strong><span>${center.total === 1 ? 'pendiente' : 'pendientes'}</span></div>
+    </div>
+    <div class="control-quick-actions" aria-label="Acciones rápidas">
+      <button data-control-quick="purchase"><span>＋</span><strong>Guardar gasto</strong><small>Factura o ticket</small></button>
+      <button data-control-quick="sale"><span>＋</span><strong>Crear factura</strong><small>Factura de venta</small></button>
+      <button data-control-quick="bank"><span>≋</span><strong>${state.bankTransactions.length ? 'Revisar banco' : 'Importar banco'}</strong><small>${state.bankTransactions.length ? 'Continuar por donde ibas' : 'CSV o Excel'}</small></button>
+      <button data-control-quick="drive"><span>↻</span><strong>Sincronizar Drive</strong><small>Traer análisis</small></button>
+      <button data-control-quick="recurring"><span>↻</span><strong>Gastos habituales</strong><small>Revisar y configurar</small></button>
+      <button data-control-quick="tax"><span>％</span><strong>Preparar IGIC</strong><small>Modelo 420</small></button>
+    </div>
+    ${taskMarkup}
+    <div class="control-areas">${center.areas.map(area => `<div class="${area.pending ? 'has-pending' : ''}"><span>${escapeHtml(area.label)}</span><strong>${area.pending ? `${area.pending} por hacer` : 'Al día'}</strong></div>`).join('')}</div>
+  </section>`;
+}
+
 function renderDashboard() {
   const snapshot = buildBusinessSnapshot({
     documents: state.documents,
@@ -415,12 +555,14 @@ function renderDashboard() {
         ${[['month','Mes'],['quarter','Trimestre'],['year','Año']].map(([value,label]) => `<button class="btn btn-small ${state.dashboardPeriod === value ? 'is-active' : ''}" data-dashboard-period="${value}">${label}</button>`).join('')}
       </div>
     </div>
+    ${renderControlCenter()}
     <div class="acc-grid acc-kpis">
       <div class="acc-kpi is-accent"><span>Ventas netas</span><strong>${money(snapshot.current.salesBase)}</strong>${variationMarkup(snapshot.changes.sales)}<small>Sin IGIC · ${snapshot.current.salesCount} documentos</small></div>
       <div class="acc-kpi"><span>Compras y gastos</span><strong>${money(snapshot.current.expensesBase)}</strong>${variationMarkup(snapshot.changes.expenses, { neutral: true })}<small>Sin IGIC · solo aprobados</small></div>
       <div class="acc-kpi ${snapshot.current.result < 0 ? 'is-danger' : ''}"><span>${missingCurrentCosts ? 'Resultado todavía incompleto' : 'Resultado del negocio'}</span><strong>${money(snapshot.current.result)}</strong>${missingCurrentCosts ? '<span class="metric-change is-neutral">Faltan gastos aprobados</span>' : variationMarkup(snapshot.changes.result)}<small>${missingCurrentCosts ? 'No es beneficio real todavía' : 'Antes de IRPF'}</small><button class="kpi-link" data-view="profitability">Entender la rentabilidad →</button></div>
       <div class="acc-kpi"><span>Margen sobre ventas</span><strong>${missingCurrentCosts ? '—' : `${percent(snapshot.current.margin)} %`}</strong><small>${missingCurrentCosts ? 'Se calculará cuando haya gastos' : snapshot.current.averageTicket == null ? 'Sin tickets TPV en el periodo' : `Ticket medio ${money(snapshot.current.averageTicket)}`}</small></div>
     </div>
+    ${renderRecurringExpensesWidget()}
     <div class="acc-grid acc-two">
       <section class="acc-card">
         <div class="acc-card-head"><h2>Evolución real del negocio</h2><div class="chart-legend"><span><i class="sales"></i>Ventas</span><span><i class="expenses"></i>Gastos</span></div></div>
@@ -707,7 +849,8 @@ function renderReconciliationCard(match) {
 }
 
 function bankReviewForTransaction(transactionId) {
-  return state.bankReviews.find(item => item.bank_transaction_id === transactionId && item.status === 'active') || null;
+  return state.bankReviews.find(item => item.bank_transaction_id === transactionId
+    && ['active', 'waiting_document'].includes(item.status)) || null;
 }
 
 function bankReviewSearchMatches(transaction) {
@@ -715,6 +858,19 @@ function bankReviewSearchMatches(transaction) {
   if (!term) return true;
   return [transaction.description, transaction.reference, transaction.amount, transaction.booked_on]
     .some(value => String(value || '').toLocaleLowerCase('es').includes(term));
+}
+
+function currentBankWorkspace(overrides = {}) {
+  return buildBankWorkspace({
+    transactions: state.bankTransactions,
+    reconciliations: state.reconciliations,
+    reviews: state.bankReviews,
+    documents: state.documents,
+    search: state.bankReviewSearch,
+    direction: state.bankReviewDirection,
+    filter: state.bankWorkFilter,
+    ...overrides
+  });
 }
 
 function renderBankReviewCard(transaction, review = null) {
@@ -730,80 +886,116 @@ function renderBankReviewCard(transaction, review = null) {
   </article>`;
 }
 
-function renderBankReviewInbox() {
-  const pendingItems = pendingBankTransactions({
-    transactions: state.bankTransactions,
-    reconciliations: state.reconciliations,
-    search: state.bankReviewSearch,
-    direction: state.bankReviewDirection
-  });
-  const reviewedItems = state.bankReviews
+function renderBankWorkCard(item) {
+  const transaction = item.transaction;
+  const account = state.bankAccounts.find(candidate => candidate.id === transaction.bank_account_id);
+  const status = bankWorkspaceStatus(item.status);
+  const context = item.reconciliation ? reconciliationContext(item.reconciliation) : null;
+  const candidate = context?.document || item.candidate;
+  const contactName = context?.contact?.name || candidate?.accounting_contacts?.name;
+  let supportTitle = status.explanation;
+  let supportDetail = '';
+  if (candidate) {
+    supportTitle = `${candidate.number || 'Documento sin número'} · ${contactName || (candidate.direction === 'sale' ? 'Cliente' : 'Proveedor')}`;
+    supportDetail = `${displayDate(candidate.issue_date)} · ${money(candidate.total_amount)}${item.reconciliation ? ` · coincidencia ${Number(item.reconciliation.score || 0)}%` : ''}`;
+  } else if (item.classification) {
+    supportTitle = item.classification.label;
+    supportDetail = item.classification.effect;
+  } else if (item.waitingReview) {
+    supportTitle = 'Ya está anotado que falta la factura';
+    supportDetail = item.waitingReview.notes || 'El movimiento seguirá pendiente hasta que aparezca el justificante.';
+  }
+  const actionLabel = item.status === 'ready_match' ? 'Comparar y confirmar'
+    : item.status === 'possible_document' ? 'Vincular factura'
+      : item.status === 'missing_document' ? 'Buscar justificante'
+        : 'Identificar';
+  return `<article class="bank-work-card is-${status.tone}">
+    <div class="bank-work-main">
+      <div class="bank-work-date"><strong>${displayDate(transaction.booked_on)}</strong><span>${escapeHtml(account?.name || 'Cuenta bancaria')}</span></div>
+      <div class="bank-work-concept"><strong>${escapeHtml(transaction.description || 'Sin concepto')}</strong><span>${escapeHtml(transaction.reference || 'Sin referencia')}</span></div>
+      <div class="bank-work-amount"><span>${Number(transaction.amount) >= 0 ? 'Entrada' : 'Salida'}</span><strong>${money(transaction.amount)}</strong></div>
+    </div>
+    <div class="bank-work-support">
+      <span class="badge ${status.tone}">${escapeHtml(status.label)}</span>
+      <div><strong>${escapeHtml(supportTitle)}</strong>${supportDetail ? `<span>${escapeHtml(supportDetail)}</span>` : ''}</div>
+      <button class="btn btn-primary" data-open-bank-work="${item.id}">${actionLabel}</button>
+    </div>
+  </article>`;
+}
+
+function renderBankWorkspace() {
+  const workspace = currentBankWorkspace();
+  const completedReviews = state.bankReviews
     .filter(review => review.status === 'active')
     .map(review => ({ review, transaction: state.bankTransactions.find(item => item.id === review.bank_transaction_id) }))
-    .filter(item => item.transaction)
-    .filter(item => state.bankReviewDirection === 'all'
-      || (state.bankReviewDirection === 'in' ? Number(item.transaction.amount) >= 0 : Number(item.transaction.amount) < 0))
-    .filter(item => bankReviewSearchMatches(item.transaction));
-  const activeItems = state.bankReviewView === 'pending'
-    ? pendingItems.map(transaction => ({ transaction, review: null }))
-    : reviewedItems;
+    .filter(item => item.transaction && bankReviewSearchMatches(item.transaction));
+  const confirmedMatches = state.reconciliations.filter(item => item.status === 'confirmed');
+  const completedTotal = completedReviews.length + confirmedMatches.length;
+  const filterButtons = [
+    ['all', 'Todo', workspace.stats.pending],
+    ['ready', 'Con factura', workspace.stats.ready],
+    ['missing', 'Falta justificar', workspace.stats.missing],
+    ['classify', 'Identificar', workspace.stats.classify]
+  ];
   const pageSize = 12;
-  const pageCount = Math.max(1, Math.ceil(activeItems.length / pageSize));
+  const pageCount = Math.max(1, Math.ceil(workspace.items.length / pageSize));
   const page = Math.min(state.bankReviewPage, pageCount);
-  const visibleItems = activeItems.slice((page - 1) * pageSize, page * pageSize);
-  return `<section class="acc-card bank-review-section" style="margin-top:18px">
-    <div class="acc-card-head bank-review-head">
-      <div><h2>Revisión de movimientos sin coincidencia</h2><small>Clasifica cada movimiento sin duplicar ventas ni inventar IGIC.</small></div>
-      <div class="period-switch bank-review-view-switch">
-        <button class="btn btn-small ${state.bankReviewView === 'pending' ? 'is-active' : ''}" data-bank-review-view="pending">Pendientes ${pendingBankTransactions({ transactions: state.bankTransactions, reconciliations: state.reconciliations }).length}</button>
-        <button class="btn btn-small ${state.bankReviewView === 'reviewed' ? 'is-active' : ''}" data-bank-review-view="reviewed">Revisados ${state.bankReviews.filter(item => item.status === 'active').length}</button>
-      </div>
+  const visibleItems = workspace.items.slice((page - 1) * pageSize, page * pageSize);
+  const completedMarkup = completedTotal
+    ? `<div class="bank-reviewed-stack">
+        ${confirmedMatches.length ? `<div><h3>Facturas conciliadas</h3><div class="reconciliation-list">${confirmedMatches.map(renderReconciliationCard).join('')}</div></div>` : ''}
+        ${completedReviews.length ? `<div><h3>Movimientos clasificados</h3><div class="bank-review-list">${completedReviews.map(item => renderBankReviewCard(item.transaction, item.review)).join('')}</div></div>` : ''}
+      </div>`
+    : '<div class="acc-empty"><strong>Todavía no hay movimientos terminados</strong>Cuando confirmes uno, aparecerá aquí y podrás revisarlo o deshacerlo.</div>';
+  return `<section class="acc-card bank-workspace">
+    <div class="bank-workspace-hero">
+      <div><span class="control-center-kicker">BANDEJA BANCARIA</span><h2>Revisa el banco, nosotros ordenamos el resto</h2><p>Empieza por el primer movimiento. La app te dirá si hay factura, si falta o si no debe contar como ingreso o gasto.</p></div>
+      ${workspace.next ? '<button class="btn btn-primary" id="start-bank-work">Continuar revisión</button>' : '<span class="badge success">Todo revisado</span>'}
     </div>
-    <form class="bank-review-toolbar" id="bank-review-search-form">
-      <input type="search" id="bank-review-search" value="${escapeHtml(state.bankReviewSearch)}" placeholder="Buscar concepto, referencia o importe">
-      <select id="bank-review-direction" aria-label="Filtrar por dirección">
-        <option value="all" ${state.bankReviewDirection === 'all' ? 'selected' : ''}>Entradas y salidas</option>
-        <option value="in" ${state.bankReviewDirection === 'in' ? 'selected' : ''}>Solo entradas</option>
-        <option value="out" ${state.bankReviewDirection === 'out' ? 'selected' : ''}>Solo salidas</option>
-      </select>
-      <button class="btn btn-small" type="submit">Buscar</button>
-    </form>
-    ${visibleItems.length
-      ? `<div class="bank-review-list">${visibleItems.map(item => renderBankReviewCard(item.transaction, item.review)).join('')}</div>`
-      : `<div class="acc-empty"><strong>${state.bankReviewView === 'pending' ? 'No hay movimientos con este filtro' : 'Todavía no hay movimientos revisados'}</strong>${state.bankReviewView === 'pending' ? 'Prueba otra búsqueda o cambia entre entradas y salidas.' : 'Las clasificaciones confirmadas aparecerán aquí y se podrán deshacer.'}</div>`}
-    ${pageCount > 1 ? `<div class="bank-review-pagination"><button class="btn btn-small" data-bank-review-page="${page - 1}" ${page === 1 ? 'disabled' : ''}>Anterior</button><span>Página ${page} de ${pageCount} · ${activeItems.length} movimientos</span><button class="btn btn-small" data-bank-review-page="${page + 1}" ${page === pageCount ? 'disabled' : ''}>Siguiente</button></div>` : ''}
+    <div class="bank-workspace-stats">
+      <div class="is-primary"><strong>${workspace.stats.pending}</strong><span>por resolver</span></div>
+      <div><strong>${workspace.stats.ready}</strong><span>con factura posible</span></div>
+      <div class="${workspace.stats.missing ? 'is-danger' : ''}"><strong>${workspace.stats.missing}</strong><span>sin justificante</span></div>
+      <div><strong>${workspace.stats.completed}</strong><span>terminados</span></div>
+    </div>
+    <div class="bank-workspace-tabs period-switch">
+      <button class="btn btn-small ${state.bankReviewView === 'pending' ? 'is-active' : ''}" data-bank-review-view="pending">Por hacer ${workspace.stats.pending}</button>
+      <button class="btn btn-small ${state.bankReviewView === 'reviewed' ? 'is-active' : ''}" data-bank-review-view="reviewed">Terminados ${completedTotal}</button>
+    </div>
+    ${state.bankReviewView === 'pending' ? `
+      <div class="bank-work-filters period-switch">${filterButtons.map(([value, label, count]) => `<button class="btn btn-small ${state.bankWorkFilter === value ? 'is-active' : ''}" data-bank-work-filter="${value}">${label} ${count}</button>`).join('')}</div>
+      <form class="bank-review-toolbar" id="bank-review-search-form">
+        <input type="search" id="bank-review-search" value="${escapeHtml(state.bankReviewSearch)}" placeholder="Buscar concepto, referencia, factura o importe">
+        <select id="bank-review-direction" aria-label="Filtrar por dirección">
+          <option value="all" ${state.bankReviewDirection === 'all' ? 'selected' : ''}>Entradas y salidas</option>
+          <option value="in" ${state.bankReviewDirection === 'in' ? 'selected' : ''}>Solo entradas</option>
+          <option value="out" ${state.bankReviewDirection === 'out' ? 'selected' : ''}>Solo salidas</option>
+        </select>
+        <button class="btn btn-small" type="submit">Buscar</button>
+      </form>
+      ${visibleItems.length
+        ? `<div class="bank-work-list">${visibleItems.map(renderBankWorkCard).join('')}</div>`
+        : `<div class="acc-empty"><strong>${workspace.hasActiveFilters ? 'No hay movimientos con este filtro' : 'Todo el banco está revisado'}</strong>${workspace.hasActiveFilters ? 'Pulsa Todo o cambia la búsqueda.' : 'Importa el siguiente extracto cuando esté disponible.'}</div>`}
+      ${pageCount > 1 ? `<div class="bank-review-pagination"><button class="btn btn-small" data-bank-review-page="${page - 1}" ${page === 1 ? 'disabled' : ''}>Anterior</button><span>Página ${page} de ${pageCount} · ${workspace.items.length} movimientos</span><button class="btn btn-small" data-bank-review-page="${page + 1}" ${page === pageCount ? 'disabled' : ''}>Siguiente</button></div>` : ''}
+    ` : completedMarkup}
   </section>`;
 }
 
 function renderTreasury() {
-  const pending = state.bankTransactions.filter(tx => tx.status === 'pending').length;
+  const workspace = currentBankWorkspace({ search: '', direction: 'all', filter: 'all' });
+  const pending = workspace.stats.pending;
   const balance = state.bankTransactions.find(tx => tx.balance != null)?.balance || 0;
-  const filteredReconciliations = reconciliationsByStatus(state.reconciliations, state.reconciliationFilter);
-  const reconciliationCounts = Object.fromEntries(
-    ['suggested', 'confirmed', 'rejected'].map(status => [status, reconciliationsByStatus(state.reconciliations, status).length])
-  );
+  const rejected = reconciliationsByStatus(state.reconciliations, 'rejected');
   return `
     <div class="acc-grid acc-kpis">
       <div class="acc-kpi is-accent"><span>Último saldo importado</span><strong>${money(balance)}</strong></div>
-      <div class="acc-kpi"><span>Sin conciliar</span><strong>${pending}</strong></div>
-      <div class="acc-kpi"><span>Cuentas bancarias</span><strong>${state.bankAccounts.length}</strong></div>
-      <div class="acc-kpi"><span>Movimientos</span><strong>${state.bankTransactions.length}</strong></div>
+      <div class="acc-kpi"><span>Por resolver</span><strong>${pending}</strong></div>
+      <div class="acc-kpi"><span>Falta justificante</span><strong>${workspace.stats.missing}</strong></div>
+      <div class="acc-kpi"><span>Terminados</span><strong>${workspace.stats.completed}</strong></div>
     </div>
-    <section class="acc-card reconciliation-section">
-      <div class="acc-card-head reconciliation-head">
-        <div><h2>Conciliación asistida</h2><small>Comprueba banco, documento y factura original antes de confirmar.</small></div>
-        <div class="acc-actions"><button class="btn btn-small" id="suggest-matches-btn">Buscar coincidencias</button><button class="btn btn-small" id="new-bank-account-btn">Añadir cuenta</button></div>
-      </div>
-      <div class="reconciliation-toolbar period-switch">
-        <button class="btn btn-small ${state.reconciliationFilter === 'suggested' ? 'is-active' : ''}" data-reconciliation-filter="suggested">Pendientes ${reconciliationCounts.suggested}</button>
-        <button class="btn btn-small ${state.reconciliationFilter === 'confirmed' ? 'is-active' : ''}" data-reconciliation-filter="confirmed">Confirmadas ${reconciliationCounts.confirmed}</button>
-        <button class="btn btn-small ${state.reconciliationFilter === 'rejected' ? 'is-active' : ''}" data-reconciliation-filter="rejected">Descartadas ${reconciliationCounts.rejected}</button>
-      </div>
-      ${filteredReconciliations.length
-        ? `<div class="reconciliation-list">${filteredReconciliations.map(renderReconciliationCard).join('')}</div>`
-        : `<div class="acc-empty"><strong>${state.reconciliationFilter === 'suggested' ? 'Sin propuestas pendientes' : 'No hay conciliaciones en este estado'}</strong>${state.reconciliationFilter === 'suggested' ? 'Pulsa Buscar coincidencias cuando hayas importado movimientos.' : 'Puedes cambiar de pestaña para revisar el historial.'}</div>`}
-    </section>
-    ${renderBankReviewInbox()}
+    <div class="bank-workspace-actions"><button class="btn" id="suggest-matches-btn">Buscar facturas que coincidan</button><button class="btn" id="new-bank-account-btn">Añadir cuenta</button></div>
+    ${renderBankWorkspace()}
+    ${rejected.length ? `<section class="acc-card bank-movements-card" style="margin-top:18px"><details><summary><span><strong>Coincidencias descartadas</strong><small>${rejected.length} propuestas conservadas en el historial</small></span><span>Mostrar</span></summary><div class="reconciliation-list">${rejected.map(renderReconciliationCard).join('')}</div></details></section>` : ''}
     <section class="acc-card bank-movements-card" style="margin-top:18px">
       <details>
         <summary><span><strong>Movimientos bancarios</strong><small>${state.bankTransactions.length} movimientos · ${pending} sin conciliar</small></span><span>Mostrar listado</span></summary>
@@ -976,6 +1168,8 @@ function renderSettings() {
 
 function renderModal() {
   if (state.modal.type === 'document') return renderDocumentModal(state.modal.document);
+  if (state.modal.type === 'recurring-manager') return renderRecurringExpensesModal();
+  if (state.modal.type === 'recurring-editor') return renderRecurringExpenseEditorModal();
   if (state.modal.type === 'reconciliation') return renderReconciliationModal();
   if (state.modal.type === 'bank-review') return renderBankReviewModal();
   if (state.modal.type === 'drive-folder-picker') return renderDriveFolderPickerModal();
@@ -988,6 +1182,59 @@ function renderModal() {
 
 function modalFrame(title, body, foot = '', className = '') {
   return `<div class="acc-modal-backdrop"><div class="acc-modal ${className}"><div class="acc-modal-head"><h2>${title}</h2><button class="btn btn-small" data-close-modal>✕</button></div><div class="acc-modal-body">${body}</div>${foot ? `<div class="acc-modal-foot">${foot}</div>` : ''}</div></div>`;
+}
+
+function recurringCategoryOptions(selected = 'other') {
+  const allowed = new Set([
+    'staff', 'rent', 'utilities', 'bank_fees', 'professional_services',
+    'maintenance', 'taxes', 'insurance', 'marketing', 'other'
+  ]);
+  return PROFITABILITY_CATEGORIES
+    .filter(category => allowed.has(category.value))
+    .map(category => `<option value="${category.value}" ${selected === category.value ? 'selected' : ''}>${escapeHtml(category.label)}</option>`)
+    .join('');
+}
+
+function renderRecurringExpensesModal() {
+  const rows = state.recurringExpenses.length
+    ? state.recurringExpenses.map(expense => `<article class="recurring-manager-row ${expense.active === false ? 'is-inactive' : ''}">
+        <div><strong>${escapeHtml(expense.name)}</strong><span>${escapeHtml(expense.accounting_contacts?.name || 'Sin proveedor asociado')} · ${recurringFrequencyLabel(expense.frequency)} · día ${expense.due_day}</span></div>
+        <strong>${expense.expected_amount ? money(expense.expected_amount) : 'Importe variable'}</strong>
+        <div class="acc-actions">
+          <button class="btn btn-small" data-edit-recurring="${expense.id}">Editar</button>
+          <button class="btn btn-small" data-toggle-recurring="${expense.id}" data-active="${expense.active !== false}">${expense.active === false ? 'Activar' : 'Pausar'}</button>
+        </div>
+      </article>`).join('')
+    : '<div class="acc-empty"><strong>Aún no has configurado gastos habituales.</strong>Añade el primero para empezar a recibir avisos.</div>';
+  return modalFrame(
+    'Gastos habituales',
+    `<div class="recurring-manager-intro"><p>Solo necesitas añadir los pagos que esperas con regularidad. La app buscará sus facturas automáticamente.</p><button class="btn btn-primary" id="new-recurring-expense">+ Añadir gasto habitual</button></div><div class="recurring-manager-list">${rows}</div>`,
+    '<button class="btn" data-close-modal>Cerrar</button>',
+    'acc-modal-wide recurring-manager-modal'
+  );
+}
+
+function renderRecurringExpenseEditorModal() {
+  const expense = state.modal.expense || {};
+  const firstDay = isoDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  return modalFrame(
+    expense.id ? 'Editar gasto habitual' : 'Añadir gasto habitual',
+    `<form class="acc-form" id="recurring-expense-form" data-id="${expense.id || ''}">
+      <div class="field"><label>Nombre sencillo</label><input id="recurring-name" value="${escapeHtml(expense.name || '')}" placeholder="Ej. Alquiler del local" required maxlength="160"></div>
+      <div class="field"><label>Proveedor</label><select id="recurring-contact"><option value="">Sin proveedor fijo</option>${state.contacts.map(contact => `<option value="${contact.id}" ${expense.contact_id === contact.id ? 'selected' : ''}>${escapeHtml(contact.name)}</option>`).join('')}</select><small>Elegirlo ayuda a reconocer la factura automáticamente.</small></div>
+      <div class="acc-form-grid three">
+        <div class="field"><label>Importe aproximado</label><input id="recurring-amount" type="number" min="0" step=".01" value="${Number(expense.expected_amount || 0)}"><small>Puede variar; solo sirve de referencia.</small></div>
+        <div class="field"><label>Frecuencia</label><select id="recurring-frequency">${RECURRING_FREQUENCIES.map(item => `<option value="${item.value}" ${expense.frequency === item.value ? 'selected' : ''}>${item.label}</option>`).join('')}</select></div>
+        <div class="field"><label>Día esperado</label><input id="recurring-day" type="number" min="1" max="28" value="${Number(expense.due_day || 1)}" required></div>
+      </div>
+      <div class="acc-form-grid">
+        <div class="field"><label>Tipo de gasto</label><select id="recurring-category">${recurringCategoryOptions(expense.category)}</select></div>
+        <div class="field"><label>Empezar a comprobar desde</label><input id="recurring-start" type="date" value="${expense.start_on || firstDay}" required></div>
+      </div>
+      <div class="acc-notice">La app avisará si llega la fecha y no encuentra una factura de este proveedor. Nada se contabiliza sin que tú revises la factura.</div>
+    </form>`,
+    '<button class="btn" id="back-to-recurring-manager" type="button">Cancelar</button><button class="btn btn-primary" type="submit" form="recurring-expense-form">Guardar</button>'
+  );
 }
 
 function renderDriveFolderPickerModal() {
@@ -1150,8 +1397,21 @@ function renderBankReviewModal() {
   const classifications = classificationsForTransaction(transaction);
   const selectedClassification = state.modal.classification || suggested || classifications[0]?.value || '';
   const selectedDefinition = classificationDefinition(selectedClassification);
+  const waitingNotice = review?.status === 'waiting_document'
+    ? `<div class="bank-waiting-banner"><span>!</span><div><strong>Estamos esperando la factura</strong><p>${escapeHtml(review.notes || 'Este pago no se llevará a gastos ni al IGIC hasta que aparezca un justificante.')}</p></div><button class="btn btn-small" data-clear-bank-missing="${transaction.id}">Quitar aviso</button></div>`
+    : '';
+  const missingDocumentOption = Number(transaction.amount) < 0 ? `
+    <div class="bank-review-or"><span>o</span></div>
+    <section class="bank-review-option ${review?.status === 'waiting_document' ? 'is-selected' : ''}">
+      <div class="bank-review-option-title"><span>2</span><div><h3>Todavía no tengo la factura</h3><p>Déjalo señalado para pedirla o encontrarla después. No se contabilizará ni deducirá IGIC.</p></div></div>
+      <form class="acc-form" id="bank-missing-document-form">
+        <div class="field"><label>Nota opcional</label><input id="bank-missing-document-notes" value="${escapeHtml(review?.status === 'waiting_document' ? review.notes : '')}" placeholder="Ej.: pedir factura al proveedor"></div>
+        <button class="btn" type="submit">${review?.status === 'waiting_document' ? 'Actualizar recordatorio' : 'Marcar que falta factura'}</button>
+      </form>
+    </section>` : '';
   return modalFrame('Revisar movimiento bancario', `${summary}
-    <div class="bank-review-choice-intro"><strong>¿Qué representa este movimiento?</strong><span>Elige una de las dos opciones. Nada se contabiliza hasta que confirmes.</span></div>
+    ${waitingNotice}
+    <div class="bank-review-choice-intro"><strong>¿Qué representa este movimiento?</strong><span>Elige la opción más sencilla. Nada se contabiliza hasta que confirmes.</span></div>
     <section class="bank-review-option">
       <div class="bank-review-option-title"><span>1</span><div><h3>Vincular con una factura existente</h3><p>Es la opción correcta cuando el proveedor o cliente ya tiene un documento pendiente.</p></div></div>
       ${candidates.length ? `<form class="acc-form" id="manual-bank-match-form">
@@ -1160,9 +1420,10 @@ function renderBankReviewModal() {
         <button class="btn btn-primary" type="submit">Crear comparación banco–factura</button>
       </form>` : '<div class="acc-notice">No hay documentos pendientes compatibles con esta entrada o salida. Puedes dejar el movimiento pendiente o clasificarlo abajo.</div>'}
     </section>
+    ${missingDocumentOption}
     <div class="bank-review-or"><span>o</span></div>
     <section class="bank-review-option">
-      <div class="bank-review-option-title"><span>2</span><div><h3>Clasificar sin vincular una factura</h3><p>Úsalo para datáfono, efectivo, titular, impuestos o un gasto que realmente no tendrá factura.</p></div></div>
+      <div class="bank-review-option-title"><span>${Number(transaction.amount) < 0 ? '3' : '2'}</span><div><h3>No necesita una factura de proveedor</h3><p>Úsalo para datáfono, traspasos, préstamos, titular, impuestos, nóminas o comisiones.</p></div></div>
       <form class="acc-form" id="bank-classification-form">
         <div class="field"><label>Clasificación</label><select id="bank-classification">${classifications.map(item => `<option value="${item.value}" ${selectedClassification === item.value ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select></div>
         ${suggested ? `<div class="bank-review-suggestion"><span class="badge">Sugerencia automática</span><strong>${escapeHtml(classificationDefinition(suggested)?.label || '')}</strong><small>Comprueba que describe realmente el movimiento.</small></div>` : ''}
@@ -1328,6 +1589,55 @@ function renderEntryModal() {
   return modalFrame('Nuevo asiento manual', `<form class="acc-form" id="entry-form"><div class="acc-form-grid"><div class="field"><label>Fecha</label><input id="entry-date" type="date" value="${isoDate()}" required></div><div class="field"><label>Concepto</label><input id="entry-description" required></div></div><div class="acc-form-grid"><div class="field"><label>Cuenta Debe</label><select id="entry-debit-account">${state.accounts.map(a=>`<option value="${a.id}">${a.code} · ${escapeHtml(a.name)}</option>`).join('')}</select></div><div class="field"><label>Cuenta Haber</label><select id="entry-credit-account">${state.accounts.map(a=>`<option value="${a.id}">${a.code} · ${escapeHtml(a.name)}</option>`).join('')}</select></div></div><div class="field"><label>Importe</label><input id="entry-amount" type="number" step=".01" min=".01" required></div></form>`, '<button class="btn btn-primary" type="submit" form="entry-form">Registrar asiento</button>');
 }
 
+async function handleControlAction(button) {
+  const action = button.dataset.controlAction;
+  const targetId = button.dataset.targetId;
+  if (action === 'drive') {
+    const item = state.driveImports.find(candidate => candidate.id === targetId);
+    if (!item) return toast('No se encontró la factura de Drive.', 'error');
+    return item.document_id ? openDriveDocumentReview(item) : openDriveImportReview(item);
+  }
+  if (action === 'recurring') return openRecurringDocument(targetId, button.dataset.periodKey);
+  if (action === 'document') {
+    const document = state.documents.find(candidate => candidate.id === targetId);
+    return document ? openDocument(document, document.direction) : toast('No se encontró el documento pendiente.', 'error');
+  }
+  if (action === 'reconciliation') return openReconciliation(targetId);
+  if (action === 'bank') return openBankReview(targetId);
+  if (action === 'bank-work') return openBankWorkspaceItem(targetId);
+  if (action === 'profitability') {
+    state.view = 'profitability';
+    state.profitabilityFilter = 'pending';
+    renderApp();
+    requestAnimationFrame(() => document.querySelector('.profitability-classification')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    return;
+  }
+  if (action === 'bank-account') return openModal({ type: 'bank-account' });
+  if (action === 'recurring-setup') return openModal({ type: 'recurring-editor', expense: {} });
+  if (action === 'bank-import') return state.bankAccounts.length
+    ? openModal({ type: 'bank-import' })
+    : openModal({ type: 'bank-account' });
+}
+
+async function handleControlQuick(action) {
+  if (action === 'purchase') return openDocument({}, 'purchase');
+  if (action === 'sale') return openDocument({}, 'sale');
+  if (action === 'bank') {
+    if (!state.bankAccounts.length) return openModal({ type: 'bank-account' });
+    if (!state.bankTransactions.length) return openModal({ type: 'bank-import' });
+    state.view = 'treasury';
+    state.modal = null;
+    state.bankReviewView = 'pending';
+    renderApp();
+    return;
+  }
+  if (action === 'drive') return syncGoogleDrive();
+  if (action === 'recurring') return state.recurringExpenses.length
+    ? openModal({ type: 'recurring-manager' })
+    : openModal({ type: 'recurring-editor', expense: {} });
+  if (action === 'tax') return openModal({ type: 'tax', model: '420' });
+}
+
 function wireEvents() {
   document.querySelectorAll('[data-dashboard-period]').forEach(button => button.addEventListener('click', () => {
     state.dashboardPeriod = button.dataset.dashboardPeriod;
@@ -1349,6 +1659,8 @@ function wireEvents() {
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
     state.view = button.dataset.view; state.modal = null; renderApp();
   }));
+  document.querySelectorAll('[data-control-action]').forEach(button => button.addEventListener('click', () => handleControlAction(button)));
+  document.querySelectorAll('[data-control-quick]').forEach(button => button.addEventListener('click', () => handleControlQuick(button.dataset.controlQuick)));
   document.querySelector('#logout-btn')?.addEventListener('click', logout);
   document.querySelector('#sync-tpv-btn')?.addEventListener('click', syncTpv);
   document.querySelectorAll('[data-new-document]').forEach(button => button.addEventListener('click', () => openDocument({}, button.dataset.newDocument)));
@@ -1376,6 +1688,11 @@ function wireEvents() {
     state.bankReviewPage = 1;
     renderApp();
   }));
+  document.querySelectorAll('[data-bank-work-filter]').forEach(button => button.addEventListener('click', () => {
+    state.bankWorkFilter = button.dataset.bankWorkFilter;
+    state.bankReviewPage = 1;
+    renderApp();
+  }));
   document.querySelector('#bank-review-search-form')?.addEventListener('submit', event => {
     event.preventDefault();
     state.bankReviewSearch = document.querySelector('#bank-review-search').value;
@@ -1391,9 +1708,14 @@ function wireEvents() {
   document.querySelectorAll('[data-bank-review-page]').forEach(button => button.addEventListener('click', () => {
     state.bankReviewPage = Number(button.dataset.bankReviewPage);
     renderApp();
-    document.querySelector('.bank-review-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.querySelector('.bank-workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
   document.querySelectorAll('[data-open-bank-review]').forEach(button => button.addEventListener('click', () => openBankReview(button.dataset.openBankReview)));
+  document.querySelectorAll('[data-open-bank-work]').forEach(button => button.addEventListener('click', () => openBankWorkspaceItem(button.dataset.openBankWork)));
+  document.querySelector('#start-bank-work')?.addEventListener('click', () => {
+    const item = currentBankWorkspace({ search: '', direction: 'all', filter: 'all' }).next;
+    if (item) openBankWorkspaceItem(item.id);
+  });
   document.querySelector('#new-entry-btn')?.addEventListener('click', () => openModal({ type: 'entry' }));
   document.querySelectorAll('[data-tax-model]').forEach(button => button.addEventListener('click', () => openModal({ type: 'tax', model: button.dataset.taxModel })));
   document.querySelector('#export-tax-btn')?.addEventListener('click', exportTaxCsv);
@@ -1411,6 +1733,19 @@ function wireEvents() {
   document.querySelector('#sync-drive-btn')?.addEventListener('click', syncGoogleDrive);
   document.querySelector('#business-form')?.addEventListener('submit', saveBusiness);
   document.querySelector('#revoke-device-btn')?.addEventListener('click', logout);
+  document.querySelector('#manage-recurring-expenses')?.addEventListener('click', () => openModal({ type: 'recurring-manager' }));
+  document.querySelector('#add-first-recurring-expense')?.addEventListener('click', () => openModal({ type: 'recurring-editor', expense: {} }));
+  document.querySelector('#new-recurring-expense')?.addEventListener('click', () => openModal({ type: 'recurring-editor', expense: {} }));
+  document.querySelector('#back-to-recurring-manager')?.addEventListener('click', () => openModal({ type: 'recurring-manager' }));
+  document.querySelector('#recurring-expense-form')?.addEventListener('submit', saveRecurringExpense);
+  document.querySelectorAll('[data-edit-recurring]').forEach(button => button.addEventListener('click', () => {
+    const expense = state.recurringExpenses.find(item => item.id === button.dataset.editRecurring);
+    if (expense) openModal({ type: 'recurring-editor', expense });
+  }));
+  document.querySelectorAll('[data-toggle-recurring]').forEach(button => button.addEventListener('click', () => toggleRecurringExpense(button.dataset.toggleRecurring, button.dataset.active === 'true')));
+  document.querySelectorAll('[data-create-recurring-document]').forEach(button => button.addEventListener('click', () => openRecurringDocument(button.dataset.createRecurringDocument, button.dataset.periodKey)));
+  document.querySelectorAll('[data-skip-recurring]').forEach(button => button.addEventListener('click', () => setRecurringOccurrence(button.dataset.skipRecurring, button.dataset.periodKey, true)));
+  document.querySelectorAll('[data-restore-recurring]').forEach(button => button.addEventListener('click', () => setRecurringOccurrence(button.dataset.restoreRecurring, button.dataset.periodKey, false)));
   wireModal();
 }
 
@@ -1456,6 +1791,8 @@ function wireModal() {
     updateMatch(button.dataset.matchId, button.dataset.matchAction, button);
   }));
   document.querySelector('#manual-bank-match-form')?.addEventListener('submit', createManualBankMatch);
+  document.querySelector('#bank-missing-document-form')?.addEventListener('submit', markBankDocumentMissing);
+  document.querySelectorAll('[data-clear-bank-missing]').forEach(button => button.addEventListener('click', () => clearBankDocumentMissing(button.dataset.clearBankMissing, button)));
   document.querySelector('#bank-classification-form')?.addEventListener('submit', classifyBankTransaction);
   document.querySelector('#bank-classification')?.addEventListener('change', event => {
     state.modal.classification = event.currentTarget.value;
@@ -1476,6 +1813,104 @@ function wireModal() {
 
 function openModal(modal) { state.modal = modal; renderApp(); }
 function closeModal() { state.modal = null; renderApp(); }
+
+function recurringReviewItem(expenseId, periodKey) {
+  return currentRecurringReview().items.find(item => (
+    item.expense.id === expenseId && item.periodKey === periodKey
+  ));
+}
+
+async function saveRecurringExpense(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = document.querySelector(`button[form="${form.id}"]`);
+  if (button) button.disabled = true;
+  const row = {
+    id: form.dataset.id || undefined,
+    business_id: state.business.id,
+    contact_id: document.querySelector('#recurring-contact').value || null,
+    name: document.querySelector('#recurring-name').value.trim(),
+    category: document.querySelector('#recurring-category').value,
+    expected_amount: Number(document.querySelector('#recurring-amount').value || 0),
+    frequency: document.querySelector('#recurring-frequency').value,
+    due_day: Number(document.querySelector('#recurring-day').value),
+    start_on: document.querySelector('#recurring-start').value,
+    active: state.modal.expense?.active !== false,
+    updated_at: new Date().toISOString()
+  };
+  if (!row.id) delete row.id;
+  const { error } = await state.client.from('accounting_recurring_expenses').upsert(row);
+  if (error) {
+    if (button) button.disabled = false;
+    return toast(error.message || 'No se pudo guardar el gasto habitual.', 'error');
+  }
+  state.modal = null;
+  await loadAll();
+  toast('Gasto habitual guardado. Los avisos se han actualizado.');
+}
+
+async function toggleRecurringExpense(expenseId, currentlyActive) {
+  const { error } = await state.client.from('accounting_recurring_expenses')
+    .update({ active: !currentlyActive, updated_at: new Date().toISOString() })
+    .eq('id', expenseId);
+  if (error) return toast(error.message || 'No se pudo cambiar el gasto habitual.', 'error');
+  await loadAll();
+  openModal({ type: 'recurring-manager' });
+}
+
+async function setRecurringOccurrence(expenseId, periodKey, skipped) {
+  const item = recurringReviewItem(expenseId, periodKey);
+  if (!item) return toast('No se encontró este gasto previsto.', 'error');
+  const { error } = await state.client.from('accounting_recurring_expense_occurrences').upsert({
+    business_id: state.business.id,
+    recurring_expense_id: expenseId,
+    period_key: periodKey,
+    expected_on: isoDate(item.expectedOn),
+    status: skipped ? 'skipped' : 'pending',
+    document_id: null,
+    note: skipped ? 'El propietario indicó que no corresponde en este periodo.' : '',
+    updated_at: new Date().toISOString()
+  }, { onConflict: 'recurring_expense_id,period_key' });
+  if (error) return toast(error.message || 'No se pudo actualizar el aviso.', 'error');
+  await loadAll();
+  toast(skipped ? 'Marcado como “este mes no corresponde”.' : 'Aviso restaurado.');
+}
+
+function openRecurringDocument(expenseId, periodKey) {
+  const item = recurringReviewItem(expenseId, periodKey);
+  if (!item) return toast('No se encontró este gasto previsto.', 'error');
+  const line = {
+    ...emptyDocumentLine('purchase'),
+    description: item.expense.name,
+    unit_price: 0,
+    taxable_base: 0
+  };
+  openDocument({
+    contact_id: item.expense.contact_id || null,
+    issue_date: isoDate(item.expectedOn),
+    notes: `Gasto habitual: ${item.expense.name}${item.expectedAmount ? ` · importe aproximado ${money(item.expectedAmount)}` : ''}. Revisa la base y el IGIC con la factura original.`
+  }, 'purchase', {
+    lines: [line],
+    recurringExpenseId: expenseId,
+    recurringPeriodKey: periodKey,
+    recurringExpectedOn: isoDate(item.expectedOn)
+  });
+}
+
+async function linkRecurringDocument(documentId, context) {
+  if (!context?.recurringExpenseId || !context?.recurringPeriodKey) return;
+  const { error } = await state.client.from('accounting_recurring_expense_occurrences').upsert({
+    business_id: state.business.id,
+    recurring_expense_id: context.recurringExpenseId,
+    period_key: context.recurringPeriodKey,
+    expected_on: context.recurringExpectedOn,
+    status: 'linked',
+    document_id: documentId,
+    note: '',
+    updated_at: new Date().toISOString()
+  }, { onConflict: 'recurring_expense_id,period_key' });
+  if (error) throw error;
+}
 
 async function saveProfitabilityClassification(documentId, button) {
   const category = document.querySelector(`[data-analysis-category="${documentId}"]`)?.value;
@@ -1714,6 +2149,11 @@ function refreshDocumentCalculations(event) {
 function captureDocumentHeader() {
   captureNewContactDraft();
   const current = state.modal.document || {};
+  const recurringContext = {
+    recurringExpenseId: state.modal.recurringExpenseId,
+    recurringPeriodKey: state.modal.recurringPeriodKey,
+    recurringExpectedOn: state.modal.recurringExpectedOn
+  };
   state.modal.document = {
     ...current,
     direction: document.querySelector('#doc-direction')?.value || state.modal.direction,
@@ -1892,6 +2332,12 @@ async function persistDocument({ closeAfter = true } = {}) {
           p_document: header,
           p_lines: lines
         });
+    try {
+      await linkRecurringDocument(documentId, recurringContext);
+    } catch (linkError) {
+      console.warn('[Gastos habituales] No se pudo enlazar el documento', linkError);
+      toast('La factura se guardó, pero el aviso no pudo enlazarse automáticamente.', 'error');
+    }
     if (closeAfter) {
       state.modal = null;
       toast('Documento y artículos guardados.');
@@ -1973,8 +2419,29 @@ function openBankReview(transactionId) {
     type: 'bank-review',
     transaction,
     review,
-    classification: review?.classification || suggestBankClassification(transaction)
+    classification: review?.status === 'active' ? review.classification : suggestBankClassification(transaction)
   });
+}
+
+function openBankWorkspaceItem(itemId) {
+  const workspace = currentBankWorkspace({ search: '', direction: 'all', filter: 'all' });
+  const item = workspace.allItems.find(candidate => candidate.id === itemId || candidate.transaction.id === itemId);
+  if (!item) return toast('Este movimiento ya no está pendiente.', 'error');
+  state.view = 'treasury';
+  if (item.action === 'reconciliation') return openReconciliation(item.reconciliation.id);
+  return openBankReview(item.transaction.id);
+}
+
+function openNextBankWorkItem() {
+  state.bankReviewView = 'pending';
+  state.bankWorkFilter = 'all';
+  state.bankReviewSearch = '';
+  state.bankReviewDirection = 'all';
+  state.bankReviewPage = 1;
+  const next = currentBankWorkspace({ search: '', direction: 'all', filter: 'all' }).next;
+  if (next) return openBankWorkspaceItem(next.id);
+  state.modal = null;
+  renderApp();
 }
 
 async function createManualBankMatch(event) {
@@ -1997,21 +2464,56 @@ async function createManualBankMatch(event) {
   }
 }
 
+async function markBankDocumentMissing(event) {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  if (button) button.disabled = true;
+  try {
+    await rpc('accounting_mark_bank_document_missing', {
+      p_bank_transaction_id: state.modal.transaction.id,
+      p_notes: document.querySelector('#bank-missing-document-notes')?.value || ''
+    });
+    state.modal = null;
+    await loadAll();
+    toast('Anotado: falta la factura. No se deducirá el gasto ni el IGIC mientras tanto.');
+    openNextBankWorkItem();
+  } catch (error) {
+    if (button) button.disabled = false;
+    toast(error.message || 'No se pudo guardar el recordatorio.', 'error');
+  }
+}
+
+async function clearBankDocumentMissing(transactionId, button) {
+  if (button) button.disabled = true;
+  try {
+    await rpc('accounting_clear_bank_document_missing', {
+      p_bank_transaction_id: transactionId
+    });
+    state.modal = null;
+    await loadAll();
+    openBankReview(transactionId);
+    toast('Aviso eliminado. El movimiento sigue pendiente de revisión.');
+  } catch (error) {
+    if (button) button.disabled = false;
+    toast(error.message || 'No se pudo quitar el aviso.', 'error');
+  }
+}
+
 async function classifyBankTransaction(event) {
   event.preventDefault();
   const button = document.querySelector('#classify-bank-button');
   if (button) button.disabled = true;
   const transactionId = state.modal.transaction.id;
   try {
-    await rpc('accounting_classify_bank_transaction', {
+    await rpc('accounting_classify_bank_transaction_v2', {
       p_bank_transaction_id: transactionId,
       p_classification: document.querySelector('#bank-classification').value,
       p_notes: document.querySelector('#bank-classification-notes').value
     });
     state.modal = null;
     await loadAll();
-    openBankReview(transactionId);
-    toast('Movimiento clasificado y registrado. Puedes deshacerlo desde esta ficha.');
+    toast('Movimiento clasificado. Abrimos el siguiente pendiente.');
+    openNextBankWorkItem();
   } catch (error) {
     if (button) button.disabled = false;
     toast(error.message || 'No se pudo clasificar el movimiento.', 'error');
@@ -2074,8 +2576,9 @@ async function updateMatch(id, action, button) {
     };
     state.modal = null;
     await loadAll();
-    if (keepModalOpen) await openReconciliation(id);
     toast(messages[action] || 'Conciliación actualizada.');
+    if (keepModalOpen && action === 'confirm') openNextBankWorkItem();
+    else if (keepModalOpen) await openReconciliation(id);
   } catch (error) {
     if (button) button.disabled = false;
     toast(error.message || 'No se pudo actualizar la conciliación.', 'error');
@@ -2108,7 +2611,16 @@ async function importBankFile(event) {
     const { data, error } = await state.client.from('accounting_bank_transactions')
       .upsert(payload, { onConflict: 'business_id,fingerprint', ignoreDuplicates: true }).select();
     if (error) throw error;
-    state.modal = null; toast(`${data?.length || 0} movimientos nuevos importados.`); await loadAll();
+    let matchCount = 0;
+    try { matchCount = Number(await rpc('accounting_suggest_reconciliations')) || 0; } catch { /* La bandeja seguirá funcionando sin sugerencias. */ }
+    state.modal = null;
+    state.view = 'treasury';
+    state.bankReviewView = 'pending';
+    state.bankWorkFilter = 'all';
+    state.bankReviewSearch = '';
+    state.bankReviewDirection = 'all';
+    toast(`${data?.length || 0} movimientos nuevos · ${matchCount} facturas posibles encontradas.`);
+    await loadAll();
   } catch (error) { toast(error.message, 'error'); }
 }
 
@@ -2619,9 +3131,36 @@ async function logout() {
   renderPairing();
 }
 
-resumeOrPair().catch(error => {
-  console.error(error);
-  clearSession();
-  renderPairing();
-  toast(error.message, 'error');
-});
+function renderBankWorkspacePreview() {
+  state.business = { id: 'preview-business', name: 'Esencia Café' };
+  state.view = 'treasury';
+  state.bankAccounts = [{ id: 'bank-main', name: 'BBVA principal', iban_last4: '1842' }];
+  state.documents = [
+    { id: 'invoice-ready', direction: 'purchase', status: 'approved', number: 'F-2026-184', issue_date: '2026-08-07', total_amount: 259.2, paid_amount: 0, accounting_contacts: { name: 'Proveedor Atlántico' } },
+    { id: 'invoice-possible', direction: 'purchase', status: 'approved', number: 'A-8841', issue_date: '2026-08-05', total_amount: 80, paid_amount: 0, accounting_contacts: { name: 'Suministros Canarias' } }
+  ];
+  state.bankTransactions = [
+    { id: 'bank-ready', bank_account_id: 'bank-main', status: 'pending', booked_on: '2026-08-08', value_on: '2026-08-08', amount: -259.2, balance: 10240.8, description: 'TRANSFERENCIA PROVEEDOR ATLANTICO', reference: 'F-2026-184' },
+    { id: 'bank-possible', bank_account_id: 'bank-main', status: 'pending', booked_on: '2026-08-07', value_on: '2026-08-07', amount: -80, balance: 10500, description: 'SUMINISTROS CANARIAS', reference: 'PAGO TARJETA' },
+    { id: 'bank-missing', bank_account_id: 'bank-main', status: 'pending', booked_on: '2026-08-06', value_on: '2026-08-06', amount: -45.3, balance: 10580, description: 'COMPRA MATERIAL LOCAL', reference: 'TARJETA 4832' },
+    { id: 'bank-square', bank_account_id: 'bank-main', status: 'pending', booked_on: '2026-08-05', value_on: '2026-08-05', amount: 640.5, balance: 10625.3, description: 'LIQUIDACION REMESA DE COMERCIOS', reference: 'SQUARE' },
+    { id: 'bank-done', bank_account_id: 'bank-main', status: 'matched', booked_on: '2026-08-04', value_on: '2026-08-04', amount: -2.82, balance: 9984.8, description: 'COMISION SERVICIO BANCARIO', reference: '' }
+  ];
+  state.reconciliations = [{ id: 'match-ready', bank_transaction_id: 'bank-ready', document_id: 'invoice-ready', amount: 259.2, status: 'suggested', score: 98, reason: 'Importe, fecha y referencia compatibles' }];
+  state.bankReviews = [
+    { id: 'review-missing', bank_transaction_id: 'bank-missing', classification: 'awaiting_document', status: 'waiting_document', notes: 'Pedir factura al proveedor', revision: 1, reviewed_at: new Date().toISOString() },
+    { id: 'review-done', bank_transaction_id: 'bank-done', classification: 'bank_fee', status: 'active', notes: '', revision: 1, reviewed_at: new Date().toISOString() }
+  ];
+  renderApp();
+}
+
+if (import.meta.env.DEV && new URLSearchParams(location.search).get('preview') === 'bank-workspace') {
+  renderBankWorkspacePreview();
+} else {
+  resumeOrPair().catch(error => {
+    console.error(error);
+    clearSession();
+    renderPairing();
+    toast(error.message, 'error');
+  });
+}

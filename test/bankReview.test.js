@@ -12,6 +12,9 @@ test('reconoce liquidaciones TPV, impuestos, efectivo y Seguridad Social', () =>
   assert.equal(suggestBankClassification({ amount: 2005, description: 'Ingreso en efectivo' }), 'cash_deposit');
   assert.equal(suggestBankClassification({ amount: -274.14, description: 'Pago de impuestos', reference: 'NRC 123' }), 'tax_payment');
   assert.equal(suggestBankClassification({ amount: -588.64, description: 'Cuotas de la Seguridad Social' }), 'social_security');
+  assert.equal(suggestBankClassification({ amount: -488.32, description: 'Cuota prestamo negocio' }), 'loan_payment');
+  assert.equal(suggestBankClassification({ amount: -1200, description: 'Pago nomina agosto' }), 'payroll');
+  assert.equal(suggestBankClassification({ amount: 500, description: 'Transferencia interna' }), 'internal_transfer');
 });
 
 test('no ofrece categorías de entrada para una salida bancaria', () => {
@@ -20,6 +23,8 @@ test('no ofrece categorías de entrada para una salida bancaria', () => {
   assert.ok(values.includes('owner_withdrawal'));
   assert.ok(!values.includes('other_income'));
   assert.ok(!values.includes('tpv_card_settlement'));
+  assert.ok(values.includes('loan_payment'));
+  assert.ok(!values.includes('awaiting_document'));
 });
 
 test('ordena primero los documentos pendientes con importe más cercano', () => {
