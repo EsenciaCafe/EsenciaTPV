@@ -1598,6 +1598,20 @@ body.light-theme .btn-quick-pay {
   background-color: var(--bg-item-active);
 }
 
+.tx-tip-withdrawal {
+  cursor: default;
+  gap: 12px;
+}
+
+.tx-tip-withdrawal:active {
+  transform: none;
+  background-color: var(--bg-panel);
+}
+
+.tx-tip-withdrawal .tx-financial {
+  flex-shrink: 0;
+}
+
 .tx-meta {
   display: flex;
   flex-direction: column;

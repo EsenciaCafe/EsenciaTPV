@@ -1,4 +1,4 @@
-import { getSignedPaymentAmount } from './paymentAccounting.js';
+import { getSignedChargedPaymentAmount } from './paymentAccounting.js';
 
 export const REPORT_PAYMENT_METHODS = Object.freeze({
   CASH: 'Efectivo',
@@ -107,11 +107,16 @@ export function buildSalesReport(
       day.grossSales += gross;
       day.discounts += discount;
       day.tips += tip;
+      // Card tips enter the terminal and are paid out from the cash drawer.
+      report.paymentMethods[REPORT_PAYMENT_METHODS.CASH] -= tip;
+      day.paymentMethods[REPORT_PAYMENT_METHODS.CASH] -= tip;
+      report.paymentNet -= tip;
+      day.paymentNet -= tip;
     }
 
     getPayments(transaction).forEach(payment => {
       const method = classifyReportPaymentMethod(payment.method || transaction.paymentMethod || '');
-      const amount = getSignedPaymentAmount(transaction, payment);
+      const amount = getSignedChargedPaymentAmount(transaction, payment);
       report.paymentMethods[method] += amount;
       report.paymentNet += amount;
       day.paymentMethods[method] += amount;
@@ -129,12 +134,8 @@ export function buildSalesReport(
   report.paymentNet = roundMoney(report.paymentNet);
   report.paymentDifference = roundMoney(report.paymentNet - report.netSales);
   report.isPaymentBalanced = Math.abs(report.paymentDifference) < 0.01;
-  report.cardTerminalTotal = roundMoney(
-    report.paymentMethods[REPORT_PAYMENT_METHODS.CARD] + report.tips
-  );
-  report.cashDrawerMovement = roundMoney(
-    report.paymentMethods[REPORT_PAYMENT_METHODS.CASH] - report.tips
-  );
+  report.cardTerminalTotal = report.paymentMethods[REPORT_PAYMENT_METHODS.CARD];
+  report.cashDrawerMovement = report.paymentMethods[REPORT_PAYMENT_METHODS.CASH];
   report.days = [...daily.values()]
     .sort((a, b) => a.key.localeCompare(b.key))
     .map(day => ({

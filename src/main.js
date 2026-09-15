@@ -37,6 +37,7 @@ import {
   buildSalesReport,
   REPORT_PAYMENT_METHODS
 } from './salesReporting.js';
+import { buildTransactionPaymentSummary, getTransactionChargedAmount } from './transactionReporting.js';
 import { createUuid } from './localDb.js';
 
 // SVG Icons
@@ -244,6 +245,12 @@ const TRANSACTION_PAYMENT_FILTERS = [
   { id: 'gift', label: 'Regalo' }
 ];
 
+const TRANSACTION_REPORT_METHODS = {
+  card: REPORT_PAYMENT_METHODS.CARD,
+  cash: REPORT_PAYMENT_METHODS.CASH,
+  gift: REPORT_PAYMENT_METHODS.GIFT_CARD
+};
+
 function getPaymentFilterId(method = '') {
   const value = String(method).toLowerCase();
   if (value.includes('regalo') || value.includes('gift')) return 'gift';
@@ -252,17 +259,8 @@ function getPaymentFilterId(method = '') {
   return 'other';
 }
 
-function transactionMatchesPaymentFilter(tx = {}, filterId = 'all') {
-  if (!filterId || filterId === 'all') return true;
-  return getPaymentBreakdown(tx).some(payment => getPaymentFilterId(payment.method || tx.paymentMethod) === filterId);
-}
-
 function getTransactionAmountForPaymentFilter(tx = {}, filterId = 'all') {
-  if (!filterId || filterId === 'all') return Number(tx.total || 0);
-  return getPaymentBreakdown(tx).reduce((sum, payment) => {
-    const method = payment.method || tx.paymentMethod;
-    return getPaymentFilterId(method) === filterId ? sum + Number(payment.amount || 0) : sum;
-  }, 0);
+  return getTransactionChargedAmount(tx, getPaymentBreakdown(tx), TRANSACTION_REPORT_METHODS[filterId]);
 }
 
 function renderPaymentSummaryForFilter(tx = {}, filterId = 'all') {
@@ -964,9 +962,13 @@ function renderTransaccionesView(state) {
   const filterLabel = TRANSACTION_PAYMENT_FILTERS.find(item => item.id === activeFilter)?.label || 'Todos';
   const todayKey = getTransactionDayKey({ createdAt: new Date().toISOString() });
   const selectedDate = state.selectedTransactionDate || todayKey;
-  const filteredTransactions = (state.transactions || [])
-    .filter(tx => getTransactionDayKey(tx) === selectedDate)
-    .filter(tx => transactionMatchesPaymentFilter(tx, activeFilter));
+  const dayTransactions = (state.transactions || [])
+    .filter(tx => getTransactionDayKey(tx) === selectedDate);
+  const paymentSummary = buildTransactionPaymentSummary(dayTransactions, {
+    method: TRANSACTION_REPORT_METHODS[activeFilter],
+    getPayments: getPaymentBreakdown
+  });
+  const filteredTransactions = paymentSummary.transactions;
   const filtersHtml = transactionsFiltersOpen ? `
     <div class="tx-filter-panel">
       ${TRANSACTION_PAYMENT_FILTERS.map(filter => `
@@ -983,15 +985,15 @@ function renderTransaccionesView(state) {
     groups[dayKey].push(tx);
     return groups;
   }, {});
+  if (paymentSummary.withdrawnTips > 0 && !grouped[selectedDate]) grouped[selectedDate] = [];
 
   const daySections = Object.entries(grouped)
     .sort(([a], [b]) => b.localeCompare(a))
     .map(([dayKey, transactions]) => {
-      const dayTotal = transactions.reduce((sum, tx) => sum + getTransactionAmountForPaymentFilter(tx, activeFilter), 0);
+      const dayTotal = paymentSummary.total;
       const rows = transactions.map(tx => {
         const isRefund = tx.type === 'refund';
         const displayAmount = getTransactionAmountForPaymentFilter(tx, activeFilter);
-        tx = { ...tx, total: displayAmount };
         const badge = isRefund
           ? `<span class="badge badge--danger" style="margin-left: 8px;">Devolución</span>`
           : tx.hasRefund
@@ -1005,9 +1007,10 @@ function renderTransaccionesView(state) {
             <div class="tx-meta">
               <span class="tx-table-name">${escapeHtml(tx.table || 'Venta')} ${badge}</span>
               <span class="tx-date-method">${tx.date} · ${paymentSummary.summary}</span>
+              ${(activeFilter === 'all' || activeFilter === 'card') && tx.type !== 'refund' && Number(tx.tipAmount || 0) > 0 ? `<span class="tx-date-method">Incluye ${Number(tx.tipAmount).toFixed(2)}€ de propina</span>` : ''}
             </div>
             <div class="tx-financial">
-              <span class="tx-amount ${isRefund ? 'text-danger' : ''}" style="${isRefund ? 'color: var(--danger); font-weight: 700;' : ''}">${Number(tx.total || 0).toFixed(2)}€</span>
+              <span class="tx-amount ${isRefund ? 'text-danger' : ''}" style="${isRefund ? 'color: var(--danger); font-weight: 700;' : ''}">${displayAmount.toFixed(2)}€</span>
               <div class="tx-qty">${tx.itemsCount} art.</div>
             </div>
           </button>
@@ -1018,8 +1021,17 @@ function renderTransaccionesView(state) {
         <section class="tx-day-group">
           <div class="tx-day-header">
             <span>${formatTransactionDayLabel(dayKey)}</span>
-            <strong>${transactions.length} ticket${transactions.length !== 1 ? 's' : ''} · ${dayTotal.toFixed(2)}€</strong>
+            <strong>${transactions.length} ticket${transactions.length !== 1 ? 's' : ''} · ${activeFilter === 'all' || activeFilter === 'cash' ? 'Neto ' : ''}${dayTotal.toFixed(2)}€</strong>
           </div>
+          ${paymentSummary.withdrawnTips > 0 ? `
+            <div class="tx-card tx-tip-withdrawal">
+              <div class="tx-meta">
+                <span class="tx-table-name">Retirada de propinas</span>
+                <span class="tx-date-method">Efectivo · Propinas cobradas con tarjeta</span>
+              </div>
+              <div class="tx-financial"><span class="tx-amount text-danger">-${paymentSummary.withdrawnTips.toFixed(2)}€</span></div>
+            </div>
+          ` : ''}
           ${rows}
         </section>
       `;
@@ -2557,9 +2569,10 @@ function renderAjustesView(state) {
           <div class="tx-meta">
             <span class="tx-table-name">${tx.id} ${badge}</span>
             <span class="tx-date-method">${txTime} • ${tx.table} • ${summarizePayments(tx).summary}</span>
+            ${!isRefund && Number(tx.tipAmount || 0) > 0 ? `<span class="tx-date-method">Incluye ${Number(tx.tipAmount).toFixed(2)}€ de propina</span>` : ''}
           </div>
           <div class="tx-financial">
-            <span class="tx-amount ${isRefund ? 'text-danger' : ''}" style="${isRefund ? 'color: var(--danger); font-weight: 700;' : ''}">${tx.total.toFixed(2)}€</span>
+            <span class="tx-amount ${isRefund ? 'text-danger' : ''}" style="${isRefund ? 'color: var(--danger); font-weight: 700;' : ''}">${getTransactionChargedAmount(tx, getPaymentBreakdown(tx)).toFixed(2)}€</span>
             <div class="tx-qty">${tx.itemsCount} art.</div>
           </div>
         </button>
@@ -2624,14 +2637,14 @@ function renderAjustesView(state) {
 
           <!-- Payment Methods Breakdown Section -->
           <div class="reports-chart-card" style="margin-bottom: 16px; padding: 16px;">
-            <div class="reports-chart-title" style="margin-bottom: 12px; font-weight: 700;">Desglose Métodos de Pago (Neto)</div>
+            <div class="reports-chart-title" style="margin-bottom: 12px; font-weight: 700;">Cobros y movimiento de caja</div>
             <div style="display: flex; flex-direction: column; gap: 10px;">
               <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom: 6px; border-bottom: 1px solid var(--border-color);">
-                <span style="font-weight: 600;">Efectivo</span>
+                <span style="font-weight: 600;">Efectivo neto (sin fondo inicial)</span>
                 <strong style="color: #f59e0b;">${paymentMethods['Efectivo'].toFixed(2)}€</strong>
               </div>
               <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom: 6px; border-bottom: 1px solid var(--border-color);">
-                <span style="font-weight: 600;">Tarjeta Bancaria</span>
+                <span style="font-weight: 600;">Tarjeta bancaria (datáfono)</span>
                 <strong style="color: #3b82f6;">${paymentMethods['Tarjeta'].toFixed(2)}€</strong>
               </div>
               <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom: 6px;">
@@ -2640,8 +2653,8 @@ function renderAjustesView(state) {
               </div>
               ${totalTips > 0 ? `
                 <div style="display:flex; justify-content:space-between; align-items:center; padding-top:6px; border-top:1px dashed var(--border-color);">
-                  <span style="font-weight:600;">Propina cargada por BBVA</span>
-                  <strong style="color:var(--secondary);">+${totalTips.toFixed(2)}€</strong>
+                  <span style="font-weight:600;">Propinas incluidas en tarjeta y retiradas de caja</span>
+                  <strong style="color:var(--secondary);">${totalTips.toFixed(2)}€</strong>
                 </div>
               ` : ''}
             </div>
@@ -2773,12 +2786,14 @@ function renderAjustesView(state) {
               <span style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">${txCount} pedidos</span>
             </div>
             <div class="reports-kpi-card kpi-cash">
-              <span class="reports-kpi-label">Efectivo (Neto)</span>
+              <span class="reports-kpi-label">Efectivo neto</span>
               <span class="reports-kpi-val" style="color:#f59e0b;">${cashSales.toFixed(2)}€</span>
+              <span style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">Tras retirar propinas · sin fondo inicial</span>
             </div>
             <div class="reports-kpi-card kpi-card-pay">
-              <span class="reports-kpi-label">Tarjeta bancaria (Neto)</span>
+              <span class="reports-kpi-label">Tarjeta bancaria</span>
               <span class="reports-kpi-val" style="color:#3b82f6;">${cardSales.toFixed(2)}€</span>
+              <span style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">Datáfono · incluye propinas</span>
             </div>
             <div class="reports-kpi-card">
               <span class="reports-kpi-label">Tarjeta regalo (Neto)</span>
@@ -7008,6 +7023,7 @@ function downloadMonthlySalesExcel(selectedMonth, transactions, legal) {
   </table>
 
   <h2>Metodos de pago</h2>
+  <p>Tarjeta bancaria incluye propinas. Efectivo descuenta su retirada del cajon y no incluye el fondo inicial. Las propinas se desglosan como informacion, sin sumarlas de nuevo.</p>
   <table>
     <thead><tr><th>Metodo</th><th>Total</th></tr></thead>
     <tbody>${paymentRows || '<tr><td colspan="2">Sin pagos</td></tr>'}</tbody>
@@ -7114,16 +7130,16 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
     doc.rect(margin + 95, 44, 85, 30, 'FD');
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
-    doc.text('MÉTODOS DE PAGO (NETO)', margin + 95 + 5, 49);
+    doc.text('COBROS Y CAJA (SIN FONDO INICIAL)', margin + 95 + 5, 49);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
-    doc.text(`Efectivo: ${paymentMethods['Efectivo'].toFixed(2)} €`, margin + 95 + 5, 55);
-    doc.text(`Tarjeta Bancaria: ${paymentMethods['Tarjeta'].toFixed(2)} €`, margin + 95 + 5, 60);
+    doc.text(`Efectivo tras propinas: ${paymentMethods['Efectivo'].toFixed(2)} €`, margin + 95 + 5, 55);
+    doc.text(`Tarjeta con propinas: ${paymentMethods['Tarjeta'].toFixed(2)} €`, margin + 95 + 5, 60);
     doc.text(`Tarjeta Regalo: ${paymentMethods['Tarjeta Regalo'].toFixed(2)} €`, margin + 95 + 5, 65);
-    doc.text(`Propinas tarjeta (aparte): +${totalTips.toFixed(2)} €`, margin + 95 + 5, 70);
+    doc.text(`Propinas retiradas (informativo): ${totalTips.toFixed(2)} €`, margin + 95 + 5, 70);
 
     // Draw transaction table
-    const headers = ['Ticket ID', 'Hora', 'Mesa / Concepto', 'Método Pago', 'Artículos', 'Importe'];
+    const headers = ['Ticket ID', 'Hora', 'Mesa / Concepto', 'Método Pago', 'Artículos', 'Venta', 'Propina', 'Cobrado'];
     const tableBody = dayTx.map(tx => {
       const isRefund = tx.type === 'refund';
       return [
@@ -7132,7 +7148,9 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
         tx.table,
         summarizePayments(tx).summary,
         isRefund ? 'Devolución' : `${tx.itemsCount} art.`,
-        isRefund ? `-${Math.abs(tx.total).toFixed(2)} €` : `${tx.total.toFixed(2)} €`
+        isRefund ? `-${Math.abs(tx.total).toFixed(2)} €` : `${tx.total.toFixed(2)} €`,
+        `${(isRefund ? 0 : Number(tx.tipAmount || 0)).toFixed(2)} €`,
+        `${getTransactionChargedAmount(tx, getPaymentBreakdown(tx)).toFixed(2)} €`
       ];
     });
 
@@ -7143,7 +7161,9 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
       '',
       '',
       `${dayTx.filter(t => t.type !== 'refund').reduce((sum, t) => sum + t.itemsCount, 0)} art.`,
-      `${totalNet.toFixed(2)} €`
+      `${totalNet.toFixed(2)} €`,
+      `${totalTips.toFixed(2)} €`,
+      `${dayTx.reduce((sum, tx) => sum + getTransactionChargedAmount(tx, getPaymentBreakdown(tx)), 0).toFixed(2)} €`
     ]);
 
     const totalRowIndex = tableBody.length - 1;
@@ -7169,10 +7189,12 @@ function downloadDailyReportPDF(selectedDate, dayTx, legal, filename) {
         fillColor: [248, 250, 252]
       },
       columnStyles: {
-        0: { cellWidth: 35 },
-        1: { halign: 'center', cellWidth: 20 },
-        4: { halign: 'center', cellWidth: 25 },
-        5: { halign: 'right', cellWidth: 25 }
+        0: { cellWidth: 28 },
+        1: { halign: 'center', cellWidth: 14 },
+        4: { halign: 'center', cellWidth: 18 },
+        5: { halign: 'right', cellWidth: 21 },
+        6: { halign: 'right', cellWidth: 18 },
+        7: { halign: 'right', cellWidth: 21 }
       },
       didParseCell: (data) => {
         if (data.section === 'body' && data.row.index === totalRowIndex) {
@@ -7276,22 +7298,23 @@ function downloadMonthlyReportPDF(selectedMonth, report, legal, filename) {
     doc.rect(margin + 95, 44, 85, 30, 'FD');
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
-    doc.text('MÉTODOS DE PAGO (NETO)', margin + 95 + 5, 49);
+    doc.text('COBROS Y CAJA (SIN FONDO INICIAL)', margin + 95 + 5, 49);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
-    doc.text(`Efectivo: ${totalCash.toFixed(2)} €`, margin + 95 + 5, 55);
-    doc.text(`Tarjeta Bancaria: ${totalCard.toFixed(2)} €`, margin + 95 + 5, 60);
+    doc.text(`Efectivo tras propinas: ${totalCash.toFixed(2)} €`, margin + 95 + 5, 55);
+    doc.text(`Tarjeta con propinas: ${totalCard.toFixed(2)} €`, margin + 95 + 5, 60);
     doc.text(`Tarjeta Regalo: ${totalGiftCard.toFixed(2)} €`, margin + 95 + 5, 65);
-    doc.text(`Propinas tarjeta (aparte): +${totalTips.toFixed(2)} €`, margin + 95 + 5, 70);
+    doc.text(`Propinas retiradas (informativo): ${totalTips.toFixed(2)} €`, margin + 95 + 5, 70);
 
     // Draw breakdown table
-    const headers = ['Día', 'Pedidos', 'Efectivo', 'Tarjeta bancaria', 'Tarjeta regalo', 'Devoluciones', 'Descuentos', 'Total Neto'];
+    const headers = ['Día', 'Pedidos', 'Efectivo', 'Tarjeta bancaria', 'Tarjeta regalo', 'Propinas', 'Devoluciones', 'Descuentos', 'Total Neto'];
     const tableBody = report.days.map(day => [
       day.date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }),
       String(day.ticketCount),
       `${day.paymentMethods[REPORT_PAYMENT_METHODS.CASH].toFixed(2)}€`,
       `${day.paymentMethods[REPORT_PAYMENT_METHODS.CARD].toFixed(2)}€`,
       `${day.paymentMethods[REPORT_PAYMENT_METHODS.GIFT_CARD].toFixed(2)}€`,
+      `${day.tips.toFixed(2)}€`,
       day.refunds > 0 ? `-${day.refunds.toFixed(2)}€` : '0.00€',
       day.discounts > 0 ? `-${day.discounts.toFixed(2)}€` : '0.00€',
       `${day.netSales.toFixed(2)}€`
@@ -7304,6 +7327,7 @@ function downloadMonthlyReportPDF(selectedMonth, report, legal, filename) {
       `${totalCash.toFixed(2)}€`,
       `${totalCard.toFixed(2)}€`,
       `${totalGiftCard.toFixed(2)}€`,
+      `${totalTips.toFixed(2)}€`,
       `-${totalRefunds.toFixed(2)}€`,
       `-${totalDiscounts.toFixed(2)}€`,
       `${totalNet.toFixed(2)}€`
@@ -7332,20 +7356,21 @@ function downloadMonthlyReportPDF(selectedMonth, report, legal, filename) {
         fillColor: [248, 250, 252]
       },
       columnStyles: {
-        0: { cellWidth: 35 },
-        1: { halign: 'right', cellWidth: 20 },
+        0: { cellWidth: 22 },
+        1: { halign: 'right', cellWidth: 17 },
         2: { halign: 'right' },
         3: { halign: 'right' },
         4: { halign: 'right' },
         5: { halign: 'right' },
         6: { halign: 'right' },
-        7: { halign: 'right', cellWidth: 25 }
+        7: { halign: 'right' },
+        8: { halign: 'right', cellWidth: 22 }
       },
       didParseCell: (data) => {
         if (data.section === 'body' && data.row.index === totalRowIndex) {
           data.cell.styles.fontStyle = 'bold';
           data.cell.styles.fillColor = [241, 245, 249];
-          if (data.column.index === 7) {
+          if (data.column.index === 8) {
             data.cell.styles.textColor = totalNet >= 0 ? [5, 150, 105] : [220, 38, 38];
           } else {
             data.cell.styles.textColor = [15, 23, 42];
