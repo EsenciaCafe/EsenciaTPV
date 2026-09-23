@@ -2137,7 +2137,7 @@ body.light-theme .btn-quick-pay {
 }
 .menu-manager-login-form { display: grid; gap: 10px; margin-top: 20px; }
 .menu-manager-login-form input, .menu-manager-toolbar input, .menu-manager-toolbar select,
-.menu-promo-form input, .menu-manager-dialog input, .menu-manager-dialog textarea {
+.menu-promo-form input, .menu-manager-dialog input, .menu-manager-dialog textarea, .menu-manager-dialog select {
   min-height: 42px;
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius-sm);
@@ -2146,6 +2146,19 @@ body.light-theme .btn-quick-pay {
   padding: 9px 12px;
   font: inherit;
 }
+.menu-photo-upload {
+  min-height: 40px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--secondary);
+  border-radius: var(--border-radius-sm);
+  color: var(--secondary);
+  cursor: pointer;
+}
+.menu-photo-upload input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.menu-visual-dialog fieldset { display: grid; gap: 10px; border: 1px solid var(--border-color); border-radius: var(--border-radius-md); padding: 14px; }
+.menu-visual-dialog legend { padding: 0 6px; font-weight: 750; color: var(--secondary); }
 .menu-manager-divider {
   display: flex;
   align-items: center;

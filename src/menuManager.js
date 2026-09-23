@@ -13,11 +13,16 @@ import {
 } from './menuManagerFirebase.js';
 
 const GROUPS = [
-  ['poffertjes', 'Poffertjes'],
-  ['cafe', 'Café'],
   ['desayunos', 'Desayunos'],
-  ['bebidas', 'Bebidas']
+  ['pancakes', 'Mini pancakes'],
+  ['cafe', 'Café'],
+  ['matcha', 'Matcha'],
+  ['bebidas', 'Bebidas frías'],
+  ['te', 'Tés e infusiones'],
+  ['extras', 'Extras']
 ];
+const VISUAL_CATEGORY_DEFAULTS = Object.fromEntries(GROUPS.filter(([id]) => id !== 'extras'));
+const MAX_IMAGE_LENGTH = 96 * 1024;
 const ADMIN_UID = import.meta.env.VITE_MENU_FIREBASE_ADMIN_UID || '8sSVQe3BKJVu7QiPrYF9gTrPrtG2';
 const MENU_ASSET_BASE = 'https://esenciacafe.github.io/EsenciaMenu/';
 const IMAGES_URL = `${MENU_ASSET_BASE}assets/popup/images.json`;
@@ -46,12 +51,58 @@ const slug = value => String(value || '').toLowerCase().normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '').replace(/[^\w]+/g, '-').replace(/(^-|-$)/g, '');
 
 function groupId(section) {
+  if (section.visual_category) return section.visual_category;
+  if (['extras-tostas', 'extras-bebidas'].includes(section.id)) return 'extras';
+  const sectionCategories = {
+    'tostas': 'desayunos', 'croissants-dulces': 'desayunos', sandwich: 'desayunos', yogurt: 'desayunos',
+    'mini-pancakes': 'pancakes', cafe: 'cafe', especiales: 'cafe', 'chocolate-caliente': 'cafe',
+    matcha: 'matcha', smoothies: 'bebidas', batidos: 'bebidas', 'te-frio': 'bebidas', refrescos: 'bebidas',
+    'te-caliente': 'te'
+  };
+  if (sectionCategories[section.id]) return sectionCategories[section.id];
   const value = slug(section.group || section.title || section.id);
-  if (/^poff/.test(value)) return 'poffertjes';
+  if (/^poff|pancake/.test(value)) return 'pancakes';
   if (/^caf/.test(value)) return 'cafe';
   if (/^desayun/.test(value)) return 'desayunos';
   if (/^bebid/.test(value)) return 'bebidas';
   return value || 'otros';
+}
+
+function safeImageUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^data:image\/(png|jpeg|webp);base64,[a-z0-9+/]+=*$/i.test(raw)) return raw.length <= MAX_IMAGE_LENGTH ? raw : '';
+  if (/^[a-z][a-z\d+.-]*:/i.test(raw) && !/^https?:/i.test(raw)) return '';
+  return raw;
+}
+
+async function optimisePhoto(file) {
+  if (!['image/jpeg', 'image/png', 'image/webp', ''].includes(file.type)) throw new Error('Elige una foto JPG, PNG o WebP.');
+  if (file.size > 20 * 1024 * 1024) throw new Error('La foto supera los 20 MB.');
+  const url = URL.createObjectURL(file);
+  const image = new Image();
+  try {
+    image.src = url;
+    await image.decode();
+    let width = Math.round(image.naturalWidth * Math.min(1, 1200 / Math.max(image.naturalWidth, image.naturalHeight)));
+    const ratio = image.naturalHeight / image.naturalWidth;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1;
+    const format = canvas.toDataURL('image/webp').startsWith('data:image/webp;') ? 'image/webp' : 'image/jpeg';
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      canvas.width = width;
+      canvas.height = Math.max(1, Math.round(width * ratio));
+      const context = canvas.getContext('2d');
+      if (format === 'image/jpeg') { context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height); }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      for (const quality of [.82, .7, .58, .46]) {
+        const result = canvas.toDataURL(format, quality);
+        if (result.length <= MAX_IMAGE_LENGTH) return result;
+      }
+      width = Math.round(width * .78);
+    }
+    throw new Error('No se pudo reducir la foto lo suficiente.');
+  } finally { URL.revokeObjectURL(url); }
 }
 
 function normalizePromoUrl(value) {
@@ -238,6 +289,7 @@ export function renderMenuAvailability() {
       </select>
       <button class="btn btn-primary" data-menu-add="section">+ Sección</button>
       <button class="btn btn-secondary" id="menu-manager-nav-labels">Nombres de categorías</button>
+      <button class="btn btn-secondary" id="menu-manager-visual-settings">Diseño visual</button>
       <button class="btn btn-secondary" id="menu-manager-refresh">Actualizar</button>
     </div>
     <div class="menu-manager-quick-grid">
@@ -333,6 +385,7 @@ function openEntityDialog(type, sectionId, entityId) {
       <header><h3>${entityId ? 'Editar' : 'Crear'} ${isSection ? 'sección' : type === 'item' ? 'artículo' : 'topping'}</h3><button type="button" data-dialog-close>×</button></header>
       ${isSection && !entityId ? `<label>Identificador<input name="id" value="" placeholder="ej. cafes-especiales" required></label>` : ''}
       ${isSection ? `
+        <label>Categoría visual<select name="visual_category">${GROUPS.filter(([id]) => id !== 'extras').map(([id,label]) => `<option value="${id}" ${groupId(entity) === id ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label>Grupo<input name="group" value="${escapeHtml(entity.group || 'Café')}" required></label>
         <label>Título (ES)<input name="title" value="${escapeHtml(entity.title || '')}" required></label>
         <label>Título (EN)<input name="title_en" value="${escapeHtml(entity.title_en || '')}"></label>
@@ -340,17 +393,23 @@ function openEntityDialog(type, sectionId, entityId) {
         <label>Subtítulo (EN)<input name="subtitle_en" value="${escapeHtml(entity.subtitle_en || '')}"></label>
         <label>Nota (ES)<textarea name="note">${escapeHtml(entity.note || '')}</textarea></label>
         <label>Nota (EN)<textarea name="note_en">${escapeHtml(entity.note_en || '')}</textarea></label>
-        <label class="menu-dialog-check"><input name="base_enable" type="checkbox" ${entity.base_enable ? 'checked' : ''}> Mostrar producto base</label>
-        <label>Producto base (ES)<input name="base_title" value="${escapeHtml(entity.base_title || '')}"></label>
-        <label>Producto base (EN)<input name="base_title_en" value="${escapeHtml(entity.base_title_en || '')}"></label>
-        <label>Descripción base (ES)<textarea name="base_desc">${escapeHtml(entity.base_desc || '')}</textarea></label>
-        <label>Descripción base (EN)<textarea name="base_desc_en">${escapeHtml(entity.base_desc_en || '')}</textarea></label>
-        <label>Precio base<input name="base_price" type="number" step="0.01" value="${escapeHtml(entity.base_price ?? '')}"></label>
+        <label class="menu-dialog-check"><input name="base_enable" type="checkbox" ${entity.base?.price != null ? 'checked' : ''}> Mostrar producto base</label>
+        <label>Nombre base (ES)<input name="base_name" value="${escapeHtml(entity.base?.name || '')}"></label>
+        <label>Nombre base (EN)<input name="base_name_en" value="${escapeHtml(entity.base?.name_en || '')}"></label>
+        <label>Descripción base (ES)<textarea name="base_desc">${escapeHtml(entity.base?.description || '')}</textarea></label>
+        <label>Descripción base (EN)<textarea name="base_desc_en">${escapeHtml(entity.base?.description_en || '')}</textarea></label>
+        <label>Precio base<input name="base_price" type="number" step="0.01" value="${escapeHtml(entity.base?.price ?? '')}"></label>
+        <label>Foto base<input name="base_image_url" value="${escapeHtml(entity.base?.image_url || '')}" placeholder="URL, ruta o sube una foto debajo"></label>
+        <label class="menu-photo-upload">Subir foto base<input type="file" data-image-target="base_image_url" accept="image/jpeg,image/png,image/webp"></label>
       ` : `
         <label>Nombre (ES)<input name="name" value="${escapeHtml(entity.name || '')}" required></label>
         <label>Nombre (EN)<input name="name_en" value="${escapeHtml(entity.name_en || '')}"></label>
         ${type === 'item' ? `<label>Descripción (ES)<textarea name="desc">${escapeHtml(entity.desc || '')}</textarea></label><label>Descripción (EN)<textarea name="desc_en">${escapeHtml(entity.desc_en || '')}</textarea></label>` : ''}
         <label>Precio<input name="price" type="number" step="0.01" value="${escapeHtml(entity.price ?? '')}"></label>
+        <label>Foto<input name="image_url" value="${escapeHtml(entity.image_url || '')}" placeholder="URL, ruta o sube una foto debajo"></label>
+        <label class="menu-photo-upload">Subir foto<input type="file" data-image-target="image_url" accept="image/jpeg,image/png,image/webp"></label>
+        ${type === 'item' && sectionId === 'especiales' ? `<label class="menu-dialog-check"><input name="serve_hot" type="checkbox" ${entity.serving_temperatures?.includes('hot') ? 'checked' : ''}> Se sirve caliente</label><label class="menu-dialog-check"><input name="serve_cold" type="checkbox" ${entity.serving_temperatures?.includes('cold') ? 'checked' : ''}> Se sirve frío</label>` : ''}
+        ${type === 'topping' ? `<label class="menu-dialog-check"><input name="free" type="checkbox" ${entity.free ? 'checked' : ''}> Extra gratuito</label>` : ''}
       `}
       <label>Orden<input name="order" type="number" value="${escapeHtml(entity.order ?? 1)}"></label>
       <label class="menu-dialog-check"><input name="hidden" type="checkbox" ${entity.hidden ? 'checked' : ''}> Oculto en el menú</label>
@@ -358,6 +417,14 @@ function openEntityDialog(type, sectionId, entityId) {
     </form>`;
   document.body.appendChild(overlay);
   overlay.querySelectorAll('[data-dialog-close]').forEach(button => button.onclick = () => overlay.remove());
+  overlay.querySelectorAll('[data-image-target]').forEach(input => input.addEventListener('change', async () => {
+    if (!input.files?.[0]) return;
+    try {
+      const value = await optimisePhoto(input.files[0]);
+      overlay.querySelector(`[name="${input.dataset.imageTarget}"]`).value = value;
+      toast('Foto preparada. Pulsa Guardar para aplicarla.', 'success');
+    } catch (error) { toast(error.message || 'No se pudo preparar la foto.', 'error'); }
+  }));
   overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); });
   overlay.querySelector('form').addEventListener('submit', async event => {
     event.preventDefault();
@@ -366,8 +433,22 @@ function openEntityDialog(type, sectionId, entityId) {
     values.order = Number(values.order || 9999);
     values.hidden = form.get('hidden') === 'on';
     if (isSection) {
-      values.base_enable = form.get('base_enable') === 'on';
-      values.base_price = values.base_price === '' ? '' : Number(values.base_price);
+      const baseEnabled = form.get('base_enable') === 'on';
+      const existingBase = entity.base || {};
+      values.base = baseEnabled ? {
+        ...existingBase,
+        name: values.base_name || '', name_en: values.base_name_en || '',
+        description: values.base_desc || '', description_en: values.base_desc_en || '',
+        price: values.base_price === '' ? '' : Number(values.base_price),
+        image_url: safeImageUrl(values.base_image_url) || ''
+      } : {};
+      ['base_enable','base_name','base_name_en','base_desc','base_desc_en','base_price','base_image_url'].forEach(key => delete values[key]);
+    }
+    if (!isSection) {
+      values.image_url = safeImageUrl(values.image_url) || '';
+      if (type === 'item' && sectionId === 'especiales') values.serving_temperatures = [...(form.get('serve_hot') === 'on' ? ['hot'] : []), ...(form.get('serve_cold') === 'on' ? ['cold'] : [])];
+      if (type === 'topping') values.free = form.get('free') === 'on';
+      delete values.serve_hot; delete values.serve_cold;
     }
     if ('price' in values) values.price = values.price === '' ? '' : Number(values.price);
     try {
@@ -414,6 +495,62 @@ function openNavLabelsDialog() {
   });
 }
 
+function openVisualSettingsDialog() {
+  const current = state.settings.visual_categories || {};
+  const overlay = document.createElement('div');
+  overlay.className = 'menu-manager-dialog-overlay';
+  overlay.innerHTML = `
+    <form class="menu-manager-dialog menu-visual-dialog">
+      <header><h3>Diseño visual de la carta</h3><button type="button" data-dialog-close>×</button></header>
+      <p class="gemini-muted">Configura la portada y las categorías de la nueva carta. Los encuadres existentes se conservan.</p>
+      <fieldset><legend>Portada</legend>
+        <label>Foto principal<input name="visual_hero_image" value="${escapeHtml(state.settings.visual_hero_image || '')}"></label>
+        <label class="menu-photo-upload">Subir foto de portada<input type="file" data-image-target="visual_hero_image" accept="image/jpeg,image/png,image/webp"></label>
+      </fieldset>
+      ${GROUPS.filter(([id]) => id !== 'extras').map(([id, label]) => {
+        const category = current[id] || {};
+        return `<fieldset><legend>${label}</legend>
+          <label>Nombre (ES)<input name="${id}_name_es" value="${escapeHtml(category.name_es || VISUAL_CATEGORY_DEFAULTS[id] || label)}"></label>
+          <label>Nombre (EN)<input name="${id}_name_en" value="${escapeHtml(category.name_en || '')}"></label>
+          <label>Descripción (ES)<textarea name="${id}_desc_es">${escapeHtml(category.desc_es || '')}</textarea></label>
+          <label>Descripción (EN)<textarea name="${id}_desc_en">${escapeHtml(category.desc_en || '')}</textarea></label>
+          <label>Foto<input name="${id}_image_url" value="${escapeHtml(category.image_url || '')}"></label>
+          <label class="menu-photo-upload">Subir foto<input type="file" data-image-target="${id}_image_url" accept="image/jpeg,image/png,image/webp"></label>
+        </fieldset>`;
+      }).join('')}
+      <footer><button class="btn btn-secondary" type="button" data-dialog-close>Cancelar</button><button class="btn btn-primary" type="submit">Guardar diseño</button></footer>
+    </form>`;
+  document.body.appendChild(overlay);
+  overlay.querySelectorAll('[data-dialog-close]').forEach(button => button.onclick = () => overlay.remove());
+  overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); });
+  overlay.querySelectorAll('[data-image-target]').forEach(input => input.addEventListener('change', async () => {
+    if (!input.files?.[0]) return;
+    try {
+      overlay.querySelector(`[name="${input.dataset.imageTarget}"]`).value = await optimisePhoto(input.files[0]);
+      toast('Foto preparada. Guarda el diseño para aplicarla.', 'success');
+    } catch (error) { toast(error.message || 'No se pudo preparar la foto.', 'error'); }
+  }));
+  overlay.querySelector('form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const visualCategories = Object.fromEntries(GROUPS.filter(([id]) => id !== 'extras').map(([id]) => [id, {
+      ...(current[id] || {}),
+      name_es: String(form.get(`${id}_name_es`) || '').trim(),
+      name_en: String(form.get(`${id}_name_en`) || '').trim(),
+      desc_es: String(form.get(`${id}_desc_es`) || '').trim(),
+      desc_en: String(form.get(`${id}_desc_en`) || '').trim(),
+      image_url: safeImageUrl(form.get(`${id}_image_url`)) || ''
+    }]));
+    try {
+      await saveMenuSettings({ visual_hero_image: safeImageUrl(form.get('visual_hero_image')) || '', visual_categories: visualCategories });
+      state.settings = await loadMenuSettings();
+      overlay.remove();
+      toast('Diseño visual actualizado.', 'success');
+      notify();
+    } catch (error) { toast(error.message || 'No se pudo guardar el diseño.', 'error'); }
+  });
+}
+
 export function bindMenuManager(container, navigate) {
   container.querySelector('#settings-to-menu-availability')?.addEventListener('click', () => navigate(['menu-manager', 'disponibilidad']));
   container.querySelector('#settings-to-menu-promos')?.addEventListener('click', () => navigate(['menu-manager', 'promos']));
@@ -439,6 +576,7 @@ export function bindMenuManager(container, navigate) {
   container.querySelector('#menu-manager-logout')?.addEventListener('click', () => logoutMenuUser());
   container.querySelector('#menu-manager-refresh')?.addEventListener('click', refreshAll);
   container.querySelector('#menu-manager-nav-labels')?.addEventListener('click', openNavLabelsDialog);
+  container.querySelector('#menu-manager-visual-settings')?.addEventListener('click', openVisualSettingsDialog);
   container.querySelector('#menu-manager-search')?.addEventListener('input', event => {
     state.query = event.target.value;
     window.clearTimeout(event.target._menuTimer);
