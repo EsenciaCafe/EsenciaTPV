@@ -26,6 +26,7 @@ const MAX_IMAGE_LENGTH = 96 * 1024;
 const ADMIN_UID = import.meta.env.VITE_MENU_FIREBASE_ADMIN_UID || '8sSVQe3BKJVu7QiPrYF9gTrPrtG2';
 const MENU_ASSET_BASE = 'https://esenciacafe.github.io/EsenciaMenu/';
 const IMAGES_URL = `${MENU_ASSET_BASE}assets/popup/images.json`;
+const MENU_EDITOR_URL = `${MENU_ASSET_BASE}admin/`;
 
 const state = {
   user: undefined,
@@ -232,6 +233,22 @@ function entityActions(type, sectionId, entity) {
 }
 
 export function renderMenuAvailability() {
+  return `
+    <div class="menu-editor-embed">
+      <header class="menu-editor-embed-bar">
+        <button class="btn btn-secondary" id="settings-back-btn" type="button">← Salir del editor
+        </button>
+        <div>
+          <strong>Editor de carta</strong>
+          <small>Los cambios se aplican directamente al menú de clientes</small>
+        </div>
+        <a class="btn btn-secondary" href="${MENU_EDITOR_URL}" target="_blank" rel="noopener">Abrir aparte ↗</a>
+      </header>
+      <iframe class="menu-editor-frame" src="${MENU_EDITOR_URL}" title="Editor de la carta de Esencia" allow="clipboard-write" loading="eager"></iframe>
+    </div>`;
+  /* El editor nativo anterior queda disponible temporalmente debajo para facilitar
+     una retirada segura cuando confirmemos que el editor oficial funciona en todos
+     los dispositivos del TPV. */
   if (!state.user) return shell('Disponibilidad', '');
   const query = state.query.toLowerCase().trim();
   const hiddenItems = state.sections.flatMap(section =>
