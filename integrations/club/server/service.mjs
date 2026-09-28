@@ -4,6 +4,7 @@ import {createPinAuth} from './auth.mjs';
 import {waitForOperation} from './operation-result.mjs';
 import {assignmentDetails} from './assignment-details.mjs';
 import {pendingOffers} from './pending-offers.mjs';
+import {validatePromotionPrices} from './promotion-prices.mjs';
 import {benefitDiscount,validateBenefitRule} from './benefit.mjs';
 import {allocateCartDiscount,cartPromotionPart} from '../../../src/clubCartPromotionMath.js';
 import {promotionSnapshot,promotionDiscount} from '../../../src/clubPromotionMath.js';
@@ -73,21 +74,12 @@ export function createTpvBridge({db,send,sourceProject,loadCatalog,finalizeFisca
    if(!Array.isArray(p.lines)||!p.lines.length||p.lines.length>500||new Set(p.lines.map(l=>l.lineId)).size!==p.lines.length)throw Error('Cuenta no válida.');
    for(const line of p.lines){
     if(typeof line.lineId!=='string'||!line.lineId||!Number.isSafeInteger(line.qty)||line.qty<1||line.qty>10000)throw Error('Cantidad no válida.');
-    const item=catalog.items.find(i=>String(i.id)===line.snapshot.id);
-    if(!item||amount(item.price)!==line.snapshot.price)throw Error('El precio del producto ha cambiado.');
-    const ids=new Set();for(const o of line.snapshot.options){const option=(item.options||[]).find(x=>String(x.id)===o.id);
-     if(!option||ids.has(o.id)||!Number.isInteger(o.qty)||o.qty<1||o.qty>100||amount(option.price)!==o.price)throw Error('Extras no válidos.');ids.add(o.id);
-    }
+    validatePromotionPrices(catalog,line.snapshot);
    }
    allocation=allocateCartDiscount([...p.lines].sort((a,b)=>a.lineId.localeCompare(b.lineId)),reward.rule.benefit);discount=allocation.discountCents;
   }else{
-  const item=catalog.items.find(i=>String(i.id)===p.snapshot.id);
-  if(!item||amount(item.price)!==p.snapshot.price)throw Error('El precio del producto ha cambiado.');
-  const ids=new Set();let extras=0;
-  for(const o of p.snapshot.options){
-   const option=(item.options||[]).find(x=>String(x.id)===o.id);
-   if(!option||ids.has(o.id)||!Number.isInteger(o.qty)||o.qty<1||o.qty>100||amount(option.price)!==o.price)throw Error('Extras no válidos.');ids.add(o.id);extras+=o.price*o.qty;
-  }
+  const item=validatePromotionPrices(catalog,p.snapshot);
+  const extras=p.snapshot.options.reduce((sum,o)=>sum+o.price*o.qty,0);
   if(reward.rule.version===2){
    if(typeof p.line_id!=='string'||!p.line_id)throw Error('Elige una unidad de la cuenta.');
    const topping=p.option_id===null?null:p.snapshot.options.find(o=>o.id===p.option_id);

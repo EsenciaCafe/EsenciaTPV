@@ -3900,7 +3900,7 @@ function setupTicketOnlyEventListeners(container) {
             isDrawerOpen = false;
           } catch (error) {
             console.error('[TPV] No se pudo confirmar el vaciado.', error);
-            showToast('No se vació el pedido. Comprueba la conexión e inténtalo de nuevo.', 'error');
+            showToast(error?.message || 'No se pudo vaciar el pedido. Inténtalo de nuevo.', 'error');
           }
         },
         null,
@@ -3947,7 +3947,7 @@ function setupTicketOnlyEventListeners(container) {
           showToast(clearResult?.review ? 'Pedido vaciado. Los puntos requieren revisión en Fidelidad.' : clearResult?.pointsQueued ? 'Pedido vaciado. Puntos guardados y cliente retirado.' : 'Pedido vaciado.', clearResult?.review ? 'warning' : 'success');
         } catch (error) {
           console.error('[TPV] No se pudo confirmar el vaciado.', error);
-          showToast('No se vació el pedido. Comprueba la conexión e inténtalo de nuevo.', 'error');
+          showToast(error?.message || 'No se pudo vaciar el pedido. Inténtalo de nuevo.', 'error');
         }
       }, null, true);
     });
@@ -8042,7 +8042,7 @@ function setupEventListeners(container) {
             isDrawerOpen = false;
           } catch (error) {
             console.error('[TPV] No se pudo confirmar el vaciado.', error);
-            showToast('No se vació el pedido. Comprueba la conexión e inténtalo de nuevo.', 'error');
+            showToast(error?.message || 'No se pudo vaciar el pedido. Inténtalo de nuevo.', 'error');
           }
         },
         null,
@@ -8100,7 +8100,7 @@ function setupEventListeners(container) {
             showToast(clearResult?.review ? 'Pedido vaciado. Los puntos requieren revisión en Fidelidad.' : clearResult?.pointsQueued ? 'Pedido vaciado. Puntos guardados y cliente retirado.' : 'Pedido vaciado.', clearResult?.review ? 'warning' : 'success');
           } catch (error) {
             console.error('[TPV] No se pudo confirmar el vaciado.', error);
-            showToast('No se vació el pedido. Comprueba la conexión e inténtalo de nuevo.', 'error');
+            showToast(error?.message || 'No se pudo vaciar el pedido. Inténtalo de nuevo.', 'error');
           }
         },
         null,

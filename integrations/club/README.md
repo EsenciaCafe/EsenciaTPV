@@ -33,11 +33,18 @@ ni repite el cobro. El cliente se elimina de la cuenta después de cerrarla.
 
 ## Verificación
 
-103 tests locales, incluido primer PIN, revocación al cambiar PIN, límites de
+119 tests locales, incluido primer PIN, revocación al cambiar PIN, límites de
 intentos, descuentos, cola persistente, transacciones y CORS. Build normal con
 las variables de producción. Lectura real entre proyectos comprobada: sesión,
 QR de socio, tres promociones configuradas y catálogo. No se han creado ventas
 ni concedido puntos reales para esta comprobación.
+
+Corrección 29/09: cobro y vaciado leen la misma sesión persistente que el acceso
+PIN. Los beneficios respetan el precio base editado en la cuenta (incluso 0 €),
+validan los toppings contra la carta y congelan el precio al reservar. Las pruebas
+incluyen MiniPancakes a 0 € con almendra a 1,50 €, vaciado con y sin promociones,
+entrega/liberación y reintentos sin duplicar puntos. Comprobación de navegador con
+peticiones interceptadas: selección explícita, vaciado y retirada del cliente.
 
 Después de actualizar la web, los empleados que ya tenían una sesión antigua
 deben salir y entrar una vez con su PIN para iniciar también la sesión Club.

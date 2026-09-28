@@ -4,7 +4,7 @@ export function promoTargets(items, rule) {
   if(!rule)return [];
   if(rule.benefit)return items.filter(i=>!i.clubPromotion&&!Number(i.discountPercent)&&i.qty>=1).flatMap(i=>rule.benefit.type==='free_topping'
     ?(i.selectedOptions||[]).filter(o=>Number(o.qty)>0&&cents(o.price)>0).map(o=>({lineId:i.ticketItemId,optionId:String(o.id),label:`${i.name} · ${o.name}`}))
-    :cents(i.price)>0?[{lineId:i.ticketItemId,optionId:null,label:i.name+(i.selectedOptions?.length?' · '+i.selectedOptions.map(o=>`${o.qty} ${o.name}`).join(', '):'')+' · '+Number(i.price).toFixed(2)+' €'}]:[]);
+    :(rule.benefit.type==='discount'?cents(i.price)+(i.selectedOptions||[]).reduce((total,o)=>total+cents(o.price)*Number(o.qty),0):cents(i.price))>0?[{lineId:i.ticketItemId,optionId:null,label:i.name+(i.selectedOptions?.length?' · '+i.selectedOptions.map(o=>`${o.qty} ${o.name}`).join(', '):'')+' · '+Number(i.price).toFixed(2)+' €'}]:[]);
   return items.filter(item => !item.clubPromotion && !Number(item.discountPercent) && item.qty >= 1)
     .flatMap(item => rule.scope === 'product'
       ? (rule.targetIds.map(String).includes(String(item.id)) ? [{lineId:item.ticketItemId,optionId:null,label:item.name}] : [])

@@ -10,6 +10,6 @@ export async function serverClubCall(input){
 }
 export const serverClubRaw={rpc:async(_name,input)=>{try{return {data:await serverClubCall(input),error:null};}catch(error){return {data:null,error};}}};
 export async function serverClubAction(action,payload){
- const session=JSON.parse(sessionStorage.getItem('esencia-club-pin-session-v1')||'null');
+ const session=JSON.parse(localStorage.getItem('esencia-club-pin-session-v1')||sessionStorage.getItem('esencia-club-pin-session-v1')||'null');
  return serverClubCall({p_device:localStorage.getItem('esencia-club-terminal-v1')||'',p_session:session?.token,p_action:action,p_payload:{...payload,_expectedActor:session?.actorId}});
 }
