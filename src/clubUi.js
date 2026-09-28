@@ -163,19 +163,6 @@ export function createClubPayment({ amount, canUse, initial = null, onSelection 
 }
 
 
-export function showClubBinding(staffId) {
-  const modal=dialog('Cuenta de Club del empleado');
-  if(clubServerEnabled){modal.querySelector('[data-body]').textContent='La cuenta de equipo se vincula durante la configuración del servidor. El empleado accede únicamente con su PIN. Para cambiar la vinculación, debe revisarla el administrador de Fidelidad.';return;}
-  const body=modal.querySelector('[data-body]');
-  body.innerHTML='<p>Vincula el correo de una cuenta que ya tenga permisos de equipo en Club. No se guarda su contraseña.</p><form><label>Correo de Club<input name="email" type="email" autocomplete="off"></label><p>Dejar vacío para desvincular.</p><button>Guardar vinculación</button></form><p role="status"></p>';
-  const status=body.querySelector('[role=status]');
-  clubPinBridge.binding(staffId).then(r=>{if(modal.isConnected)body.querySelector('input').value=r.email||'';}).catch(e=>{status.textContent=e.message;});
-  body.querySelector('form').onsubmit=async event=>{
-    event.preventDefault();const button=body.querySelector('form button');button.disabled=true;
-    try {await clubPinBridge.bind(staffId,body.querySelector('input').value.trim());status.textContent='Vinculación guardada. El empleado accederá con su PIN.';}
-    catch(e){status.textContent=e.message;}finally{button.disabled=false;}
-  };
-}
 export function showClubTicketIdentity(store) {
   const modal=dialog('Cliente de esta cuenta');
   const body=modal.querySelector('[data-body]');

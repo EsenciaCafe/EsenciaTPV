@@ -4,7 +4,7 @@ import { clubTicketOptions, clearClubTicket } from './clubTicket.js';
 import { store } from './store.js';
 import { loadSaleById } from './db.js';
 import { clubEnabled, clubAfterSale, clubAfterRefund, initializeClub, clubLogout, clubLoginWithPin, clubPinEnabled, clubQueue, clubActor } from './clubRuntime.js';
-import { createClubPayment, showClubPanel, showClubBinding, showClubAssignment, showClubCourtesy, showClubTicketIdentity } from './clubUi.js';
+import { createClubPayment, showClubPanel, showClubAssignment, showClubCourtesy, showClubTicketIdentity } from './clubUi.js';
 import { supabase } from './supabase.js';
 import QRCode from 'qrcode';
 import {
@@ -2286,7 +2286,7 @@ function renderAjustesView(state) {
         </div>
         <h2 class="settings-nav-title">${isNew ? 'Nuevo empleado' : 'Editar empleado'}</h2>
         <div class="settings-editor-container">
-          <div id="club-staff-binding-slot"></div><form id="settings-staff-form" data-staff-id="${profile?.id || ''}" style="display:grid; gap:16px;">
+          <form id="settings-staff-form" data-staff-id="${profile?.id || ''}" style="display:grid; gap:16px;">
             <div class="editor-form-group">
               <label class="editor-form-label">Nombre</label>
               <input type="text" class="editor-form-input" id="staff-display-name" value="${profile?.display_name || ''}" required placeholder="Ej. Camarero 1">
@@ -8716,11 +8716,6 @@ function setupEventListeners(container) {
     });
   }
 
-  if (clubPinEnabled) {
-    const slot=container.querySelector('#club-staff-binding-slot');
-    const staffId=container.querySelector('#settings-staff-form')?.dataset.staffId;
-    if(slot && staffId){const button=document.createElement('button');button.className='btn btn-secondary';button.textContent='Vincular cuenta de Club Esencia';button.onclick=()=>showClubBinding(staffId);slot.append(button);}
-  }
   const deleteStaffBtn = container.querySelector('#settings-delete-staff-btn');
   if (deleteStaffBtn) {
     deleteStaffBtn.addEventListener('click', () => {
