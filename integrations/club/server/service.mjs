@@ -2,6 +2,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {enqueue,createOutboxWorker} from './outbox.mjs';
 import {createPinAuth} from './auth.mjs';
 import {waitForOperation} from './operation-result.mjs';
+import {assignmentDetails} from './assignment-details.mjs';
 import {benefitDiscount,validateBenefitRule} from './benefit.mjs';
 import {allocateCartDiscount,cartPromotionPart} from '../../../src/clubCartPromotionMath.js';
 import {promotionSnapshot,promotionDiscount} from '../../../src/clubPromotionMath.js';
@@ -227,9 +228,8 @@ export function createTpvBridge({db,send,sourceProject,loadCatalog,finalizeFisca
    if(p_action==='clear_ticket')return clear(context,p);
    if(p_action==='gift_points'){await perform(context,'award.courtesy',{event_id:p.event_id,member_id:p.member_id,points:p.points*100,reason:p.reason});return {ok:true};}
    if(p_action==='assignment'){
-    const state=await perform(context,'assignment.get',{sale_id:p.sale_id}),a=state.assignment;
-    const label=a?(await db.query('select name from tpv_bridge_private.member_labels where id=$1',[a.member_id])).rows[0]?.name:null;
-    return {active:a?.active||false,name:label||a?.member_id||'',points:(a?.delta||0)/100,version:state.version,history:state.history.map(h=>({...h,action:h.reason==='assign'?'assign_sale':'withdraw_sale',at:h.created_at}))};
+    const state=await perform(context,'assignment.get',{sale_id:p.sale_id});
+    return assignmentDetails(db,sourceProject,state);
    }
    if(p_action==='withdraw_sale'){await perform(context,'assignment.withdraw',{sale_id:p.sale_id,expected_version:p.version,reason:p.reason});return {ok:true};}
    if(p_action==='purchase'||p_action==='assign_sale'){

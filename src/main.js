@@ -3,7 +3,8 @@ import { choosePromotionClear } from './clubPromotionUi.js';
 import { clubTicketOptions, clearClubTicket } from './clubTicket.js';
 import { store } from './store.js';
 import { loadSaleById } from './db.js';
-import { clubEnabled, clubAfterSale, clubAfterRefund, initializeClub, clubLogout, clubLoginWithPin, clubPinEnabled, clubQueue, clubActor } from './clubRuntime.js';
+import { clubEnabled, clubAfterSale, clubAfterRefund, initializeClub, clubLogout, clubLoginWithPin, clubPinEnabled, clubPinBridge, clubQueue, clubActor } from './clubRuntime.js';
+import { mountTransactionIdentity } from './transactionIdentity.js';
 import { createClubPayment, showClubPanel, showClubAssignment, showClubCourtesy, showClubTicketIdentity } from './clubUi.js';
 import { supabase } from './supabase.js';
 import QRCode from 'qrcode';
@@ -1291,6 +1292,7 @@ function showTransactionDetailModal(transactionId) {
             <strong>${tx.itemsCount} art.</strong>
           </div>
         </div>
+        <div class="tx-detail-summary" data-transaction-identity></div>
         <div class="tx-detail-list">
           ${itemsHTML}
         </div>
@@ -1370,7 +1372,9 @@ function showTransactionDetailModal(transactionId) {
     });
   }
   
-  if(clubPinEnabled && tx.type !== 'refund') { const b=document.createElement('button'); b.className='pay-btn-opt';b.textContent='Asignación de puntos Club';b.onclick=()=>showClubAssignment(tx);modal.querySelector('.tx-detail-body').append(b); }
+  const identity = mountTransactionIdentity(modal.querySelector('[data-transaction-identity]'), tx,
+    clubPinEnabled && tx.type !== 'refund' ? () => clubPinBridge.action('assignment', {sale_id: tx.id}) : null);
+  if(clubPinEnabled && tx.type !== 'refund') { const b=document.createElement('button'); b.className='pay-btn-opt';b.textContent='Asignación de puntos Club';b.onclick=()=>showClubAssignment(tx,{onChange:identity.update});modal.querySelector('.tx-detail-body').append(b); }
   const refundBtn = modal.querySelector('#tx-detail-refund-btn');
   if (refundBtn) {
     refundBtn.addEventListener('click', () => {

@@ -173,7 +173,7 @@ export function showClubTicketIdentity(store) {
   modal.addEventListener('close',()=>selector.dispose(),{once:true});
 }
 
-export function showClubAssignment(tx) {
+export function showClubAssignment(tx, {onChange = () => {}} = {}) {
   const modal=dialog('Puntos de esta transacción');const body=modal.querySelector('[data-body]');
   body.innerHTML='<div data-current>Cargando asignación…</div><div data-selector></div><button data-assign disabled>Asignar esta cuenta al socio</button><label>Motivo de retirada<input data-reason maxlength="200" placeholder="Ej.: cliente equivocado"></label><button data-withdraw disabled>Retirar asignación y puntos</button><p data-assignment-message role="status"></p>';
   let version=0,busy=false;
@@ -183,6 +183,7 @@ export function showClubAssignment(tx) {
   async function refresh(){
     body.querySelector('[data-assign]').disabled=true;body.querySelector('[data-withdraw]').disabled=true;
     const state=await clubPinBridge.action('assignment',{sale_id:tx.id});if(!modal.isConnected)return;
+    onChange(state);
     version=state.version;body.querySelector('[data-selector]').hidden=state.active;
     body.querySelector('[data-current]').innerHTML=state.active?`<p>Asignada a <b>${escape(state.name)}</b> · ${state.points} puntos</p>`:'<p>Sin asignación activa. Esta cuenta solo puede sumar puntos a un socio a la vez.</p>';
     if(state.history?.length)body.querySelector('[data-current]').innerHTML+=`<details><summary>Historial de asignaciones</summary>${state.history.map(h=>`<p>${escape({purchase:'Asignación al cobrar',assign_sale:'Asignación posterior',withdraw_sale:'Retirada'}[h.action]||h.action)} · ${escape(h.at)}${h.reason?' · '+escape(h.reason):''}</p>`).join('')}</details>`;
