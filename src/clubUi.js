@@ -8,6 +8,33 @@ import { clubActor, clubClient, clubIntegration, clubLogin, clubLogout, clubQueu
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const localDemo=import.meta.env.VITE_CLUB_LOCAL_DEMO==='true';
 const demoQr='esencia-club:v1:00000000-0000-4000-8000-000000000004';
+let reconnecting=null;
+async function ensureClubSession() {
+  const actor=await clubActor();if(actor||!clubPinEnabled)return actor;
+  if(reconnecting)return reconnecting;
+  const staff=clubStaff();if(!staff)return null;
+  reconnecting=new Promise(resolve=>{
+    const modal=dialog('Reconectar Club Esencia'),body=modal.querySelector('[data-body]');
+    body.innerHTML='<p>Confirma tu PIN habitual para recuperar Fidelidad y continuar.</p><form><label>PIN del empleado<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" autocomplete="off" required></label><button class="btn btn-primary" type="submit">Conectar y continuar</button></form><p role="status"></p>';
+    body.querySelector('[role=status]').textContent=clubPinBridge.loginError();
+    let result=null,busy=false;
+    modal.addEventListener('close',()=>resolve(result),{once:true});
+    body.querySelector('form').onsubmit=async event=>{
+      event.preventDefault();if(busy)return;busy=true;
+      const input=body.querySelector('input'),button=body.querySelector('button'),status=body.querySelector('[role=status]');
+      const pin=input.value;input.value='';button.disabled=true;status.textContent='Conectando…';
+      try {
+        if(clubStaff()?.id!==staff.id)throw Error('El empleado ha cambiado.');
+        const ok=await clubPinBridge.login(pin,staff.id);
+        if(clubStaff()?.id!==staff.id){await clubPinBridge.logout();throw Error('El empleado ha cambiado.');}
+        if(!ok)throw Error(clubPinBridge.loginError()||'No se pudo conectar con Fidelidad.');
+        result=clubPinBridge.actor();modal.close();
+      }catch(error){status.textContent=error.message;}
+      finally{busy=false;button.disabled=false;}
+    };
+  });
+  try{return await reconnecting;}finally{reconnecting=null;}
+}
 export function showClubPanel() {
   const modal = dialog('Club Esencia · Equipo');
   const body = modal.querySelector('[data-body]');
@@ -19,7 +46,7 @@ export function showClubPanel() {
     catch (e) { message = e.message; }
     if (!modal.isConnected) return;
     body.innerHTML = `<p>${clubPinEnabled ? 'Acceso con el PIN del TPV. Los pendientes se conservan al cambiar de empleado.' : 'Acceso independiente del PIN del TPV. Los pendientes se conservan al cerrar sesión.'}</p>
-      ${!clubClient ? '<p>Club Esencia no está configurado en esta instalación.</p>' : clubPinEnabled ? `<p>${actor ? 'Fidelidad preparada para el empleado actual.' : 'Para activar Club, sal del TPV y vuelve a entrar con tu PIN habitual. No necesitas otra contraseña.'}</p>${clubServerEnabled ? '<p>Este dispositivo se configura automáticamente al iniciar sesión con tu PIN.</p>' : ''}` : actor ? `<p>Sesión del equipo activa.</p><button data-logout>Cerrar sesión de Club</button>` : `
+      ${!clubClient ? '<p>Club Esencia no está configurado en esta instalación.</p>' : clubPinEnabled ? `<p>${actor ? 'Fidelidad preparada para el empleado actual.' : 'La conexión de Fidelidad necesita recuperarse.'}</p>${!actor?'<button data-reconnect class="btn btn-primary">Reconectar con mi PIN</button>':''}` : actor ? `<p>Sesión del equipo activa.</p><button data-logout>Cerrar sesión de Club</button>` : `
       <form data-login><label>Correo del equipo<input name="email" type="email" autocomplete="username" required></label>
       <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><button>Acceder a Club</button></form>`}
       <p role="status">${escape(message)}</p><h4>Asignaciones de puntos</h4>${clubPinEnabled ? '<button data-courtesy>Puntos de cortesía</button>' : ''}
@@ -36,6 +63,7 @@ export function showClubPanel() {
       finally { busy = false; }
     };
     body.querySelector('[data-courtesy]')?.addEventListener('click', showClubCourtesy);
+    body.querySelector('[data-reconnect]')?.addEventListener('click',async()=>{await ensureClubSession();await draw();});
     body.querySelector('[data-login]')?.addEventListener('submit', run(async event => {
       const form = new FormData(event.currentTarget);
       await clubLogin(String(form.get('email')).trim(), String(form.get('password')));
@@ -127,17 +155,18 @@ export function createClubPayment({ amount, canUse, initial = null, onSelection 
     root.querySelector('[data-qr]')?.addEventListener('keydown', e => { if(e.key === 'Enter') { e.preventDefault(); void identify(); } });
     root.querySelector('[data-identify]')?.addEventListener('click', identify);
     root.querySelector('[data-demo-member]')?.addEventListener('click',()=>{input=demoQr;void identify();});
-    root.querySelector('[data-camera]')?.addEventListener('click', () => { reset(); root.querySelector('.club-payment').open=true; stopCamera = scanClubQr(value => { input = value; void identify(); },()=>{root.querySelector('.club-payment').open=true;root.querySelector('[data-manual-entry]').open=true;root.querySelector('[data-qr]').focus();}); });
+    root.querySelector('[data-camera]')?.addEventListener('click', async () => { if(clubPinEnabled&&!await ensureClubSession())return;if(closed)return;reset(); root.querySelector('.club-payment').open=true; stopCamera = scanClubQr(value => { input = value; void identify(); },()=>{root.querySelector('.club-payment').open=true;root.querySelector('[data-manual-entry]').open=true;root.querySelector('[data-qr]').focus();}); });
     root.querySelector('.club-payment > summary')?.addEventListener('click',event=>{if(!member&&canUse()){event.preventDefault();root.querySelector('.club-payment').open=true;root.querySelector('[data-camera]')?.click();}});
     const identity=root.closest('.club-identity');if(identity){const footer=identity.querySelector('[data-footer]');footer.replaceChildren();if(member){for(const button of root.querySelectorAll('[data-clear],[data-rewards]')){button.className=button.hasAttribute('data-rewards')?'btn btn-primary':'btn btn-secondary';footer.append(button);}}else{const cancel=document.createElement('button');cancel.className='btn btn-secondary';cancel.textContent='Cancelar';cancel.onclick=()=>identity.close();footer.append(cancel);}}
   }
   async function identify() {
-    const token = ++generation;
+    let token = ++generation;const scannedQr=input,identifyingStaff=clubStaff()?.id;
     member = null; onSelection(null); status = 'Buscando socio…'; render();
     try {
       if (!canUse()) throw new Error('Club no está disponible durante la emergencia.');
       if(/^E-\d+$/i.test(input.trim()))throw new Error('Has introducido un número de socio, no un QR. '+(localDemo?'Esta prueba no contiene socios reales. Pulsa «Usar Ana de prueba».':'La búsqueda por número aún no está disponible en la integración. Usa el QR del cliente.'));
-      if (!clubIntegration || !(actor = await clubActor())) throw new Error(clubPinEnabled?'Club aún no tiene tu sesión. Sal del TPV y vuelve a entrar con tu PIN; no necesitas otra contraseña.':'Accede primero con una cuenta del equipo de Club Esencia.');
+      if (!clubIntegration || !(actor = await ensureClubSession())) throw new Error(clubPinEnabled?'Conexión de Club cancelada. Puedes reintentar con tu PIN desde aquí.':'Accede primero con una cuenta del equipo de Club Esencia.');
+      if(closed||clubStaff()?.id!==identifyingStaff)return;input=scannedQr;token=++generation;
       const found = await clubIntegration.identify(input.trim());
       if (closed || token !== generation || await clubActor() !== actor) return;
       if(onSelection({...found,actorId:actor,qr:input.trim()})===false)throw new Error('Retira las promociones antes de cambiar de cliente.');member = found;status = '';
@@ -215,7 +244,7 @@ export function showClubCourtesy() {
   button.onclick=async()=>{
     if(busy)return;busy=true;button.disabled=true;
     try{
-      const actor=await clubActor();if(!actor)throw new Error('Introduce tu PIN para acceder a Club.');
+      const actor=await ensureClubSession();if(!actor)throw new Error('Conexión de Club cancelada.');
       const key=`club-courtesy-pending:${actor}`;
       let intent=JSON.parse(localStorage.getItem(key)||'null');
       if(!intent){

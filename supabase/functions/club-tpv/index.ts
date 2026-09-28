@@ -37,5 +37,5 @@ Deno.serve(async(req)=>{
   const result=await runtime.service.call(input);
   EdgeRuntime.waitUntil(drain(runtime.service).catch(()=>console.error('CLUB_OUTBOX_PENDING')));
   return reply(200,result);
- }catch(error){console.error('TPV_CLUB_ACTION_FAILED',error.code||'domain');return reply(400,{error:error.code&&/^[0-9A-Z]{5}$/.test(error.code)?'No se pudo guardar la operación. Revisa la cuenta.':error.message||'Club no disponible.'});}
+ }catch(error){console.error('TPV_CLUB_ACTION_FAILED',error.code||'domain');return reply(400,{error:error.code&&/^[0-9A-Z]{5}$/.test(error.code)?'No se pudo guardar la operación. Revisa la cuenta.':error.message||'Club no disponible.',...(['TERMINAL_UNKNOWN','TERMINAL_DISABLED'].includes(error.code)?{code:error.code}:{})});}
 });

@@ -4399,7 +4399,9 @@ function setupAuthEventListeners(container) {
     try {
       if (clubPinEnabled) void clubLogout().catch(() => {});
       const signedStaff = await store.signInWithPin(pinCode);
-      if (clubPinEnabled) void clubLoginWithPin(pinCode, signedStaff.id);
+      if (clubPinEnabled) void clubLoginWithPin(pinCode, signedStaff.id).then(ok => {
+        if (!ok && store.state.auth.profile?.id === signedStaff.id) showToast(`Fidelidad: ${clubPinBridge.loginError() || 'No se pudo iniciar la sesión. Puedes reconectar desde Cliente Club.'}`, 'warning');
+      });
       dbStatus = 'loading';
       render(store.state);
       const loaded = await store.loadFromSupabase();

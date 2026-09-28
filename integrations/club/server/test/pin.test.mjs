@@ -14,5 +14,8 @@ test('first PIN login registers a terminal, preserves staff identity, revokes ch
  for(let n=0;n<10;n++)await assert.rejects(()=>auth.login('','wrong','a'),/PIN/);
  await assert.rejects(()=>auth.login('','8765','a'),/Demasiados/);
  assert.equal((await db.query('select count(*)::integer n from tpv_bridge_private.terminals')).rows[0].n,1);
+ await assert.rejects(()=>auth.login('unknown-old-credential','8765','a'),{code:'TERMINAL_UNKNOWN'});
+ await db.query('update tpv_bridge_private.terminals set active=false');
+ await assert.rejects(()=>auth.login(first.device,'8765','a'),{code:'TERMINAL_DISABLED'});
  }finally{await db.close();}
 });

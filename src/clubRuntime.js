@@ -11,7 +11,7 @@ export const clubPinEnabled = clubEnabled && import.meta.env.VITE_CLUB_PIN_LOGIN
 const rawClubClient = clubEnabled && url && key ? createClient(url, key, {
   auth: { storageKey: 'esencia-tpv-club-auth-v1', persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
 }) : null;
-export const clubPinBridge = clubPinEnabled && (clubServerEnabled||rawClubClient) ? createClubPinBridge(clubServerEnabled?serverClubRaw:rawClubClient, { changed: () => window.dispatchEvent(new Event('club-session-changed')) }) : null;
+export const clubPinBridge = clubPinEnabled && (clubServerEnabled||rawClubClient) ? createClubPinBridge(clubServerEnabled?serverClubRaw:rawClubClient, { storage:clubServerEnabled?localStorage:sessionStorage, legacyStorage:clubServerEnabled?sessionStorage:undefined, changed: () => window.dispatchEvent(new Event('club-session-changed')) }) : null;
 export const clubClient = clubPinBridge || rawClubClient;
 export async function clubLoginWithPin(pin, staffId) { if (!clubPinBridge) return; sessionLocked = false; if(clubServerEnabled&&clubPinBridge.currentStaff()===staffId&&clubPinBridge.actor())return true;return clubPinBridge.login(pin, staffId); }
 export const clubIntegration = clubClient ? createClubIntegration(clubClient) : null;
@@ -26,7 +26,7 @@ if (clubEnabled) {
 }
 export let clubQueue = null;
 export async function clubActor() {
-  if (clubPinBridge) return clubPinBridge.currentStaff() === clubStaff()?.id ? clubPinBridge.actor() : null;
+  if (clubPinBridge) { await clubPinBridge.ready(); return clubPinBridge.currentStaff() === clubStaff()?.id ? clubPinBridge.actor() : null; }
   if (!clubClient || sessionLocked) return null;
   const { data, error } = await clubClient.auth.getSession();
   if (error) throw error;

@@ -1,8 +1,12 @@
 // Restricted Club RPC bridge. No Supabase user password or service key is stored.
-export function createClubPinBridge(rawClient, { storage = sessionStorage, devices = localStorage, changed = () => {} } = {}) {
+export function createClubPinBridge(rawClient, { storage = sessionStorage, devices = localStorage, legacyStorage, changed = () => {} } = {}) {
   const deviceKey='esencia-club-terminal-v1', sessionKey='esencia-club-pin-session-v1';
-  let current=null, generation=0;
-  try { current=JSON.parse(storage.getItem(sessionKey)||'null'); } catch { /* fail closed */ }
+  let current=null, generation=0, pendingLogin=null, lastError='';
+  try {
+    current=JSON.parse(storage.getItem(sessionKey)||legacyStorage?.getItem(sessionKey)||'null');
+    if(current)storage.setItem(sessionKey,JSON.stringify(current));
+    legacyStorage?.removeItem(sessionKey);
+  } catch { /* fail closed */ }
   const emit=()=>changed();
   function save(value){const previous=JSON.stringify(current);current=value;try{value?storage.setItem(sessionKey,JSON.stringify(value)):storage.removeItem(sessionKey);}catch{/* session remains memory-only */}if(previous!==JSON.stringify(current))emit();}
   async function call(action,payload={},session=current){
@@ -10,7 +14,7 @@ export function createClubPinBridge(rawClient, { storage = sessionStorage, devic
     if (session?.actorId && ['purchase','resolve','lookup','pending','assignment','assign_sale','withdraw_sale','clear_award','gift_points','promo_catalogue','promo_save','promo_available','promo_reserve','promo_validate','promo_complete','promo_release','promo_clear','promo_cart','promo_holds'].includes(action)) payload={...payload,_expectedActor:session.actorId};
     const request=rawClient.rpc('club_tpv',{p_device:devices.getItem(deviceKey)||'',p_session:session?.token||'',p_action:action,p_payload:payload});
     const {data,error}=await (request.abortSignal?request.abortSignal(AbortSignal.timeout(8000)):request);
-    if(error||data?.error)throw new Error(data?.error||error.message);
+    if(error||data?.error)throw Object.assign(new Error(data?.error||error.message),{code:data?.code||error?.code});
     return data;
   }
   const bridge={
@@ -20,20 +24,33 @@ export function createClubPinBridge(rawClient, { storage = sessionStorage, devic
     currentStaff:()=>current?.staffId||null,
     profile:()=>current?.profile||null,
     configured:()=>!!devices.getItem(deviceKey),
+    ready:()=>pendingLogin||Promise.resolve(),
+    loginError:()=>lastError,
     async configure(device){await bridge.logout().catch(() => {});devices.setItem(deviceKey,device.trim());},
-    async login(pin,staffId){
+    login(pin,staffId){
+      const task=bridge.startLogin(pin,staffId);pendingLogin=task;
+      void task.finally(()=>{if(pendingLogin===task)pendingLogin=null;});return task;
+    },
+    async startLogin(pin,staffId){
+      lastError='';
       const attempt=++generation, previous=current;save(null);
       if(previous)void call('logout',{},previous).catch(()=>{});
       let session;
       try{
-        session=await call('login',{pin,staffId},null);
+        try{session=await call('login',{pin,staffId},null);}
+        catch(error){
+          if(error.code!=='TERMINAL_UNKNOWN'||attempt!==generation)throw error;
+          // Only an unknown legacy credential can be replaced. Disabled terminals stay blocked.
+          devices.removeItem(deviceKey);
+          session=await call('login',{pin,staffId},null);
+        }
         if((staffId&&session?.staffId!==staffId)||!session.token||session.expiresAt<=Date.now())throw new Error('Sesión no válida.');
         if(attempt!==generation){void call('logout',{},session).catch(()=>{});return false;}
         if(session.device){devices.setItem(deviceKey,session.device);delete session.device;}
         save(session);
         // An unlinked administrator can still manage bindings.
         await bridge.refresh().catch(()=>{});return true;
-      }catch{if(attempt===generation)save(null);return false;}
+      }catch(error){if(attempt===generation){lastError=error.message||'No se pudo conectar con Fidelidad.';save(null);}return false;}
     },
     async refresh(){
       const session=current;if(!session) return null;
@@ -42,7 +59,7 @@ export function createClubPinBridge(rawClient, { storage = sessionStorage, devic
       return result;
     },
     actor(){return current?.expiresAt>Date.now()?current.actorId||null:null;},
-    async logout(){++generation;const old=current;save(null);if(old)await call('logout',{},old);},
+    async logout(){++generation;lastError='';legacyStorage?.removeItem(sessionKey);const old=current;save(null);if(old)await call('logout',{},old);},
     async binding(staffId){return call('binding',{staffId});},
     async bind(staffId,email){const r=await call('bind',{staffId,email});await bridge.refresh().catch(()=>{});return r;},
     async rpc(name,args, scoped=current){

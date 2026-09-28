@@ -24,9 +24,10 @@ export function createPinAuth({db,sourceProject,sessionMs=12*60*60*1000}){
   async login(device,pin,staffId){
    let enrolledDevice;
    const result=await db.transaction(async tx=>{
-    let terminal=(await tx.query('select * from tpv_bridge_private.terminals where secret_hash=$1 and active for update',[hash(String(device||''))])).rows[0];
+    let terminal=(await tx.query('select * from tpv_bridge_private.terminals where secret_hash=$1 for update',[hash(String(device||''))])).rows[0];
+    if(terminal&&!terminal.active)return {error:'Este terminal está desactivado. Requiere revisión del administrador.',code:'TERMINAL_DISABLED'};
     if(!terminal){
-     if(device)return {error:'Terminal no autorizado.'};
+     if(device)return {error:'La configuración anterior del terminal ya no es válida.',code:'TERMINAL_UNKNOWN'};
      // The first login registers this browser only after verifying the staff PIN.
      // The shared bucket prevents bypassing the attempt limit with new devices.
      const bucket=(await tx.query("select * from tpv_bridge_private.login_limit where id=true for update")).rows[0];
@@ -52,7 +53,7 @@ export function createPinAuth({db,sourceProject,sessionMs=12*60*60*1000}){
     await tx.query('insert into tpv_bridge_private.sessions values($1,$2,$3,$4,$5)',[hash(token),terminal.id,employee.staff_id,employee.version,new Date(expiresAt).toISOString()]);
     return {token,expiresAt,staffId:employee.staff_id,actorId:employee.actor_id,...(enrolledDevice?{device:enrolledDevice}:{}),profile:{id:employee.staff_id,display_name:employee.display_name,role:employee.role,active:true}};
    });
-   if(result.error)throw Error(result.error);return result;
+   if(result.error)throw Object.assign(Error(result.error),{code:result.code});return result;
   },
   async authorize(device,token,action,expectedActor){
    const row=(await db.query(`select s.*,e.permissions,e.actor_id,e.salt,e.pin_hash,p.pin_code,p.role,p.display_name
