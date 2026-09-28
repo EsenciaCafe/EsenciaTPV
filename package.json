@@ -10,6 +10,7 @@
     "test": "node --test"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "fake-indexeddb": "^6.2.4",
     "vite": "^5.2.0"
   },

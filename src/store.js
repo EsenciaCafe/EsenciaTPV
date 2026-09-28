@@ -1,3 +1,5 @@
+import { promotionDiscount } from './clubPromotionMath.js';
+import {clubServerEnabled} from './clubServerTransport.js';
 import {
   loadCatalog,
   upsertCategory,
@@ -453,6 +455,7 @@ class Store {
             type: savedTable.type || defaultTable.type || 'table',
             status,
             items,
+            ...(items.length > 0 && savedTable.clubContext ? { clubContext: savedTable.clubContext } : {}),
             ...(items.length > 0 && savedTable.loyaltyAwarded ? { loyaltyAwarded: savedTable.loyaltyAwarded } : {})
           };
         });
@@ -461,6 +464,7 @@ class Store {
       if (savedState.directSaleTicket && Array.isArray(savedState.directSaleTicket.items)) {
         this.state.directSaleTicket = {
           items: savedState.directSaleTicket.items,
+          ...(savedState.directSaleTicket.items.length > 0 && savedState.directSaleTicket.clubContext ? { clubContext: savedState.directSaleTicket.clubContext } : {}),
           ...(savedState.directSaleTicket.items.length > 0 && savedState.directSaleTicket.loyaltyAwarded
             ? { loyaltyAwarded: savedState.directSaleTicket.loyaltyAwarded }
             : {})
@@ -1137,6 +1141,11 @@ class Store {
   }
 
   async signInWithPin(pinCode) {
+    if(clubServerEnabled && import.meta.env.VITE_CLUB_LOCAL_DEMO === 'true'){
+      const {clubPinBridge}=await import('./clubRuntime.js');
+      if(!clubPinBridge||!await clubPinBridge.login(pinCode,null)||!clubPinBridge.profile())throw new Error('No se pudo validar el PIN con el servidor del TPV.');
+      const profile=clubPinBridge.profile();this.setStaffSession(profile);return profile;
+    }
     let profile = null;
     if (typeof navigator === 'undefined' || navigator.onLine !== false) {
       try {
@@ -2633,7 +2642,7 @@ class Store {
       const newItems = [...table.items];
       
       const existingIdx = newItems.findIndex(i => 
-        i.id === itemId && 
+        !i.clubPromotion && i.id === itemId &&
         (i.deferUntilLater === true) === false &&
         Number(i.discountPercent || 0) === 0 &&
         JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions) &&
@@ -2654,7 +2663,7 @@ class Store {
     } else {
       const newItems = [...this.state.directSaleTicket.items];
       const existingIdx = newItems.findIndex(i => 
-        i.id === itemId && 
+        !i.clubPromotion && i.id === itemId &&
         (i.deferUntilLater === true) === false &&
         Number(i.discountPercent || 0) === 0 &&
         JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions) &&
@@ -2685,7 +2694,7 @@ class Store {
       const target = nextItems[idx];
       const identicalIdx = nextItems.findIndex((item, i) =>
         i !== idx &&
-        item.id === target.id &&
+        !item.clubPromotion && !target.clubPromotion && item.id === target.id &&
         (item.deferUntilLater === true) === (target.deferUntilLater === true) &&
         Number(item.discountPercent || 0) === Number(target.discountPercent || 0) &&
         String(item.discountReason || '') === String(target.discountReason || '') &&
@@ -2763,6 +2772,7 @@ class Store {
   }
 
   updateItemBasePrice(ticketItemId, newPrice) {
+    if(this.getActiveItems().some(i=>i.ticketItemId===ticketItemId && i.clubPromotion))return false;
     if (this.state.selectedTableId !== null) {
       const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
       if (tableIndex === -1) return;
@@ -2785,6 +2795,7 @@ class Store {
   }
 
   updateItemQty(ticketItemId, change) {
+    if(this.getActiveItems().some(i=>i.ticketItemId===ticketItemId && i.clubPromotion))return false;
     if (this.state.selectedTableId !== null) {
       const tableIndex = this.state.tables.findIndex(t => t.id === this.state.selectedTableId);
       if (tableIndex === -1) return;
@@ -2806,6 +2817,7 @@ class Store {
       this.state.tables[tableIndex] = {
         ...table,
         items: this.sortTicketItemsForService(newItems),
+        clubContext: newItems.length ? table.clubContext : undefined,
         status: newStatus,
         ...(newItems.length > 0 && table.loyaltyAwarded ? { loyaltyAwarded: table.loyaltyAwarded } : { loyaltyAwarded: undefined })
       };
@@ -2823,6 +2835,7 @@ class Store {
       this.state.directSaleTicket = {
         ...this.state.directSaleTicket,
         items: this.sortTicketItemsForService(newItems),
+        clubContext: newItems.length ? this.state.directSaleTicket.clubContext : undefined,
         ...(newItems.length > 0 && this.state.directSaleTicket.loyaltyAwarded
           ? { loyaltyAwarded: this.state.directSaleTicket.loyaltyAwarded }
           : { loyaltyAwarded: undefined })
@@ -2832,6 +2845,7 @@ class Store {
   }
 
   updateTicketItemModifiers(ticketItemId, selectedOptions) {
+    if(this.getActiveItems().some(i=>i.ticketItemId===ticketItemId && i.clubPromotion))return false;
     const sortedOptions = [...selectedOptions].sort((a, b) => a.id.localeCompare(b.id));
 
     if (this.state.selectedTableId !== null) {
@@ -2846,7 +2860,7 @@ class Store {
         const targetId = newItems[idx].id;
         const currentQty = newItems[idx].qty;
         const identicalIdx = newItems.findIndex((item, i) => 
-          i !== idx && item.id === targetId &&
+          i !== idx && !item.clubPromotion && item.id === targetId &&
           Number(item.discountPercent || 0) === Number(newItems[idx].discountPercent || 0) &&
           String(item.discountReason || '') === String(newItems[idx].discountReason || '') &&
           JSON.stringify(item.selectedOptions || []) === JSON.stringify(sortedOptions) &&
@@ -2869,7 +2883,7 @@ class Store {
         const targetId = newItems[idx].id;
         const currentQty = newItems[idx].qty;
         const identicalIdx = newItems.findIndex((item, i) => 
-          i !== idx && item.id === targetId &&
+          i !== idx && !item.clubPromotion && item.id === targetId &&
           Number(item.discountPercent || 0) === Number(newItems[idx].discountPercent || 0) &&
           String(item.discountReason || '') === String(newItems[idx].discountReason || '') &&
           JSON.stringify(item.selectedOptions || []) === JSON.stringify(sortedOptions) &&
@@ -3003,6 +3017,8 @@ class Store {
     if (tableIndex === -1) return;
     const table = this.state.tables[tableIndex];
 
+    const sourceClubContext=(this.getSelectedTable()||this.state.directSaleTicket).clubContext;
+    if(table.clubContext?.member && sourceClubContext?.member && table.clubContext.id!==sourceClubContext.id)return false;
     const tableItems = [...table.items];
     const sourceItems = this.state.directSaleTicket.items;
     const sourceLoyaltyAward = this.state.directSaleTicket.loyaltyAwarded || null;
@@ -3010,7 +3026,7 @@ class Store {
     sourceItems.forEach(sourceItem => {
       const sortedOptions = [...(sourceItem.selectedOptions || [])].sort((a, b) => a.id.localeCompare(b.id));
       const existingIdx = tableItems.findIndex(i => 
-        i.id === sourceItem.id && 
+        !i.clubPromotion && !sourceItem.clubPromotion && i.id === sourceItem.id &&
         Number(i.discountPercent || 0) === Number(sourceItem.discountPercent || 0) &&
         String(i.discountReason || '') === String(sourceItem.discountReason || '') &&
         JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions) &&
@@ -3032,6 +3048,7 @@ class Store {
       ...table, 
       items: this.sortTicketItemsForService(tableItems),
       status: status,
+      clubContext: table.clubContext?.member ? table.clubContext : sourceClubContext || table.clubContext,
       ...(table.loyaltyAwarded || sourceLoyaltyAward ? { loyaltyAwarded: table.loyaltyAwarded || sourceLoyaltyAward } : {})
     };
 
@@ -3048,6 +3065,8 @@ class Store {
     if (tableIndex === -1) return;
     const table = this.state.tables[tableIndex];
 
+    const sourceClubContext=(this.getSelectedTable()||this.state.directSaleTicket).clubContext;
+    if(table.clubContext?.member && sourceClubContext?.member && table.clubContext.id!==sourceClubContext.id)return false;
     const tableItems = [...table.items];
     
     // Get source items (either from the current selected table or from the direct sale ticket)
@@ -3070,7 +3089,7 @@ class Store {
     sourceItems.forEach(sourceItem => {
       const sortedOptions = [...(sourceItem.selectedOptions || [])].sort((a, b) => a.id.localeCompare(b.id));
       const existingIdx = tableItems.findIndex(i => 
-        i.id === sourceItem.id && 
+        !i.clubPromotion && !sourceItem.clubPromotion && i.id === sourceItem.id &&
         Number(i.discountPercent || 0) === Number(sourceItem.discountPercent || 0) &&
         String(i.discountReason || '') === String(sourceItem.discountReason || '') &&
         JSON.stringify(i.selectedOptions || []) === JSON.stringify(sortedOptions) &&
@@ -3093,6 +3112,7 @@ class Store {
       ...table, 
       items: this.sortTicketItemsForService(tableItems),
       status: status,
+      clubContext: table.clubContext?.member ? table.clubContext : sourceClubContext || table.clubContext,
       ...(table.loyaltyAwarded || sourceLoyaltyAward ? { loyaltyAwarded: table.loyaltyAwarded || sourceLoyaltyAward } : {})
     };
 
@@ -3105,7 +3125,7 @@ class Store {
             ...this.state.tables[prevTableIndex],
             items: [],
             status: 'available',
-            loyaltyAwarded: undefined
+            loyaltyAwarded: undefined, clubContext: undefined
           };
         }
       }
@@ -3126,7 +3146,7 @@ class Store {
     const previousTable = this.state.tables.find(t => t.id === previousTableId);
     if (!previousTable || !Array.isArray(previousTable.items) || previousTable.items.length === 0) return false;
 
-    this.assignActiveOrderToTable(tableId, { notify: false });
+    if(this.assignActiveOrderToTable(tableId, { notify: false })===false)return false;
     this.state.selectedTableId = null;
     this.state.activeTab = 'mesas';
     this.state.gridPath = ['root'];
@@ -3139,6 +3159,13 @@ class Store {
     const items = this.getActiveItems();
     if (items.length === 0) return;
 
+    if (items.some(item=>item.clubPromotion)) {
+      try {
+        if (!this.clubPromotionAdapter) throw new Error('No se puede validar la promoción. Retírala antes de cobrar.');
+        await this.clubPromotionAdapter.beforePay(items);
+      } catch(error) { this.state.clubPromotionError=error.message; return null; }
+    }
+    this.state.clubPromotionError='';
     const orderFingerprint = createOrderFingerprint(items);
     const duplicateTransaction = this.state.transactions.find(transaction => (
       transaction.type !== 'refund' &&
@@ -3152,7 +3179,7 @@ class Store {
             ...this.state.tables[tableIndex],
             status: 'available',
             items: [],
-            loyaltyAwarded: undefined
+            loyaltyAwarded: undefined, clubContext: undefined
           };
         }
         this.state.selectedTableId = null;
@@ -3173,6 +3200,7 @@ class Store {
     const tableName = selectedTable ? selectedTable.name : 'Venta Directa';
     const transactionItems = items.map(item => ({
       ticketItemId: item.ticketItemId,
+      ...(item.clubPromotion ? { clubPromotion: {...item.clubPromotion} } : {}),
       id: item.id,
       name: item.name,
       price: item.price,
@@ -3215,13 +3243,14 @@ class Store {
       createdAt: dateNow.toISOString(),
       receiptToken: this.createReceiptToken(),
       orderFingerprint,
+      ...(items.some(item=>item.clubPromotion) ? { clubPromotions:items.filter(item=>item.clubPromotion).map(item=>({...item.clubPromotion})) } : {}),
       legalData: { ...this.state.legal },
       staff: this.state.auth.profile ? {
         id: this.state.auth.profile.id,
         name: this.state.auth.profile.display_name,
         role: this.state.auth.profile.role
       } : null,
-      ...(options.loyaltyCustomer ? { loyaltyCustomer: { ...options.loyaltyCustomer } } : {})
+      ...((options.loyaltyCustomer || (items.some(i=>i.clubPromotion)&&(selectedTable||this.state.directSaleTicket).clubContext?.member)) ? { loyaltyCustomer: { ...(options.loyaltyCustomer || (selectedTable||this.state.directSaleTicket).clubContext.member) } } : {})
     };
 
     if (this.isEmergencyMode()) {
@@ -3256,7 +3285,7 @@ class Store {
           ...this.state.tables[tableIndex],
           status: 'available',
           items: [],
-          loyaltyAwarded: undefined
+          loyaltyAwarded: undefined, clubContext: undefined
         };
       }
       this.state.selectedTableId = null;
@@ -3267,6 +3296,7 @@ class Store {
     this.state.gridPath = ['root'];
     this.notify({ flushRemote: true });
     await cacheOperationalSnapshot(this.getPersistPayload());
+    if (transaction.clubPromotions?.length) void this.clubPromotionAdapter?.afterPay(transaction).catch(error=>console.warn(error.message));
     return transaction;
   }
 
@@ -3303,7 +3333,7 @@ class Store {
           ...this.state.tables[tableIndex],
           status: 'available',
           items: [],
-          loyaltyAwarded: undefined
+          loyaltyAwarded: undefined, clubContext: undefined
         };
       }
     } else {
@@ -3320,7 +3350,7 @@ class Store {
 
   applyDiscountToItems(ticketItemIds = [], percent = 0, reason = 'Descuento') {
     const selectedIds = new Set((ticketItemIds || []).filter(Boolean));
-    if (selectedIds.size === 0) return false;
+    if (selectedIds.size === 0 || this.getActiveItems().some(i=>selectedIds.has(i.ticketItemId)&&i.clubPromotion)) return false;
 
     const cleanPercent = Math.min(100, Math.max(0, Number(percent) || 0));
     const cleanReason = cleanPercent === 100 ? 'Invitación' : String(reason || 'Descuento').trim();
@@ -3364,6 +3394,7 @@ class Store {
   }
 
   getItemDiscountAmount(ticketItem) {
+    if (ticketItem.clubPromotion) return promotionDiscount(ticketItem);
     const percent = Math.min(100, Math.max(0, Number(ticketItem.discountPercent || 0)));
     return this.getItemGrossTotal(ticketItem) * (percent / 100);
   }

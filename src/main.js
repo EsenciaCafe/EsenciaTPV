@@ -1,4 +1,10 @@
+import { initializePromotionFlow, removeClubOffer } from './clubPromotionRuntime.js';
+import { choosePromotionClear } from './clubPromotionUi.js';
+import { clubTicketOptions, clearClubTicket } from './clubTicket.js';
 import { store } from './store.js';
+import { loadSaleById } from './db.js';
+import { clubEnabled, clubAfterSale, clubAfterRefund, initializeClub, clubLogout, clubLoginWithPin, clubPinEnabled, clubQueue, clubActor } from './clubRuntime.js';
+import { createClubPayment, showClubPanel, showClubBinding, showClubAssignment, showClubCourtesy, showClubTicketIdentity } from './clubUi.js';
 import { supabase } from './supabase.js';
 import QRCode from 'qrcode';
 import {
@@ -1206,7 +1212,7 @@ function showTransactionDetailModal(transactionId) {
           ${item.note ? `<div class="tx-detail-note">Nota: ${escapeHtml(item.note)}</div>` : ''}
           ${Number(item.discountAmount || 0) > 0 ? `
             <div class="tx-detail-note" style="color:var(--secondary);">
-              ${escapeHtml(item.discountReason || 'Descuento')}: -${Number(item.discountAmount || 0).toFixed(2)}€ (${Number(item.discountPercent || 0)}%)
+              ${escapeHtml(item.discountReason || 'Descuento')}: -${Number(item.discountAmount || 0).toFixed(2)}€${item.clubPromotion ? '' : ` (${Number(item.discountPercent || 0)}%)`}
             </div>
           ` : ''}
         </div>
@@ -1364,6 +1370,7 @@ function showTransactionDetailModal(transactionId) {
     });
   }
   
+  if(clubPinEnabled && tx.type !== 'refund') { const b=document.createElement('button'); b.className='pay-btn-opt';b.textContent='Asignación de puntos Club';b.onclick=()=>showClubAssignment(tx);modal.querySelector('.tx-detail-body').append(b); }
   const refundBtn = modal.querySelector('#tx-detail-refund-btn');
   if (refundBtn) {
     refundBtn.addEventListener('click', () => {
@@ -1564,8 +1571,13 @@ function showRefundModal(tx) {
     });
 
     if (result) {
+      if (clubEnabled && tx.loyaltyCustomer?.provider === 'club-esencia') {
+        try { await clubAfterRefund(tx); }
+        catch (_) { /* The saved sale/refund will be recovered by the Club queue. */ }
+        showToast('Devolución registrada. Revisa sus puntos en Club Esencia; no se retiran automáticamente.', 'warning');
+      }
       closeModal();
-      showToast('Devolución registrada correctamente.', 'success');
+      if (!clubEnabled || tx.loyaltyCustomer?.provider !== 'club-esencia') showToast('Devolución registrada correctamente.', 'success');
     } else {
       showToast('Error al registrar la devolución.', 'error');
     }
@@ -1800,6 +1812,7 @@ function renderAjustesView(state) {
   }
 
   if (path.length === 1 && path[0] === 'fidelidad') {
+    if (clubEnabled) return `<div class="settings-editor-container"><h2>Club Esencia</h2><p>Identifica al socio por su QR al cobrar. Cada euro completo suma un punto, sin niveles ni propinas.</p><button class="btn btn-primary" id="club-open-team">Acceso del equipo y puntos pendientes</button>${clubPinEnabled ? '<button class="btn btn-secondary" id="club-courtesy">Puntos de cortesía</button>' : ''}<p>Los canjes pendientes se consultan desde la ficha del socio durante el cobro. Las devoluciones de compras quedan señaladas para revisar sus puntos.</p><a href="https://esencia-club.pages.dev" target="_blank" rel="noopener noreferrer">Abrir clientes y recompensas en Club Esencia</a></div>`;
     const selected = loyaltyAdminSelectedCustomer;
     const dashboard = loyaltyAdminDashboard || {
       totalCustomers: 0,
@@ -2273,7 +2286,7 @@ function renderAjustesView(state) {
         </div>
         <h2 class="settings-nav-title">${isNew ? 'Nuevo empleado' : 'Editar empleado'}</h2>
         <div class="settings-editor-container">
-          <form id="settings-staff-form" data-staff-id="${profile?.id || ''}" style="display:grid; gap:16px;">
+          <div id="club-staff-binding-slot"></div><form id="settings-staff-form" data-staff-id="${profile?.id || ''}" style="display:grid; gap:16px;">
             <div class="editor-form-group">
               <label class="editor-form-label">Nombre</label>
               <input type="text" class="editor-form-input" id="staff-display-name" value="${profile?.display_name || ''}" required placeholder="Ej. Camarero 1">
@@ -3556,6 +3569,7 @@ function renderQuickPayBar() {
 }
 
 function renderTicketItemDiscount(item) {
+  if(item.clubPromotion)return `<div class="ticket-item-discount">Promoción Club · ${escapeHtml(item.clubPromotion.title)}: -${(item.clubPromotion.discountCents/100).toFixed(2)}€ <button type="button" data-remove-club-promotion="${escapeHtml(item.clubPromotion.id)}">Retirar promoción</button></div>`;
   const percent = Number(item.discountPercent || 0);
   if (percent <= 0) return '';
   const label = percent >= 100 ? 'Invitación' : `${percent}% descuento`;
@@ -3565,7 +3579,7 @@ function renderTicketItemDiscount(item) {
 function renderTicketItemTotal(item) {
   const gross = store.getItemGrossTotal(item);
   const total = store.getItemTotal(item);
-  if (Number(item.discountPercent || 0) <= 0) return `${total.toFixed(2)}&euro;`;
+  if (Number(item.discountPercent || 0) <= 0 && !item.clubPromotion) return `${total.toFixed(2)}&euro;`;
   return `<span class="ticket-item-original-total">${gross.toFixed(2)}&euro;</span><span>${total.toFixed(2)}&euro;</span>`;
 }
 
@@ -3645,7 +3659,7 @@ function renderInlineTicketPanel() {
       <button class="pay-btn-opt primary" id="split-pay-btn">${total <= 0 && discountTotal > 0 ? 'Cerrar invitación' : 'Cobrar'}</button>
       <button class="pay-btn-opt" id="split-discount-btn">Descuento / Invitar</button>
       <button class="pay-btn-opt" id="split-save-order-btn">Guardar Comanda</button>
-      <button class="pay-btn-opt danger" id="split-clear-btn">Vaciar</button>
+      ${clubPinEnabled ? '<button class="pay-btn-opt" data-club-identify>Cliente Club</button>' : ''}<button class="pay-btn-opt danger" id="split-clear-btn">Vaciar</button>
     </div>
   ` : `
     <div class="empty-ticket-state">
@@ -3786,7 +3800,7 @@ function renderDrawerOverlay() {
             <button class="pay-btn-opt primary" id="drawer-pay-btn">${total <= 0 && discountTotal > 0 ? 'Cerrar invitación' : 'Cobrar'}</button>
             <button class="pay-btn-opt" id="drawer-discount-btn">Descuento / Invitar</button>
             <button class="pay-btn-opt" id="drawer-save-order-btn">Guardar Comanda</button>
-            <button class="pay-btn-opt danger" id="drawer-clear-btn">Vaciar</button>
+            ${clubPinEnabled ? '<button class="pay-btn-opt" data-club-identify>Cliente Club</button>' : ''}<button class="pay-btn-opt danger" id="drawer-clear-btn">Vaciar</button>
           </div>
         </div>
       </div>
@@ -3799,7 +3813,7 @@ function setupTicketOnlyEventListeners(container) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const ticketItemId = btn.dataset.ticketItemId;
-      if (ticketItemId) store.updateItemQty(ticketItemId, -1);
+      if (ticketItemId && store.updateItemQty(ticketItemId, -1) === false) showToast('Retira la promoción antes de modificar esta unidad.', 'warning');
     });
   });
 
@@ -3807,7 +3821,7 @@ function setupTicketOnlyEventListeners(container) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const ticketItemId = btn.dataset.ticketItemId;
-      if (ticketItemId) store.updateItemQty(ticketItemId, 1);
+      if (ticketItemId && store.updateItemQty(ticketItemId, 1) === false) showToast('Retira la promoción antes de modificar esta unidad.', 'warning');
     });
   });
 
@@ -3859,6 +3873,8 @@ function setupTicketOnlyEventListeners(container) {
     });
   });
 
+  container.querySelectorAll('[data-remove-club-promotion]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{await removeClubOffer(store,b.dataset.removeClubPromotion);}catch(e){showToast(e.message,'error');b.disabled=false;}});
+  container.querySelectorAll('[data-club-identify]').forEach(b => b.onclick=()=>showClubTicketIdentity(store));
   const drawerClose = container.querySelector('#drawer-close-btn');
   if (drawerClose) {
     drawerClose.addEventListener('click', () => {
@@ -3875,8 +3891,8 @@ function setupTicketOnlyEventListeners(container) {
         '¿Seguro que deseas vaciar el pedido actual?',
         async () => {
           try {
-            await store.clearActiveTicket();
-            showToast('Pedido vaciado.', 'success');
+            const clearResult = await (clubPinEnabled ? clearClubTicket(store, clubQueue, await clubActor()) : store.clearActiveTicket());
+            showToast(clearResult?.review ? 'Pedido vaciado. Los puntos requieren revisión en Fidelidad.' : clearResult?.pointsQueued ? 'Pedido vaciado. Puntos guardados y cliente retirado.' : 'Pedido vaciado.', clearResult?.review ? 'warning' : 'success');
             isDrawerOpen = false;
           } catch (error) {
             console.error('[TPV] No se pudo confirmar el vaciado.', error);
@@ -3923,8 +3939,8 @@ function setupTicketOnlyEventListeners(container) {
     splitClear.addEventListener('click', () => {
       showConfirm('Vaciar Pedido', '¿Seguro que deseas vaciar el pedido actual?', async () => {
         try {
-          await store.clearActiveTicket();
-          showToast('Pedido vaciado.', 'success');
+          const clearResult = await (clubPinEnabled ? clearClubTicket(store, clubQueue, await clubActor()) : store.clearActiveTicket());
+          showToast(clearResult?.review ? 'Pedido vaciado. Los puntos requieren revisión en Fidelidad.' : clearResult?.pointsQueued ? 'Pedido vaciado. Puntos guardados y cliente retirado.' : 'Pedido vaciado.', clearResult?.review ? 'warning' : 'success');
         } catch (error) {
           console.error('[TPV] No se pudo confirmar el vaciado.', error);
           showToast('No se vació el pedido. Comprueba la conexión e inténtalo de nuevo.', 'error');
@@ -4377,7 +4393,9 @@ function setupAuthEventListeners(container) {
     }
 
     try {
-      await store.signInWithPin(pinCode);
+      if (clubPinEnabled) void clubLogout().catch(() => {});
+      const signedStaff = await store.signInWithPin(pinCode);
+      if (clubPinEnabled) void clubLoginWithPin(pinCode, signedStaff.id);
       dbStatus = 'loading';
       render(store.state);
       const loaded = await store.loadFromSupabase();
@@ -4782,7 +4800,7 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
     const itemNote = modal.querySelector('#modifier-item-note')?.value || '';
 
     if (ticketItemId) {
-      store.updateTicketItemModifiers(ticketItemId, selectedOptions);
+      if (store.updateTicketItemModifiers(ticketItemId, selectedOptions) === false) { showToast('Retira la promoción antes de modificar esta unidad.', 'warning'); return; }
       store.updateTicketItemNote(ticketItemId, itemNote);
     } else {
       store.addItemToActiveTicket(itemId, selectedOptions, itemQuantity, itemNote);
@@ -4975,7 +4993,7 @@ function showDiscountModal(preselectedTicketItemId = '') {
       return;
     }
     close();
-    store.applyDiscountToItems(selectedIds, percent, reasonInput.value);
+    if (store.applyDiscountToItems(selectedIds, percent, reasonInput.value) === false) { showToast('Selecciona unidades sin promoción para aplicar el descuento.', 'warning'); return; }
     showToast(remove ? 'Descuento eliminado.' : (percent === 100 ? 'Articulos invitados.' : `Descuento del ${percent}% aplicado.`), 'success');
   };
 
@@ -5252,13 +5270,13 @@ function showTableSelectionModal() {
           'Mesa Ocupada',
           `La ${table.name} ya tiene una comanda activa.\n¿Deseas añadir estos artículos a la cuenta existente?`,
           () => {
-            store.saveActiveOrderToTable(tableId);
+            if (store.saveActiveOrderToTable(tableId) === false) { showToast('Las cuentas tienen clientes identificados distintos. Revisa la asignación antes de combinarlas.', 'warning'); return; }
             modal.remove();
             showToast(`Comanda añadida a la ${table.name}.`, 'success');
           }
         );
       } else {
-        store.saveActiveOrderToTable(tableId);
+        if (store.saveActiveOrderToTable(tableId) === false) { showToast('Las cuentas tienen clientes identificados distintos. Revisa la asignación antes de combinarlas.', 'warning'); return; }
         modal.remove();
         showToast(`Comanda guardada en la ${table.name}.`, 'success');
       }
@@ -5392,7 +5410,7 @@ function showPaymentModal(totalAmount) {
     showConfirm(
       'Cerrar invitación',
       'Toda la cuenta esta invitada. Se guardara el ticket con total 0,00 EUR y sin registrar ningun cobro.',
-      () => store.payActiveTicket('Invitación', { payments: [] })
+      async () => { const tx=await store.payActiveTicket('Invitación', { payments: [] }); if(!tx)showToast(store.state.clubPromotionError||'No se pudo cerrar la invitación.','error');else showToast('Cuenta cerrada a 0 €. Artículos registrados y promociones consumidas.','success'); }
     );
     return;
   }
@@ -5400,6 +5418,12 @@ function showPaymentModal(totalAmount) {
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop';
   modal.id = 'payment-modal';
+  const clubPayment = clubEnabled ? createClubPayment({ ...clubTicketOptions(store), promotionStore:clubPinEnabled?store:null, onPromotion:()=>{modal.remove();showPaymentModal(store.getActiveTicketTotal());}, amount: totalAmount, canUse: () => store.canUseExternalServices() }) : null;
+  // All existing close paths remove the payment modal, including split/gift flows.
+  const clubCleanup = clubPayment ? new MutationObserver(() => {
+    if (!modal.isConnected) { clubPayment.dispose(); clubCleanup.disconnect(); }
+  }) : null;
+  if (clubCleanup) clubCleanup.observe(document.body, { childList: true });
 
   let selectedMethod = 'Tarjeta'; // 'Tarjeta' | 'Efectivo' | 'Tarjeta Regalo' | 'Dividir'
   let splitType = 'iguales'; // 'iguales' | 'articulos' | 'libre'
@@ -5750,7 +5774,11 @@ function showPaymentModal(totalAmount) {
     return payments;
   };
 
+  let clubCompletingPayment = false;
   const completePaidTicket = async (paymentMethod, successMessage, paymentBreakdown = null) => {
+    if (clubEnabled && clubCompletingPayment) return null;
+    if (clubEnabled) clubCompletingPayment = true;
+    try {
     if (cardChargeTotalInput !== null && cardChargeTotalInput < totalAmount - 0.009) {
       showToast('El total cobrado no puede ser inferior al total del ticket.', 'warning');
       return null;
@@ -5761,12 +5789,17 @@ function showPaymentModal(totalAmount) {
       return null;
     }
     const totalCharged = finalPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
-    const loyaltySnapshot = loyaltyCustomer ? { ...loyaltyCustomer } : null;
-    const existingLoyaltyAward = store.getActiveLoyaltyAward();
+    let loyaltySnapshot = loyaltyCustomer ? { ...loyaltyCustomer } : null;
+    if (clubPayment) {
+      try { loyaltySnapshot = await clubPayment.selection(); }
+      catch (_) { loyaltySnapshot = null; showToast('No se pudo verificar Club. La venta continuará sin puntos.', 'warning'); }
+    }
+    const existingLoyaltyAward = clubEnabled ? null : store.getActiveLoyaltyAward();
     const transaction = await store.payActiveTicket(paymentMethod, loyaltySnapshot ? {
       loyaltyCustomer: {
         id: loyaltySnapshot.id,
         name: loyaltySnapshot.name,
+        ...(clubEnabled ? { provider: 'club-esencia', actorId: loyaltySnapshot.actorId } : {}),
         rfidUid: loyaltySnapshot.rfidUid,
         tier: loyaltySnapshot.tier
       },
@@ -5788,11 +5821,14 @@ function showPaymentModal(totalAmount) {
     }
 
     if (!transaction) {
-      showToast('No se pudo confirmar y fiscalizar la venta. La comanda sigue abierta para reintentarlo.', 'error');
+      showToast(store.state.clubPromotionError || 'No se pudo confirmar y fiscalizar la venta. La comanda sigue abierta para reintentarlo.', 'error');
       return null;
     }
 
-    if (transaction && loyaltySnapshot && !existingLoyaltyAward && store.canUseExternalServices()) {
+    if (clubEnabled && transaction && loyaltySnapshot) {
+      const clubResult = await clubAfterSale(transaction);
+      showToast(clubResult.message, clubResult.type);
+    } else if (!clubEnabled && transaction && loyaltySnapshot && !existingLoyaltyAward && store.canUseExternalServices()) {
       try {
         const result = await addLoyaltyPurchase({
           customer: loyaltySnapshot,
@@ -5815,6 +5851,7 @@ function showPaymentModal(totalAmount) {
     stopGiftCardScanner();
     modal.remove();
     return transaction;
+    } finally { clubCompletingPayment = false; }
   };
 
   // ── 1. Estado Partes Iguales
@@ -5855,7 +5892,7 @@ function showPaymentModal(totalAmount) {
     }
     
     // Obtener precio total unitario del artículo con sus modificadores
-    const singleItemTotal = store.getItemTotal({ ...item, qty: 1 });
+    const singleItemTotal = item.clubPromotion?.scope==='cart' ? store.getItemTotal(item)/item.qty : store.getItemTotal({ ...item, qty: 1 });
     
     return {
       ticketItemId: item.ticketItemId,
@@ -5913,7 +5950,7 @@ function showPaymentModal(totalAmount) {
     const giftCardBalance = Number(giftCardLookup?.balance || 0);
     const giftCardRedeemAmount = Number(Math.min(totalAmount, giftCardBalance).toFixed(2));
     const giftCardRemainingAmount = Number(Math.max(0, totalAmount - giftCardRedeemAmount).toFixed(2));
-    const loyaltyHTML = store.canUseExternalServices() ? `
+    const loyaltyHTML = clubEnabled ? '<div id="club-payment-root"></div>' : store.canUseExternalServices() ? `
       <div class="payment-loyalty-box payment-loyalty-box--compact ${loyaltyExpanded ? 'is-expanded' : ''}">
         <button type="button" class="payment-loyalty-toggle" id="loyalty-toggle-btn" aria-expanded="${loyaltyExpanded}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
@@ -6349,6 +6386,7 @@ function showPaymentModal(totalAmount) {
       modal.remove();
     });
 
+    if (clubPayment) clubPayment.mount(modal.querySelector('#club-payment-root'));
     const loyaltyToggleBtn = modal.querySelector('#loyalty-toggle-btn');
     if (loyaltyToggleBtn) {
       loyaltyToggleBtn.addEventListener('click', () => {
@@ -7547,7 +7585,7 @@ function setupEventListeners(container) {
       showConfirm(
         'Cerrar sesion',
         '¿Quieres salir de esta cuenta de personal?',
-        () => store.signOut()
+        async () => { if (clubEnabled) { try { if (clubPinEnabled) void clubLogout().catch(() => {}); else await clubLogout(); } catch (_) {} } await store.signOut(); }
       );
     });
   }
@@ -7601,7 +7639,7 @@ function setupEventListeners(container) {
               'Combinar Mesa y Comanda',
               `La ${table.name} ya tiene una comanda activa.\n¿Deseas combinar tu comanda actual con la cuenta de la mesa?`,
               () => {
-                store.assignActiveOrderToTable(tableId);
+                if (store.assignActiveOrderToTable(tableId) === false) { showToast('Las cuentas tienen clientes identificados distintos. Revisa la asignación antes de combinarlas.', 'warning'); return; }
                 showToast(`Comanda combinada con la ${table.name}.`, 'success');
               }
             );
@@ -7609,7 +7647,7 @@ function setupEventListeners(container) {
             // Target table is empty
             if (currentTableId === null) {
               // Direct sale to empty table: move items automatically
-              store.assignActiveOrderToTable(tableId);
+              if (store.assignActiveOrderToTable(tableId) === false) { showToast('Las cuentas tienen clientes identificados distintos. Revisa la asignación antes de combinarlas.', 'warning'); return; }
               showToast(`Comanda asignada a la ${table.name}.`, 'success');
             } else {
               // Switch tables normally (leave items on the current table)
@@ -7903,6 +7941,8 @@ function setupEventListeners(container) {
   }
 
   // Close full-screen cart
+  container.querySelectorAll('[data-remove-club-promotion]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{await removeClubOffer(store,b.dataset.removeClubPromotion);}catch(e){showToast(e.message,'error');b.disabled=false;}});
+  container.querySelectorAll('[data-club-identify]').forEach(b => b.onclick=()=>showClubTicketIdentity(store));
   const drawerClose = container.querySelector('#drawer-close-btn');
   if (drawerClose) {
     drawerClose.addEventListener('click', () => {
@@ -7916,7 +7956,7 @@ function setupEventListeners(container) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const ticketItemId = btn.dataset.ticketItemId;
-      if (ticketItemId) store.updateItemQty(ticketItemId, -1);
+      if (ticketItemId && store.updateItemQty(ticketItemId, -1) === false) showToast('Retira la promoción antes de modificar esta unidad.', 'warning');
     });
   });
 
@@ -7924,7 +7964,7 @@ function setupEventListeners(container) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const ticketItemId = btn.dataset.ticketItemId;
-      if (ticketItemId) store.updateItemQty(ticketItemId, 1);
+      if (ticketItemId && store.updateItemQty(ticketItemId, 1) === false) showToast('Retira la promoción antes de modificar esta unidad.', 'warning');
     });
   });
 
@@ -7991,8 +8031,8 @@ function setupEventListeners(container) {
         '¿Seguro que deseas vaciar el pedido actual?',
         async () => {
           try {
-            await store.clearActiveTicket();
-            showToast('Pedido vaciado.', 'success');
+            const clearResult = await (clubPinEnabled ? clearClubTicket(store, clubQueue, await clubActor()) : store.clearActiveTicket());
+            showToast(clearResult?.review ? 'Pedido vaciado. Los puntos requieren revisión en Fidelidad.' : clearResult?.pointsQueued ? 'Pedido vaciado. Puntos guardados y cliente retirado.' : 'Pedido vaciado.', clearResult?.review ? 'warning' : 'success');
             isDrawerOpen = false;
           } catch (error) {
             console.error('[TPV] No se pudo confirmar el vaciado.', error);
@@ -8050,8 +8090,8 @@ function setupEventListeners(container) {
         '¿Seguro que deseas vaciar el pedido actual?',
         async () => {
           try {
-            await store.clearActiveTicket();
-            showToast('Pedido vaciado.', 'success');
+            const clearResult = await (clubPinEnabled ? clearClubTicket(store, clubQueue, await clubActor()) : store.clearActiveTicket());
+            showToast(clearResult?.review ? 'Pedido vaciado. Los puntos requieren revisión en Fidelidad.' : clearResult?.pointsQueued ? 'Pedido vaciado. Puntos guardados y cliente retirado.' : 'Pedido vaciado.', clearResult?.review ? 'warning' : 'success');
           } catch (error) {
             console.error('[TPV] No se pudo confirmar el vaciado.', error);
             showToast('No se vació el pedido. Comprueba la conexión e inténtalo de nuevo.', 'error');
@@ -8125,7 +8165,7 @@ function setupEventListeners(container) {
               'Combinar Mesa y Comanda',
               `La ${table.name} ya tiene una comanda activa.\n¿Deseas combinar tu comanda actual con la cuenta de la mesa?`,
               () => {
-                store.assignActiveOrderToTable(tableId);
+                if (store.assignActiveOrderToTable(tableId) === false) { showToast('Las cuentas tienen clientes identificados distintos. Revisa la asignación antes de combinarlas.', 'warning'); return; }
                 showToast(`Comanda combinada con la ${table.name}.`, 'success');
               },
               () => {
@@ -8136,7 +8176,7 @@ function setupEventListeners(container) {
             // Target table is empty
             if (currentTableId === null) {
               // Direct sale to empty table: move items automatically
-              store.assignActiveOrderToTable(tableId);
+              if (store.assignActiveOrderToTable(tableId) === false) { showToast('Las cuentas tienen clientes identificados distintos. Revisa la asignación antes de combinarlas.', 'warning'); return; }
               showToast(`Comanda asignada a la ${table.name}.`, 'success');
             } else {
               // Switch tables normally (leave items on the current table)
@@ -8320,10 +8360,13 @@ function setupEventListeners(container) {
   }
 
   const toFidelidadBtn = container.querySelector('#settings-to-fidelidad');
+
+  container.querySelector('#club-courtesy')?.addEventListener('click', showClubCourtesy);
+  container.querySelector('#club-open-team')?.addEventListener('click', showClubPanel);
   if (toFidelidadBtn) {
     toFidelidadBtn.addEventListener('click', () => {
       store.navigateSettings(['fidelidad']);
-      if (isLoyaltyConfigured) {
+      if (!clubEnabled && isLoyaltyConfigured) {
         refreshLoyaltyAdminCurrentTab({ keepSelection: false });
       }
     });
@@ -8673,6 +8716,11 @@ function setupEventListeners(container) {
     });
   }
 
+  if (clubPinEnabled) {
+    const slot=container.querySelector('#club-staff-binding-slot');
+    const staffId=container.querySelector('#settings-staff-form')?.dataset.staffId;
+    if(slot && staffId){const button=document.createElement('button');button.className='btn btn-secondary';button.textContent='Vincular cuenta de Club Esencia';button.onclick=()=>showClubBinding(staffId);slot.append(button);}
+  }
   const deleteStaffBtn = container.querySelector('#settings-delete-staff-btn');
   if (deleteStaffBtn) {
     deleteStaffBtn.addEventListener('click', () => {
@@ -9882,7 +9930,7 @@ function showPriceEditModal(ticketItemId, currentPrice) {
 
   modal.querySelector('#price-edit-save-btn').addEventListener('click', () => {
     const val = currentCents / 100;
-    store.updateItemBasePrice(ticketItemId, val);
+    if (store.updateItemBasePrice(ticketItemId, val) === false) { showToast('Retira la promoción antes de modificar esta unidad.', 'warning'); return; }
     modal.remove();
   });
 
@@ -10045,6 +10093,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // First paint
   render(store.state);
+  if(clubPinEnabled) initializePromotionFlow(store,{chooseClear:choosePromotionClear});
+  initializeClub({
+    getStaff: () => store.state.auth.profile,
+    canSend: () => Boolean(store.state.auth.profile) && store.canUseExternalServices(),
+    loadSale: loadSaleById,
+    transactions: () => store.state.transactions,
+    onError: message => console.warn(message),
+  });
 
   // Re-render only when the responsive layout actually changes. Mobile keyboards
   // also emit resize events and must never rebuild the active form.

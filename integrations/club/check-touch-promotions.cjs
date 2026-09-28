@@ -1,0 +1,19 @@
+async page=>{
+ await page.setViewportSize({width:1280,height:900});const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('http://127.0.0.1:4322');await page.locator('#staff-pin-input').fill('5678');await page.getByRole('button',{name:'Entrar',exact:true}).click();
+ await page.locator('.article-card').click();await page.getByRole('button',{name:'Añadir 1 · 4.60€',exact:true}).click();
+ await page.locator('.article-card').click();await page.getByRole('button',{name:'Sumar Nata',exact:true}).click();await page.getByRole('button',{name:'Sumar Nata',exact:true}).click();await page.getByRole('button',{name:'Añadir 1 · 5.60€',exact:true}).click();
+ await page.evaluate(()=>{window.clubDemo.store.setTheme('dark');navigator.mediaDevices.getUserMedia=async()=>{throw new DOMException('No camera','NotFoundError');};});await page.getByRole('button',{name:'Cliente Club',exact:true}).click();await page.getByRole('dialog',{name:'Escanear QR de Club Esencia',exact:true}).getByRole('button',{name:'Usar Ana de prueba',exact:true}).click();
+ const offers=page.getByRole('dialog',{name:'Promociones de Ana de prueba',exact:true});await offers.getByRole('button',{name:'Café gratis · 1 puntos',exact:true}).click();
+ const gift=page.getByRole('dialog',{name:'Café gratis',exact:true});if(await gift.locator('select').count())throw Error('Dropdown remains');if(!await gift.getByRole('button',{name:'Aplicar',exact:true}).isDisabled())throw Error('Automatic selection');
+ const radios=gift.getByRole('radio');if(await radios.count()!==2)throw Error('Missing target rows');await gift.locator('.club-target').nth(1).click();if(!await radios.nth(1).isChecked())throw Error('Row is not touch selectable');if(await page.evaluate(()=>window.clubDemo.store.getActiveItems().some(i=>i.clubPromotion)))throw Error('Applied before confirmation');
+ await page.setViewportSize({width:390,height:844});await page.screenshot({path:'output/playwright/club-touch-gift-dark.png'});
+ const footer=await gift.locator('[data-footer]').boundingBox();if(footer.y+footer.height>845||footer.y<700)throw Error('Footer is not anchored');
+ await gift.getByRole('button',{name:'Cancelar',exact:true}).click();await offers.getByRole('button',{name:'Topping gratis · 1 puntos',exact:true}).click();
+ const topping=page.getByRole('dialog',{name:'Topping gratis',exact:true});if(await topping.getByRole('radio').count()!==1||!await topping.getByRole('button',{name:'Aplicar',exact:true}).isDisabled())throw Error('Single target automatically chosen');await topping.locator('.club-target').click();await topping.getByRole('button',{name:'Aplicar',exact:true}).click();await topping.waitFor({state:'detached'});
+ await page.waitForFunction(()=>window.clubDemo.store.getActiveItems().some(i=>i.clubPromotion));await offers.waitFor({state:'detached'});const lines=await page.evaluate(()=>window.clubDemo.store.getActiveItems());if(lines.filter(i=>i.clubPromotion).length!==1||lines.find(i=>i.clubPromotion).clubPromotion.discountCents!==50)throw Error('Wrong topping');
+ await page.setViewportSize({width:1280,height:900});await page.getByRole('button',{name:'Cliente Club',exact:true}).click();await page.setViewportSize({width:390,height:844});const client=page.getByRole('dialog',{name:'Cliente de esta cuenta',exact:true});await page.screenshot({path:'output/playwright/club-touch-client-dark.png'});await page.evaluate(()=>document.body.classList.add('light-theme'));await page.screenshot({path:'output/playwright/club-touch-client-light.png'});
+ if(!await client.evaluate(d=>d.scrollWidth<=d.clientWidth))throw Error('Horizontal overflow');await page.setViewportSize({width:1280,height:900});if(errors.length)throw Error(errors.join('\n'));
+ return {touchRows:true,noDropdown:true,noPreselection:true,singleToppingConfirmed:true,footerFixed:true,discountCents:50};
+}
+
+

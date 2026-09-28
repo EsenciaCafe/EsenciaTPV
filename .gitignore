@@ -17,6 +17,9 @@ jspm_packages/
 # Output directories
 dist/
 dist-ssr/
+dist-club-staging/
+output/club-release/
+integrations/club/*.local.mjs
 *.local
 
 # Editor directories and files

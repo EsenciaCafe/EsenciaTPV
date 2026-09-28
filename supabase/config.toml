@@ -3,3 +3,7 @@ verify_jwt = false
 
 [functions.watch-sales-summary]
 verify_jwt = false
+
+# PIN + terminal session and signed Ed25519 requests are verified inside these functions.
+[functions.club-tpv]
+verify_jwt = false

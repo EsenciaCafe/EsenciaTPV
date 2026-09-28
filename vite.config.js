@@ -38,7 +38,7 @@ function offlinePrecachePlugin() {
   };
 }
 
-export default defineConfig({
+const normalConfig = {
   base: './',
   plugins: [offlinePrecachePlugin()],
   server: {
@@ -59,4 +59,6 @@ export default defineConfig({
       }
     }
   }
-});
+};
+
+export default defineConfig(normalConfig);

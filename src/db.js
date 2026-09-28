@@ -634,6 +634,12 @@ export async function createFiscalDocumentForSale(transaction) {
 
 export async function finalizeOnlineSale(transaction) {
   if (!transaction?.id) return null;
+  const {clubServerEnabled,serverClubAction}=await import('./clubServerTransport.js');
+  const {saleNeedsClubServer}=await import('./clubSaleRouting.js');
+  if(clubServerEnabled && saleNeedsClubServer(transaction)){
+    try{return mapFiscalDocument(await serverClubAction('finalize_sale',{transaction}));}
+    catch(error){notifyDbError('finalizeOnlineSale',error.message);return null;}
+  }
 
   const { data, error } = await supabase.rpc('finalize_tpv_sale', {
     p_transaction: transaction

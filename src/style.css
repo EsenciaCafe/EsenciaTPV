@@ -5843,3 +5843,50 @@ a.offline-banner__button {
     grid-template-columns: 1fr;
   }
 }
+/* Club reuses the TPV discount sheet, its header, row list and action footer. */
+.club-dialog { position:fixed; inset:0; margin:0; padding:0; border:0; width:100vw; height:100dvh; max-width:none; max-height:none; color:var(--text-main); background:var(--bg-card); font-family:var(--font-family); }
+.club-dialog::backdrop { background:#0008; }
+.club-dialog:not([open]) { display:none; }
+.club-dialog > .ticket-discount-dialog > * { width:min(100%,760px); box-sizing:border-box; }
+.club-dialog .ticket-discount-header h3 { font-size:1.4rem; line-height:1.25; overflow-wrap:anywhere; }
+.club-dialog [hidden] { display:none !important; }
+.club-dialog .club-footer { grid-template-columns:1fr 1fr; }
+.club-dialog .club-footer:empty { display:none; }
+.club-dialog .club-footer > :only-child { grid-column:1/-1; }
+.club-dialog .club-footer [data-confirm] { background:#10b981; border-color:#10b981; color:white; }
+.club-dialog button, .club-payment button { cursor:pointer; font-family:inherit; }
+.club-dialog button:disabled, .club-payment button:disabled { opacity:.45; cursor:default; }
+.club-dialog button:not(.btn):not(.modal-close-btn), .club-payment button:not(.btn) { min-height:46px; padding:12px 16px; border:1px solid var(--border-color); border-radius:12px; background:var(--bg-item); color:var(--text-main); font-size:.9rem; font-weight:600; }
+.club-dialog input:not([type=radio]):not([type=checkbox]), .club-dialog select, .club-payment input { display:block; width:100%; box-sizing:border-box; min-height:46px; margin-top:8px; padding:12px; border:1px solid var(--border-color); border-radius:12px; background:var(--bg-panel); color:var(--text-main); font:inherit; }
+.club-dialog label:not(.ticket-discount-item) { display:block; margin:12px 0; }
+.club-dialog .club-target { cursor:pointer; min-height:76px; }
+.club-dialog .club-target:has(input:checked) { background:rgba(16,185,129,.12); box-shadow:inset 3px 0 #10b981; }
+.club-dialog .club-target input { accent-color:#10b981; margin:0; flex-shrink:0; }
+.club-dialog .ticket-discount-item-copy small { display:inline; }
+.club-dialog .club-selection-hint { font-size:.85rem; line-height:1.45; color:var(--text-muted); margin:0 0 16px; }
+.club-dialog .ticket-discount-items + .club-selection-hint { margin-top:14px; }
+.club-conditions { border-left:3px solid #10b981; padding:10px 14px; background:var(--bg-panel); border-radius:0 8px 8px 0; line-height:1.5; }
+.club-payment { margin:12px 0; padding:14px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:12px; }
+.club-payment summary { cursor:pointer; font-weight:700; padding:10px 0; }
+.club-identity .club-payment { padding:0; border:0; margin:0; }
+.club-identity .club-payment > summary { display:none; }
+.club-dialog .club-member-card { display:flex; align-items:center; gap:14px; padding:18px; border:1px solid var(--border-color); border-radius:14px; background:var(--bg-panel); }
+.club-member-avatar { display:grid; place-items:center; width:48px; height:48px; border-radius:50%; background:rgba(16,185,129,.14); color:#10b981; font-size:1.25rem; font-weight:800; }
+.club-member-name { flex:1; min-width:0; }
+.club-member-name strong { display:block; font-size:1.1rem; }
+.club-member-name small { display:block; margin-top:4px; color:var(--text-muted); }
+.club-member-points { text-align:right; color:#10b981; font-weight:800; font-size:1.4rem; }
+.club-member-points small { display:block; color:var(--text-muted); font-size:.75rem; font-weight:400; }
+.club-member-actions { display:flex; gap:8px; margin-top:16px; }
+.club-dialog [data-camera], .club-dialog [data-demo-member], .club-payment [data-camera] { width:100%; margin-bottom:12px; }
+.club-demo-help { margin:12px 0 18px; padding:14px; border:1px dashed var(--border-color); border-radius:12px; }
+.club-demo-help strong { font-size:.75rem; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+.club-demo-help p, .club-input-help { font-size:.8rem; line-height:1.5; color:var(--text-muted); }
+.club-demo-help [data-demo-member] { margin:0; }
+.club-dialog video { display:block; width:100%; max-height:40dvh; margin:12px 0; border-radius:14px; background:var(--bg-panel); }
+.club-dialog [data-offer] { display:block; width:100%; margin-bottom:10px; padding:16px !important; text-align:left; }
+.club-dialog [data-offer] small { display:block; margin-top:6px; font-size:.8rem; font-weight:400; color:var(--text-muted); }
+.club-dialog [data-offers] h4 { margin:0 0 14px; font-size:.8rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; }
+.club-total-card { padding:16px; background:var(--bg-panel); border:1px solid var(--border-color); border-radius:14px; }
+.club-total-card > div { display:flex; justify-content:space-between; gap:12px; padding:12px 0; }
+.club-total-card > div:last-child { border-top:1px solid var(--border-color); color:#10b981; font-size:1.2rem; }
