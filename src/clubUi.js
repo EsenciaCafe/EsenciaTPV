@@ -3,7 +3,7 @@ import {clubServerEnabled} from './clubServerTransport.js';
 import { showCustomerPromotions } from './clubPromotionUi.js';
 import { clubTicketOptions } from './clubTicket.js';
 import { clubRequestId } from './clubIntegration.js';
-import { clubActor, clubClient, clubIntegration, clubLogin, clubLogout, clubQueue, clubPinEnabled, clubPinBridge, clubStaff, clubLoginWithPin } from './clubRuntime.js';
+import { clubActor, clubClient, clubIntegration, clubLogin, clubLogout, clubQueue, clubPinEnabled, clubPinBridge, clubStaff } from './clubRuntime.js';
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const localDemo=import.meta.env.VITE_CLUB_LOCAL_DEMO==='true';
@@ -19,7 +19,7 @@ export function showClubPanel() {
     catch (e) { message = e.message; }
     if (!modal.isConnected) return;
     body.innerHTML = `<p>${clubPinEnabled ? 'Acceso con el PIN del TPV. Los pendientes se conservan al cambiar de empleado.' : 'Acceso independiente del PIN del TPV. Los pendientes se conservan al cerrar sesión.'}</p>
-      ${!clubClient ? '<p>Club Esencia no está configurado en esta instalación.</p>' : clubPinEnabled ? `<p>${actor ? 'Fidelidad preparada para el empleado actual.' : 'Fidelidad no disponible. Puedes seguir cobrando; el encargado puede revisar la vinculación.'}</p>${clubStaff()?.role === 'admin' ? '<button data-terminal>Configurar este terminal</button>' : ''}` : actor ? `<p>Sesión del equipo activa.</p><button data-logout>Cerrar sesión de Club</button>` : `
+      ${!clubClient ? '<p>Club Esencia no está configurado en esta instalación.</p>' : clubPinEnabled ? `<p>${actor ? 'Fidelidad preparada para el empleado actual.' : 'Para activar Club, sal del TPV y vuelve a entrar con tu PIN habitual. No necesitas otra contraseña.'}</p>${clubServerEnabled ? '<p>Este dispositivo se configura automáticamente al iniciar sesión con tu PIN.</p>' : ''}` : actor ? `<p>Sesión del equipo activa.</p><button data-logout>Cerrar sesión de Club</button>` : `
       <form data-login><label>Correo del equipo<input name="email" type="email" autocomplete="username" required></label>
       <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><button>Acceder a Club</button></form>`}
       <p role="status">${escape(message)}</p><h4>Asignaciones de puntos</h4>${clubPinEnabled ? '<button data-courtesy>Puntos de cortesía</button>' : ''}
@@ -36,7 +36,6 @@ export function showClubPanel() {
       finally { busy = false; }
     };
     body.querySelector('[data-courtesy]')?.addEventListener('click', showClubCourtesy);
-    body.querySelector('[data-terminal]')?.addEventListener('click', showClubTerminal);
     body.querySelector('[data-login]')?.addEventListener('submit', run(async event => {
       const form = new FormData(event.currentTarget);
       await clubLogin(String(form.get('email')).trim(), String(form.get('password')));
@@ -177,18 +176,6 @@ export function showClubBinding(staffId) {
     catch(e){status.textContent=e.message;}finally{button.disabled=false;}
   };
 }
-function showClubTerminal(){
-  const modal=dialog('Preparar terminal · Solo configuración inicial');const body=modal.querySelector('[data-body]');
-  body.innerHTML='<p>Introduce la credencial de terminal emitida por el administrador del servidor y tu PIN del TPV. No introduzcas una clave service_role.</p><form><label>Credencial del terminal<input name="device" type="password" required autocomplete="off"></label><label>Tu PIN de administrador<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4,8}" required autocomplete="off"></label><button>Preparar terminal</button></form><p role="status"></p>';
-  body.querySelector('form').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget;const data=new FormData(form);const button=form.querySelector('button');button.disabled=true;
-    try{const device=String(data.get('device')).trim();if(!(clubServerEnabled?/^[A-Za-z0-9_-]{43}$/:/^[0-9a-f-]{72}$/i).test(device))throw new Error('Credencial de terminal no válida.');await clubPinBridge.configure(device);if(!await clubLoginWithPin(String(data.get('pin')),clubStaff()?.id))throw new Error('No se pudo validar el terminal y el PIN.');form.reset();body.querySelector('[role=status]').textContent='Terminal preparado. Ya puedes vincular las cuentas en Personal.';}
-    catch(e){body.querySelector('[role=status]').textContent=e.message;}finally{button.disabled=false;}
-  };
-}
-
-
-
-
 export function showClubTicketIdentity(store) {
   const modal=dialog('Cliente de esta cuenta');
   const body=modal.querySelector('[data-body]');
@@ -259,5 +246,3 @@ export function showClubCourtesy() {
   };
   void (async()=>{const actor=await clubActor();const pending=JSON.parse(localStorage.getItem(`club-courtesy-pending:${actor}`)||'null');if(pending){message.textContent=`Pendiente: ${pending.points} puntos para ${pending.name}, motivo: ${pending.reason}. Pulsa para confirmar esta misma operación.`;button.textContent='Reintentar puntos pendientes';body.querySelector('[data-selector]').hidden=true;body.querySelector('[data-points]').disabled=true;body.querySelector('[data-reason]').disabled=true;}})().catch(e=>{message.textContent=e.message;});
 }
-
-
