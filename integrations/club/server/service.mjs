@@ -1,6 +1,7 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {enqueue,createOutboxWorker} from './outbox.mjs';
 import {createPinAuth} from './auth.mjs';
+import {waitForOperation} from './operation-result.mjs';
 import {benefitDiscount,validateBenefitRule} from './benefit.mjs';
 import {allocateCartDiscount,cartPromotionPart} from '../../../src/clubCartPromotionMath.js';
 import {promotionSnapshot,promotionDiscount} from '../../../src/clubPromotionMath.js';
@@ -21,7 +22,7 @@ export function createTpvBridge({db,send,sourceProject,loadCatalog,finalizeFisca
  }});
  async function finishOperation(id){
   await worker.runOne(id);
-  const row=(await db.query('select * from tpv_bridge_private.outbox where id=$1',[id])).rows[0];
+  const row=await waitForOperation(db,id);
   if(row?.state==='applied')return row.response.result;
   const error=Error(row?.response?.error?.message||'Operación pendiente de confirmar. Reintenta sin crear otra operación.');
   error.code=row?.error_code||'RESULT_UNKNOWN';error.operationId=id;throw error;
