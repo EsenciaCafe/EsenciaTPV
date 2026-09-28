@@ -3,6 +3,7 @@ import {enqueue,createOutboxWorker} from './outbox.mjs';
 import {createPinAuth} from './auth.mjs';
 import {waitForOperation} from './operation-result.mjs';
 import {assignmentDetails} from './assignment-details.mjs';
+import {pendingOffers} from './pending-offers.mjs';
 import {benefitDiscount,validateBenefitRule} from './benefit.mjs';
 import {allocateCartDiscount,cartPromotionPart} from '../../../src/clubCartPromotionMath.js';
 import {promotionSnapshot,promotionDiscount} from '../../../src/clubPromotionMath.js';
@@ -61,8 +62,8 @@ export function createTpvBridge({db,send,sourceProject,loadCatalog,finalizeFisca
    const current=await application(prior.id);if(current.state!=='reserved')throw Error('Reserva ya resuelta.');return current.promotion;
   }
   const offers=await perform(context,'member.offers',{member_id:p.member_id});
-  const reward=offers.rewards.find(r=>r.id===p.reward_id),pending=offers.pending.find(r=>r.reward_id===p.reward_id&&!r.reserved);
-  if(!reward||(!reward.eligible&&!pending)||reward.version!==p.ruleVersion)throw Error('La promoción ha cambiado o no está disponible.');
+  const reward=pendingOffers(offers).find(r=>r.id===p.reward_id&&(!p.redemption_id||r.redemption_id===p.redemption_id));
+  if(!reward||reward.version!==p.ruleVersion)throw Error('No hay un canje pendiente para esta promoción. El cliente debe canjearla primero en la web de Fidelidad.');
   const catalog=await loadCatalog(db);
   if(reward.rule.version!==2&&(reward.rule.version!==1||reward.rule.catalog_version!==catalog.version))throw Error('Actualiza la promoción para la versión actual de la carta.');
   let allocation,discount;
@@ -101,7 +102,7 @@ export function createTpvBridge({db,send,sourceProject,loadCatalog,finalizeFisca
   }
   }
   if(!Number.isInteger(discount)||discount<0)throw Error('Producto o topping no válido para esta promoción.');
-  const payload={member_id:p.member_id,reward_id:reward.id,expected_cost:pending?.cost??reward.cost,expected_version:reward.version,cart_id:p.cart_id,application_id:p.reservation_id,...(pending?{redemption_id:pending.id}:{})};
+  const payload={member_id:p.member_id,reward_id:reward.id,expected_cost:reward.cost,expected_version:reward.version,cart_id:p.cart_id,application_id:p.reservation_id,redemption_id:reward.redemption_id};
   let id;
   await db.transaction(async tx=>{
    const op=await enqueue(tx,context,'redemption.reserve',payload);id=op.id;
@@ -210,7 +211,7 @@ export function createTpvBridge({db,send,sourceProject,loadCatalog,finalizeFisca
    if(p_action==='promo_available'||p_action==='pending'){
     const member=p.member_id||p.memberId,offers=await perform(context,'member.offers',{member_id:member});
     if(p_action==='pending')return offers.pending.map(r=>({...r,member_id:member,title:offers.rewards.find(w=>w.id===r.reward_id)?.title||'Canje',status:r.status}));
-    return offers.rewards.flatMap(r=>{const pending=offers.pending.find(p=>p.reward_id===r.id&&!p.reserved);return r.eligible||pending?[{...r,cost:pending?.cost??r.cost,pending:!!pending,rule:uiRule(r.rule,r.version)}]:[];});
+    return pendingOffers(offers).map(r=>({...r,rule:uiRule(r.rule,r.version)}));
    }
    if(p_action==='promo_reserve')return reserve(context,p);
    if(p_action==='promo_cart'||p_action==='promo_holds'){

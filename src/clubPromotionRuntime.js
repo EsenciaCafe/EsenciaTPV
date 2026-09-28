@@ -11,9 +11,10 @@ async function refreshMember(store,context){
 export async function applyClubOffer(store,reward,target){
  const context=ensurePromoCart(store),item=store.getActiveItems().find(i=>i.ticketItemId===target.lineId);
  if(!context.member || (!item&&target.scope!=='cart'))throw new Error('Identifica al cliente y elige un artículo de la cuenta.');
- const key=`club-promo-intent:${context.id}:${reward.id}`;
+ if(!reward.pending||!reward.redemption_id)throw new Error('El cliente debe canjear esta promoción en la web de Fidelidad.');
+ const key=`club-promo-intent:${context.id}:${reward.redemption_id}`;
  let intent=JSON.parse(localStorage.getItem(key)||'null');
- if(!intent){intent={reservation_id:crypto.randomUUID(),reward_id:reward.id,member_id:context.member.id,cart_id:context.id,ruleVersion:reward.version??reward.rule.version,...(target.scope==='cart'?{scope:'cart',lines:cartSnapshot(store.getActiveItems())}:{...(reward.rule.benefit?{line_id:target.lineId}:{}),option_id:target.optionId,snapshot:promotionSnapshot(item)})};localStorage.setItem(key,JSON.stringify(intent));}
+ if(!intent){intent={reservation_id:crypto.randomUUID(),reward_id:reward.id,redemption_id:reward.redemption_id,member_id:context.member.id,cart_id:context.id,ruleVersion:reward.version??reward.rule.version,...(target.scope==='cart'?{scope:'cart',lines:cartSnapshot(store.getActiveItems())}:{...(reward.rule.benefit?{line_id:target.lineId}:{}),option_id:target.optionId,snapshot:promotionSnapshot(item)})};localStorage.setItem(key,JSON.stringify(intent));}
  const reservation=await clubPinBridge.action('promo_reserve',intent);
  await installReservedPromo(store,reservation,target.lineId);
  localStorage.removeItem(key);

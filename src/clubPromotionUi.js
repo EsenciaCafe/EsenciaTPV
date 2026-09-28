@@ -12,7 +12,7 @@ export function choosePromotionClear(){return new Promise(resolve=>{
 });}
 export function showCustomerPromotions({store,member,onApplied=()=>{}}){
  const d=modal(`Promociones de ${member.name}`),body=d.querySelector('[data-body]');
- body.innerHTML='<div data-offers></div><button type="button" data-done>Cerrar sin canjear</button>';
+ body.innerHTML='<div data-offers></div><button type="button" data-done>Cerrar sin aplicar</button>';
  body.querySelector('[data-done]').onclick=()=>d.close();
  placeClubActions(d);
  void mountAvailablePromotions(body.querySelector('[data-offers]'),{store,member,onApplied:async()=>{d.close();await onApplied();}});
@@ -22,19 +22,20 @@ export async function mountAvailablePromotions(root,{store,member,onApplied=()=>
  if(!root)return;root.textContent='Consultando promociones…';
  try{
  const cart=ensurePromoCart(store);
- const [offers,holds]=await Promise.all([clubPinBridge.action('promo_available',{member_id:member.id}),clubPinBridge.action('promo_cart',{cart_id:cart.id})]);
+ const [available,holds]=await Promise.all([clubPinBridge.action('promo_available',{member_id:member.id}),clubPinBridge.action('promo_cart',{cart_id:cart.id})]);
+ const offers=available.filter(r=>r.pending===true&&r.redemption_id);
  if(!root.isConnected||cart.member?.id!==member.id)return;
  const unapplied=holds.filter(h=>!store.getActiveItems().some(i=>i.clubPromotion?.id===h.id));
- root.innerHTML='<h4>Promociones disponibles</h4>'+(offers.length?offers.map(r=>`<button data-offer="${esc(r.id)}" ${promoTargets(store.getActiveItems(),r.rule).length?'':'disabled'}>${esc(r.title)} · ${r.pending?'Ya canjeada':r.cost/100+' puntos'}${promoTargets(store.getActiveItems(),r.rule).length?'':' · Añade un artículo válido'}</button>`).join(''):'<p>No hay más promociones disponibles para esta cuenta.</p>')+unapplied.map(h=>`<p>Reserva pendiente: ${esc(h.title)}</p><button data-recover="${esc(h.id)}">Recuperar descuento</button><button data-release="${esc(h.id)}">Liberar reserva</button>`).join('')+'<p data-status role="status"></p>';
+ root.innerHTML='<h4>Canjes pendientes de usar</h4>'+(offers.length?offers.map(r=>`<button data-offer="${esc(r.redemption_id)}" ${promoTargets(store.getActiveItems(),r.rule).length?'':'disabled'}>${esc(r.title)} · Canjeada en la web${promoTargets(store.getActiveItems(),r.rule).length?'':' · Añade un artículo válido'}</button>`).join(''):'<p>Este cliente no tiene canjes pendientes para aplicar. Las promociones se canjean por puntos en la web de Fidelidad.</p>')+unapplied.map(h=>`<p>Reserva pendiente: ${esc(h.title)}</p><button data-recover="${esc(h.id)}">Recuperar descuento</button><button data-release="${esc(h.id)}">Liberar reserva</button>`).join('')+'<p data-status role="status"></p>';
  const status=root.querySelector('[data-status]');let busy=false;
  for(const button of root.querySelectorAll('[data-offer]')){
-  const benefit=offers.find(r=>r.id===button.dataset.offer)?.rule?.benefit;if(!benefit)continue;
+  const benefit=offers.find(r=>r.redemption_id===button.dataset.offer)?.rule?.benefit;if(!benefit)continue;
   const label=benefit.type==='free_item'?'Una unidad de artículo gratis; extras aparte':benefit.type==='free_topping'?'Una unidad de topping gratis':benefit.mode==='percentage'?`${benefit.basis_points/100} % de descuento en toda la cuenta`:`${(benefit.amount_cents/100).toFixed(2)} € de descuento en toda la cuenta`;
   button.setAttribute('aria-label',button.textContent);button.setAttribute('aria-description',label);const detail=document.createElement('small');detail.setAttribute('aria-hidden','true');detail.textContent=label;button.append(detail);
  }
  const run=fn=>async()=>{if(busy)return;busy=true;root.querySelectorAll('button').forEach(b=>b.disabled=true);try{await fn();await onApplied();await mountAvailablePromotions(root,{store,member,onApplied});}catch(e){status.textContent=e.message;root.querySelectorAll('button').forEach(b=>b.disabled=false);}finally{busy=false;}};
  for(const b of root.querySelectorAll('[data-offer]'))b.onclick=()=>{
-  const reward=offers.find(r=>r.id===b.dataset.offer),targets=promoTargets(store.getActiveItems(),reward.rule);
+  const reward=offers.find(r=>r.redemption_id===b.dataset.offer),targets=promoTargets(store.getActiveItems(),reward.rule);
   const d=modal(reward.title),body=d.querySelector('[data-body]');
   const description=`${reward.description?`<p class="club-conditions">${esc(reward.description)}</p>`:''}`;
   if(reward.rule?.benefit?.type==='discount'){

@@ -17,6 +17,13 @@ No hay sustitución de módulos ni una versión alternativa para publicar.
 
 Los cajeros consultan socios, aplican promociones y asignan compras. Cortesías y
 retirada de puntos exigen administrador. Las promociones se editan en Fidelidad.
+Desde el 29/09/2026, el TPV solo entrega canjes pendientes comprados previamente
+por el cliente en la web: promo_available incluye redemption_id y promo_reserve
+debe reservar ese canje. El servidor de Fidelidad rechaza redemption.reserve sin
+redemption_id (WEB_REDEMPTION_REQUIRED), incluso desde clientes antiguos.
+Reservar o liberar un canje web no mueve puntos. Confirmar su entrega al cobrar
+o vaciar cambia club_redemptions.status a used; desaparece de pendientes y se
+conserva en el historial. La migración correspondiente está solo en Fidelidad.
 El antiguo premio sin tipo de beneficio no se transforma automáticamente: hay que
 editarlo en Fidelidad y elegir artículo, topping o descuento.
 
