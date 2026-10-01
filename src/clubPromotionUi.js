@@ -22,9 +22,12 @@ export async function mountAvailablePromotions(root,{store,member,onApplied=()=>
  if(!root)return;root.textContent='Consultando promociones…';
  try{
  const cart=ensurePromoCart(store);
+ if(cart.member?.id!==member.id)throw new Error('El cliente de esta cuenta ha cambiado. Cierra esta ventana y vuelve a abrir Cliente Club.');
  const [available,holds]=await Promise.all([clubPinBridge.action('promo_available',{member_id:member.id}),clubPinBridge.action('promo_cart',{cart_id:cart.id})]);
  const offers=available.filter(r=>r.pending===true&&r.redemption_id);
- if(!root.isConnected||cart.member?.id!==member.id)return;
+ if(!root.isConnected)return;
+ const current=ensurePromoCart(store);
+ if(current.id!==cart.id||current.member?.id!==member.id)throw new Error('La cuenta o el cliente han cambiado. Cierra esta ventana y vuelve a abrir Cliente Club.');
  const unapplied=holds.filter(h=>!store.getActiveItems().some(i=>i.clubPromotion?.id===h.id));
  root.innerHTML='<h4>Canjes pendientes de usar</h4>'+(offers.length?offers.map(r=>`<button data-offer="${esc(r.redemption_id)}" ${promoTargets(store.getActiveItems(),r.rule).length?'':'disabled'}>${esc(r.title)} · Canjeada en la web${promoTargets(store.getActiveItems(),r.rule).length?'':' · Añade un artículo válido'}</button>`).join(''):'<p>Este cliente no tiene canjes pendientes para aplicar. Las promociones se canjean por puntos en la web de Fidelidad.</p>')+unapplied.map(h=>`<p>Reserva pendiente: ${esc(h.title)}</p><button data-recover="${esc(h.id)}">Recuperar descuento</button><button data-release="${esc(h.id)}">Liberar reserva</button>`).join('')+'<p data-status role="status"></p>';
  const status=root.querySelector('[data-status]');let busy=false;
@@ -65,5 +68,5 @@ export async function mountAvailablePromotions(root,{store,member,onApplied=()=>
   if(!target)throw new Error('El artículo ya no está en esta cuenta. Libera la reserva.');
   await installReservedPromo(store,hold,target.ticketItemId);
  });
- }catch(e){if(root.isConnected)root.textContent=e.message;}
+ }catch(e){if(root.isConnected){root.textContent=e.message||'No se pudieron consultar las promociones.';const retry=document.createElement('button');retry.type='button';retry.className='btn btn-secondary';retry.textContent='Reintentar';retry.onclick=()=>void mountAvailablePromotions(root,{store,member,onApplied});root.append(retry);}}
 }

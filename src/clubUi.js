@@ -174,7 +174,6 @@ export function createClubPayment({ amount, canUse, initial = null, onSelection 
     render();
     root?.querySelector('details')?.setAttribute('open', '');
     if(!member&&status)root?.querySelector('[data-manual-entry]')?.setAttribute('open','');
-    if(member&&!closed&&token===generation)openPromotions();
   }
   return {
     clear: reset,

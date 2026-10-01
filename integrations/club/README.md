@@ -33,7 +33,7 @@ ni repite el cobro. El cliente se elimina de la cuenta después de cerrarla.
 
 ## Verificación
 
-119 tests locales, incluido primer PIN, revocación al cambiar PIN, límites de
+121 tests locales, incluido primer PIN, revocación al cambiar PIN, límites de
 intentos, descuentos, cola persistente, transacciones y CORS. Build normal con
 las variables de producción. Lectura real entre proyectos comprobada: sesión,
 QR de socio, tres promociones configuradas y catálogo. No se han creado ventas
@@ -45,6 +45,13 @@ validan los toppings contra la carta y congelan el precio al reservar. Las prueb
 incluyen MiniPancakes a 0 € con almendra a 1,50 €, vaciado con y sin promociones,
 entrega/liberación y reintentos sin duplicar puntos. Comprobación de navegador con
 peticiones interceptadas: selección explícita, vaciado y retirada del cliente.
+
+Corrección 01/10: el selector de cliente resuelve la mesa actual en cada cambio,
+porque persistencia/realtime reemplazan los objetos de mesa. La identidad comparte
+el mismo cartId entre carrito, cobro, promociones y vaciado; un QR tardío no puede
+asociarse a otra mesa ni a una cuenta ya vaciada. Las promociones solo se consultan
+con «Ver promociones», y una consulta fallida permite reintentar. Verificado con
+el Store real y las pantallas de identificación/cobro/vaciado, interceptando red.
 
 Después de actualizar la web, los empleados que ya tenían una sesión antigua
 deben salir y entrar una vez con su PIN para iniciar también la sesión Club.

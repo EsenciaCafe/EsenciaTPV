@@ -2,10 +2,16 @@
 import {clubServerEnabled,serverClubAction} from './clubServerTransport.js';
 export function clubTicket(store) { return store.getSelectedTable() || store.state.directSaleTicket; }
 export function clubTicketOptions(store) {
-  const ticket=clubTicket(store);
+  const ticket=clubTicket(store),tableId=store.state.selectedTableId;
+  ticket.clubContext ||= {id:crypto.randomUUID(),member:null};
+  const cartId=ticket.clubContext.id;
   return {
     initial: ticket.clubContext?.member || null,
     onSelection(member) {
+      // Persistence/realtime replace table objects. Resolve the live account on
+      // each update, but never let a late QR attach to a different/new account.
+      const ticket=clubTicket(store);
+      if(store.state.selectedTableId!==tableId||ticket.clubContext?.id!==cartId)return false;
       if(store.getActiveItems().some(i=>i.clubPromotion) && (!member || member.id!==ticket.clubContext?.member?.id))return false;
       if (member) ticket.clubContext={ id:ticket.clubContext?.id || crypto.randomUUID(), member };
       else if(ticket.clubContext) ticket.clubContext.member=null;
