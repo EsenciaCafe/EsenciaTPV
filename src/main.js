@@ -1,8 +1,9 @@
+import { kitchenRule, selectKitchenFinish, kitchenSelectionError, kitchenNotice } from './kitchenCatalog.js';
 import { initializePromotionFlow, removeClubOffer } from './clubPromotionRuntime.js';
 import { choosePromotionClear } from './clubPromotionUi.js';
 import { clubTicketOptions, clearClubTicket } from './clubTicket.js';
 import { store } from './store.js';
-import { loadSaleById } from './db.js';
+import { loadSaleById, loadKitchenPublication } from './db.js';
 import { clubEnabled, clubAfterSale, clubAfterRefund, initializeClub, clubLogout, clubLoginWithPin, clubPinEnabled, clubPinBridge, clubQueue, clubActor } from './clubRuntime.js';
 import { mountTransactionIdentity } from './transactionIdentity.js';
 import { createClubPayment, showClubPanel, showClubAssignment, showClubCourtesy, showClubTicketIdentity } from './clubUi.js';
@@ -4615,7 +4616,7 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
   itemModifiers.forEach(mod => {
     let optionsHTML = '';
     (mod.options || []).forEach(opt => {
-      const allowMultiple = opt.allowMultiple === true;
+      const allowMultiple = !kitchenRule(item)?.optionIds.includes(opt.id) && opt.allowMultiple === true;
       const currentQty = allowMultiple
         ? (optionQuantities[opt.id] || 0)
         : Math.min(optionQuantities[opt.id] || 0, 1);
@@ -4646,7 +4647,7 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
 
     modifiersHTML += `
       <div class="modifier-group">
-        <div class="modifier-group-title">${mod.name}</div>
+        <div class="modifier-group-title">${mod.name}${kitchenRule(item)?.groupId===mod.id?' · Elige un acabado':''}</div>
         <div class="modifier-options-list">
           ${optionsHTML || '<p style="font-size:0.85rem; color:var(--text-muted);">No hay opciones definidas</p>'}
         </div>
@@ -4665,10 +4666,15 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
     });
     const total = item.price + optionsTotal;
     const finalTotal = total * itemQuantity;
+    const chosen=Object.entries(optionQuantities).filter(([,qty])=>qty>0).map(([id,qty])=>({id,qty}));
+    const selectionError=kitchenSelectionError(item,chosen);
+    const kitchenInfo=modal.querySelector('#kitchen-allergen-info');if(kitchenInfo)kitchenInfo.textContent=kitchenNotice(item,chosen);
     const saveBtn = modal.querySelector('#modifier-save-btn');
     const itemQtyVal = modal.querySelector('#modifier-item-qty-val');
     if (itemQtyVal) itemQtyVal.innerText = itemQuantity;
     if (saveBtn) {
+      saveBtn.disabled=!!selectionError;
+      saveBtn.title=selectionError;
       saveBtn.innerText = isEditingExistingItem
         ? 'Guardar Cambios' 
         : `Añadir ${itemQuantity} · ${finalTotal.toFixed(2)}€`;
@@ -4702,6 +4708,7 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
       ` : ''}
       <div class="modal-body modifier-selection-body">
         ${modifiersHTML}
+        ${kitchenRule(item)?'<p id="kitchen-allergen-info" role="status" class="kitchen-allergen-info"></p>':''}
         <div class="modifier-note-group">
           <label class="modifier-note-label" for="modifier-item-note">Nota para cocina</label>
           <textarea class="modifier-note-input" id="modifier-item-note" rows="3" maxlength="180" placeholder="Ej: sin nata, poco hecho, sacar al final...">${escapeHtml(initialItemNote)}</textarea>
@@ -4716,6 +4723,14 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
 
   document.body.appendChild(modal);
   document.body.classList.add('modal-open');
+  // Refresh only this public declaration. Ordering remains available if the lookup fails.
+  if(kitchenRule(item)) {
+    item.kitchen=null;
+    loadKitchenPublication().then(payload=>{
+      if(!modal.isConnected)return;
+      item.kitchen=payload;updateModalTotal();
+    });
+  }
   updateModalTotal();
 
   if (!isEditingExistingItem) {
@@ -4741,6 +4756,12 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
 
     if (!allowMultiple) {
       row.addEventListener('click', () => {
+        const exclusive=selectKitchenFinish(item,optId,optionQuantities);
+        if(exclusive){
+          Object.assign(optionQuantities,exclusive);
+          modal.querySelectorAll('.modifier-option-single').forEach(el=>{const selected=optionQuantities[el.dataset.optId]===1;el.classList.toggle('is-selected',selected);el.setAttribute('aria-pressed',String(selected));});
+          updateModalTotal();return;
+        }
         const qty = (optionQuantities[optId] || 0) === 1 ? 0 : 1;
         optionQuantities[optId] = qty;
         row.classList.toggle('is-selected', qty === 1);
@@ -4803,6 +4824,8 @@ function showModifierSelectionModal(itemId, ticketItemId = null) {
       });
     });
 
+    const selectionError=kitchenSelectionError(item,selectedOptions);
+    if(selectionError){showToast(selectionError,'warning');return;}
     const itemNote = modal.querySelector('#modifier-item-note')?.value || '';
 
     if (ticketItemId) {

@@ -1,3 +1,4 @@
+import { kitchenSelectionError, kitchenSnapshot, isLinkedKitchenOption } from './kitchenCatalog.js';
 import { promotionDiscount } from './clubPromotionMath.js';
 import {clubServerEnabled} from './clubServerTransport.js';
 import {
@@ -2629,6 +2630,7 @@ class Store {
   addItemToActiveTicket(itemId, selectedOptions = [], quantity = 1, note = '') {
     const menuItem = this.state.menuItems.find(item => item.id === itemId);
     if (!menuItem) return;
+    if(kitchenSelectionError(menuItem,selectedOptions))return false;
 
     const itemQuantity = Math.max(1, Math.floor(Number(quantity) || 1));
     const sortedOptions = [...selectedOptions].sort((a, b) => a.id.localeCompare(b.id));
@@ -2652,7 +2654,7 @@ class Store {
       if (existingIdx > -1) {
         newItems[existingIdx] = { ...newItems[existingIdx], qty: newItems[existingIdx].qty + itemQuantity };
       } else {
-        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions, deferUntilLater: false, note: itemNote });
+        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions, ...(kitchenSnapshot(menuItem,sortedOptions)?{kitchenSnapshot:kitchenSnapshot(menuItem,sortedOptions)}:{}), deferUntilLater: false, note: itemNote });
       }
 
       this.state.tables[tableIndex] = {
@@ -2673,7 +2675,7 @@ class Store {
       if (existingIdx > -1) {
         newItems[existingIdx] = { ...newItems[existingIdx], qty: newItems[existingIdx].qty + itemQuantity };
       } else {
-        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions, deferUntilLater: false, note: itemNote });
+        newItems.push({ ticketItemId, id: menuItem.id, name: menuItem.name, price: menuItem.price, qty: itemQuantity, selectedOptions: sortedOptions, ...(kitchenSnapshot(menuItem,sortedOptions)?{kitchenSnapshot:kitchenSnapshot(menuItem,sortedOptions)}:{}), deferUntilLater: false, note: itemNote });
       }
       this.state.directSaleTicket.items = this.sortTicketItemsForService(newItems);
     }
@@ -2845,6 +2847,9 @@ class Store {
   }
 
   updateTicketItemModifiers(ticketItemId, selectedOptions) {
+    const activeItem=this.getActiveItems().find(i=>i.ticketItemId===ticketItemId);
+    const menuItem=this.state.menuItems.find(i=>i.id===activeItem?.id);
+    if(kitchenSelectionError(menuItem||activeItem,selectedOptions))return false;
     if(this.getActiveItems().some(i=>i.ticketItemId===ticketItemId && i.clubPromotion))return false;
     const sortedOptions = [...selectedOptions].sort((a, b) => a.id.localeCompare(b.id));
 
@@ -2855,7 +2860,7 @@ class Store {
       const newItems = [...table.items];
       const idx = newItems.findIndex(i => i.ticketItemId === ticketItemId);
       if (idx > -1) {
-        newItems[idx] = { ...newItems[idx], selectedOptions: sortedOptions };
+        newItems[idx] = { ...newItems[idx], selectedOptions: sortedOptions, ...(kitchenSnapshot(menuItem||activeItem,sortedOptions)?{kitchenSnapshot:kitchenSnapshot(menuItem||activeItem,sortedOptions)}:{}) };
         
         const targetId = newItems[idx].id;
         const currentQty = newItems[idx].qty;
@@ -2878,7 +2883,7 @@ class Store {
       const newItems = [...this.state.directSaleTicket.items];
       const idx = newItems.findIndex(i => i.ticketItemId === ticketItemId);
       if (idx > -1) {
-        newItems[idx] = { ...newItems[idx], selectedOptions: sortedOptions };
+        newItems[idx] = { ...newItems[idx], selectedOptions: sortedOptions, ...(kitchenSnapshot(menuItem||activeItem,sortedOptions)?{kitchenSnapshot:kitchenSnapshot(menuItem||activeItem,sortedOptions)}:{}) };
         
         const targetId = newItems[idx].id;
         const currentQty = newItems[idx].qty;
@@ -2930,7 +2935,7 @@ class Store {
           }
           return {
             ...opt,
-            id: `${String(idx).padStart(4, '0')}_${suffix}`
+            id: isLinkedKitchenOption(id,opt.id) ? opt.id : `${String(idx).padStart(4, '0')}_${suffix}`
           };
         });
       }

@@ -5890,3 +5890,5 @@ a.offline-banner__button {
 .club-total-card { padding:16px; background:var(--bg-panel); border:1px solid var(--border-color); border-radius:14px; }
 .club-total-card > div { display:flex; justify-content:space-between; gap:12px; padding:12px 0; }
 .club-total-card > div:last-child { border-top:1px solid var(--border-color); color:#10b981; font-size:1.2rem; }
+/* Cinnamon finish information, within the existing modifier dialog. */
+.kitchen-allergen-info { font-size: .85rem; line-height: 1.5; color: var(--text-secondary); padding: .75rem; border: 1px solid var(--border-color, #ddd); border-radius: 8px; }

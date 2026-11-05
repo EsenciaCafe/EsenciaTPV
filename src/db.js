@@ -47,6 +47,13 @@ function mapFiscalDocument(row) {
 // LOAD — Carga inicial de todo el catálogo
 // ─────────────────────────────────────────
 
+export async function loadKitchenPublication() {
+  try {
+    const {data,error}=await supabase.from('esencia_kitchen_public').select('payload').eq('tpv_item_id','cinnamon-roll').maybeSingle().abortSignal(AbortSignal.timeout(4000));
+    return error ? null : data?.payload || null;
+  } catch { return null; }
+}
+
 export async function loadCatalog() {
   const [
     { data: categories, error: catErr },
@@ -76,13 +83,15 @@ export async function loadCatalog() {
     ...(c.parent_id ? { parentId: c.parent_id } : {})
   }));
 
+  const kitchen=await loadKitchenPublication();
   const mappedMenuItems = menuItems.map(item => ({
     id: item.id,
     name: item.name,
     price: parseFloat(item.price),
     category: item.category,
     ...(item.image ? { image: item.image } : {}),
-    modifiers: item.modifiers || []
+    modifiers: item.modifiers || [],
+    ...(item.id==='cinnamon-roll'?{kitchen}:{} )
   }));
 
   // Agrupar options dentro de cada modifier
