@@ -11,6 +11,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import { openCheckoutTables, checkoutUrl } from './kdsCheckout.js';
 import { getKitchenService, normalizeKitchenState, createKitchenAction, applyKitchenAction, saveKitchenAction } from './kdsService.js';
 import {
   cacheOperationalSnapshot,
@@ -815,6 +816,7 @@ function renderHeader() {
           <div class="kds-status-dot ${state.connected ? '' : 'disconnected'}" id="kds-status-dot"></div>
           <span class="kds-status-label">${state.localMode ? 'Modo local' : state.connected ? 'En línea' : 'Reconectando...'}</span>
         </div>
+        <button class="kds-checkout-button" id="kds-open-checkout" title="Cobrar una mesa">Cobrar</button>
         <a href="./index.html" class="kds-settings-btn" title="Volver al TPV" aria-label="Volver al TPV" style="display:grid;place-items:center;text-decoration:none;">TPV</a>
         <button class="kds-settings-btn" id="kds-open-settings" title="Configuración">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -908,6 +910,10 @@ function refreshGrid() {
 
 function setupGlobalEventListeners() {
   document.body.addEventListener('click', (e) => {
+    if (e.target.closest('#kds-open-checkout')) {
+      showCheckoutTables();
+      return;
+    }
     // 1. Open settings
     const openSettings = e.target.closest('#kds-open-settings');
     if (openSettings) {
@@ -1077,6 +1083,29 @@ function setupGlobalEventListeners() {
       return;
     }
   });
+}
+
+function showCheckoutTables() {
+  if (document.getElementById('kds-checkout-picker')) return;
+  const panel = document.createElement('section');
+  panel.id = 'kds-checkout-picker';
+  panel.className = 'kds-checkout-picker';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-modal', 'true');
+  panel.setAttribute('aria-label', 'Cobrar mesa');
+  const tables = openCheckoutTables(state.tables);
+  panel.innerHTML = `<header><h2>Cobrar mesa</h2><button class="kds-checkout-button" data-close>Cancelar</button></header>
+    <div class="kds-checkout-tables">${state.localMode || navigator.onLine === false
+      ? '<p>El cobro desde KDS requiere conexión. Usa el TPV de emergencia.</p>'
+      : tables.length ? tables.map(table => `<button class="kds-checkout-table" data-table="${escapeHtml(table.id)}"><strong>${escapeHtml(table.name || table.id)}</strong><span>${table.items.reduce((sum, item) => sum + Number(item.qty || 0), 0)} artículos</span></button>`).join('')
+        : '<p>No hay mesas con cuentas abiertas.</p>'}</div>`;
+  panel.querySelector('[data-close]').onclick = () => { panel.remove(); document.getElementById('kds-open-checkout')?.focus(); };
+  panel.addEventListener('keydown', event => { if (event.key === 'Escape') panel.querySelector('[data-close]').click(); });
+  panel.querySelectorAll('[data-table]').forEach(button => {
+    button.onclick = () => { window.location.assign(checkoutUrl(button.dataset.table, document.baseURI)); };
+  });
+  document.body.append(panel);
+  panel.querySelector('[data-close]').focus();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

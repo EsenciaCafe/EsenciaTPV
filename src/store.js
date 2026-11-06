@@ -1,4 +1,5 @@
 import { kitchenSelectionError, kitchenSnapshot, isLinkedKitchenOption } from './kitchenCatalog.js';
+import { fetchCheckoutTable, sameCheckoutItems, checkoutSnapshot } from './kdsCheckout.js';
 import { promotionDiscount } from './clubPromotionMath.js';
 import {clubServerEnabled} from './clubServerTransport.js';
 import {
@@ -3160,7 +3161,33 @@ class Store {
   }
 
   async payActiveTicket(paymentMethod = 'Tarjeta', options = {}) {
+    if (this.paymentInFlight) return this.paymentInFlight;
+    this.paymentInFlight = this.payActiveTicketOnce(paymentMethod, options);
+    try { return await this.paymentInFlight; }
+    finally { this.paymentInFlight = null; }
+  }
+
+  async payActiveTicketOnce(paymentMethod = 'Tarjeta', options = {}) {
     if (!this.canProcessSales()) return null;
+    const checkout = this.kdsCheckout;
+    if (checkout?.pendingTransaction) {
+      const transaction = checkout.pendingTransaction;
+      const fiscalData = await this.finalizeOnlineSaleWithRetry(transaction);
+      if (!fiscalData?.fiscalNumber) return null;
+      transaction.fiscalData = fiscalData;
+      return this.finishKdsSale(transaction);
+    }
+    if (checkout) {
+      try {
+        if (this.isEmergencyMode()) throw new Error('El cobro desde KDS requiere conexión.');
+        const remote = await fetchCheckoutTable(supabase, checkout.tableId);
+        if (!sameCheckoutItems(remote.items, checkout.items)
+          || String(this.state.selectedTableId) !== String(checkout.tableId)
+          || !sameCheckoutItems(this.getActiveItems(), checkout.items)) {
+          throw new Error('La mesa ha cambiado. Vuelve al KDS y revisa la cuenta antes de cobrar.');
+        }
+      } catch (error) { this.state.clubPromotionError = error.message; return null; }
+    }
     const items = this.getActiveItems();
     if (items.length === 0) return;
 
@@ -3177,6 +3204,7 @@ class Store {
       (transaction.orderFingerprint || createOrderFingerprint(transaction.items || [])) === orderFingerprint
     ));
     if (duplicateTransaction) {
+      if (checkout) return { ...duplicateTransaction, duplicatePrevented: true };
       if (this.state.selectedTableId !== null) {
         const tableIndex = this.state.tables.findIndex(table => table.id === this.state.selectedTableId);
         if (tableIndex > -1) {
@@ -3228,6 +3256,7 @@ class Store {
     
     const transaction = {
       id: txId,
+      ...(checkout ? { kdsCheckout: { tableId: String(checkout.tableId), snapshot: checkoutSnapshot(checkout.items) } } : {}),
       date: `${dateStr}, ${timeStr}`,
       table: tableName,
       total: parseFloat(total.toFixed(2)),
@@ -3271,10 +3300,13 @@ class Store {
       const persistedId = await this.persistSaleRecord(transaction);
       if (!persistedId) return null;
     } else {
+      if (checkout) checkout.pendingTransaction = structuredClone(transaction);
       const fiscalData = await this.finalizeOnlineSaleWithRetry(transaction);
       if (!fiscalData?.fiscalNumber) return null;
       transaction.fiscalData = fiscalData;
     }
+
+    if (checkout) return this.finishKdsSale(transaction);
 
     this.state.transactions.unshift(transaction);
     if (this.canUseExternalServices()) this.publishReceiptTicket(transaction);
@@ -3302,6 +3334,19 @@ class Store {
     this.notify({ flushRemote: true });
     await cacheOperationalSnapshot(this.getPersistPayload());
     if (transaction.clubPromotions?.length) void this.clubPromotionAdapter?.afterPay(transaction).catch(error=>console.warn(error.message));
+    return transaction;
+  }
+
+  async finishKdsSale(transaction) {
+    if (!this.state.transactions.some(sale => sale.id === transaction.id)) this.state.transactions.unshift(transaction);
+    if (this.canUseExternalServices()) await this.publishReceiptTicket(transaction);
+    this.broadcastSaleChange(transaction);
+    this.scheduleSalesRefresh(120, transaction.id);
+    this.state.selectedTableId = null;
+    // Server closure and fiscalization are atomic. Never upload the KDS snapshot.
+    await this.refreshSharedStateFromSupabase({ silent: true });
+    this.emitChange({ source: 'kds-checkout' });
+    if (transaction.clubPromotions?.length) await this.clubPromotionAdapter?.afterPay(transaction).catch(error => console.warn(error.message));
     return transaction;
   }
 

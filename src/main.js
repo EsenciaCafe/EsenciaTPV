@@ -3,6 +3,7 @@ import { initializePromotionFlow, removeClubOffer } from './clubPromotionRuntime
 import { choosePromotionClear } from './clubPromotionUi.js';
 import { clubTicketOptions, clearClubTicket } from './clubTicket.js';
 import { store } from './store.js';
+import { checkoutTableId, fetchCheckoutTable, sameCheckoutItems, giftCardOrderReference } from './kdsCheckout.js';
 import { loadSaleById, loadKitchenPublication } from './db.js';
 import { clubEnabled, clubAfterSale, clubAfterRefund, initializeClub, clubLogout, clubLoginWithPin, clubPinEnabled, clubPinBridge, clubQueue, clubActor } from './clubRuntime.js';
 import { mountTransactionIdentity } from './transactionIdentity.js';
@@ -47,6 +48,35 @@ import {
 } from './salesReporting.js';
 import { buildTransactionPaymentSummary, getTransactionChargedAmount } from './transactionReporting.js';
 import { createUuid } from './localDb.js';
+
+const kdsCheckoutTableId = checkoutTableId(window.location.search);
+let kdsCheckoutStarting = false;
+let kdsCheckoutStarted = false;
+let kdsCheckoutFinished = false;
+function returnToKds() {
+  kdsCheckoutFinished = true;
+  window.location.replace(new URL('./kds.html', document.baseURI).href);
+}
+
+async function startKdsCheckout() {
+  if (!kdsCheckoutTableId || !store.state.auth.profile || kdsCheckoutStarting || kdsCheckoutStarted) return;
+  kdsCheckoutStarting = true;
+  const status = document.getElementById('kds-checkout-status');
+  try {
+    if (store.isEmergencyMode() || !store.canProcessSales()) throw new Error('El cobro desde KDS requiere conexión. Usa el TPV de emergencia.');
+    const table = await fetchCheckoutTable(supabase, kdsCheckoutTableId);
+    const index = store.state.tables.findIndex(t => String(t.id) === String(table.id));
+    if (index < 0) throw new Error('No se encuentra la mesa. Vuelve al KDS y actualiza.');
+    store.state.tables[index] = table;
+    store.state.selectedTableId = table.id;
+    store.kdsCheckout = { tableId: table.id, items: structuredClone(table.items) };
+    kdsCheckoutStarted = true;
+    if (status) status.textContent = table.name || 'Cobrar mesa';
+    showPaymentModal(store.getActiveTicketTotal());
+  } catch (error) {
+    if (status) status.textContent = error.message;
+  } finally { kdsCheckoutStarting = false; }
+}
 
 // SVG Icons
 const ICONS = {
@@ -4264,6 +4294,24 @@ function render(state = store.state) {
   if (!state.auth.profile) {
     appRoot.innerHTML = renderAuthView(state);
     setupAuthEventListeners(appRoot);
+    if (kdsCheckoutTableId) {
+      const back = document.createElement('button');
+      back.className = 'btn btn-secondary';
+      back.textContent = 'Volver al KDS';
+      back.onclick = returnToKds;
+      appRoot.append(back);
+    }
+    return;
+  }
+
+  if (kdsCheckoutTableId) {
+    if (!appRoot.querySelector('#kds-checkout-status')) {
+      appRoot.innerHTML = '<main style="padding:24px"><h1>Cobrar mesa</h1><p id="kds-checkout-status">Comprobando cuenta...</p><button class="btn btn-secondary" id="kds-checkout-return">Volver al KDS</button></main>';
+      appRoot.querySelector('#kds-checkout-return').onclick = () => {
+        const cancel = document.querySelector('#payment-cancel-btn');
+        if (cancel) cancel.click(); else if (!kdsCheckoutStarting) returnToKds();
+      };
+    }
     return;
   }
 
@@ -4411,6 +4459,7 @@ function setupAuthEventListeners(container) {
       const loaded = await store.loadFromSupabase();
       dbStatus = loaded ? 'connected' : 'fallback';
       render(store.state);
+      void startKdsCheckout();
     } catch (err) {
       showToast('Codigo incorrecto.', 'error');
       if (pinInput) {
@@ -5442,7 +5491,8 @@ function showPaymentModal(totalAmount) {
     showConfirm(
       'Cerrar invitación',
       'Toda la cuenta esta invitada. Se guardara el ticket con total 0,00 EUR y sin registrar ningun cobro.',
-      async () => { const tx=await store.payActiveTicket('Invitación', { payments: [] }); if(!tx)showToast(store.state.clubPromotionError||'No se pudo cerrar la invitación.','error');else showToast('Cuenta cerrada a 0 €. Artículos registrados y promociones consumidas.','success'); }
+      async () => { const tx=await store.payActiveTicket('Invitación', { payments: [] }); if(!tx)showToast(store.state.clubPromotionError||'No se pudo cerrar la invitación.','error');else { showToast('Cuenta cerrada a 0 €. Artículos registrados y promociones consumidas.','success'); if(kdsCheckoutTableId) returnToKds(); } },
+      kdsCheckoutTableId ? returnToKds : null
     );
     return;
   }
@@ -5450,7 +5500,7 @@ function showPaymentModal(totalAmount) {
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop';
   modal.id = 'payment-modal';
-  const clubPayment = clubEnabled ? createClubPayment({ ...clubTicketOptions(store), promotionStore:clubPinEnabled?store:null, onPromotion:()=>{modal.remove();showPaymentModal(store.getActiveTicketTotal());}, amount: totalAmount, canUse: () => store.canUseExternalServices() }) : null;
+  const clubPayment = clubEnabled ? createClubPayment({ ...clubTicketOptions(store), promotionStore:clubPinEnabled&&!kdsCheckoutTableId?store:null, onPromotion:()=>{modal.remove();showPaymentModal(store.getActiveTicketTotal());}, amount: totalAmount, canUse: () => store.canUseExternalServices() }) : null;
   // All existing close paths remove the payment modal, including split/gift flows.
   const clubCleanup = clubPayment ? new MutationObserver(() => {
     if (!modal.isConnected) { clubPayment.dispose(); clubCleanup.disconnect(); }
@@ -5736,7 +5786,7 @@ function showPaymentModal(totalAmount) {
     renderPaymentContent();
 
     try {
-      const referenceId = `tpv-${Date.now()}`;
+      const referenceId = await giftCardOrderReference(store.kdsCheckout?.items || store.getActiveItems());
       const result = await redeemSquareGiftCard({
         code: cleanCode,
         amount: giftAmount,
@@ -5808,8 +5858,8 @@ function showPaymentModal(totalAmount) {
 
   let clubCompletingPayment = false;
   const completePaidTicket = async (paymentMethod, successMessage, paymentBreakdown = null) => {
-    if (clubEnabled && clubCompletingPayment) return null;
-    if (clubEnabled) clubCompletingPayment = true;
+    if (clubCompletingPayment) return null;
+    clubCompletingPayment = true;
     try {
     if (cardChargeTotalInput !== null && cardChargeTotalInput < totalAmount - 0.009) {
       showToast('El total cobrado no puede ser inferior al total del ticket.', 'warning');
@@ -5827,6 +5877,7 @@ function showPaymentModal(totalAmount) {
       catch (_) { loyaltySnapshot = null; showToast('No se pudo verificar Club. La venta continuará sin puntos.', 'warning'); }
     }
     const existingLoyaltyAward = clubEnabled ? null : store.getActiveLoyaltyAward();
+    retryPayment = { paymentMethod, successMessage, paymentBreakdown };
     const transaction = await store.payActiveTicket(paymentMethod, loyaltySnapshot ? {
       loyaltyCustomer: {
         id: loyaltySnapshot.id,
@@ -5849,10 +5900,12 @@ function showPaymentModal(totalAmount) {
       isDrawerOpen = false;
       stopGiftCardScanner();
       modal.remove();
+      if (kdsCheckoutTableId) returnToKds();
       return transaction;
     }
 
     if (!transaction) {
+      if (kdsCheckoutTableId && !store.kdsCheckout?.pendingTransaction && !hasPartialPayment() && !giftCardBusy) retryPayment = null;
       showToast(store.state.clubPromotionError || 'No se pudo confirmar y fiscalizar la venta. La comanda sigue abierta para reintentarlo.', 'error');
       return null;
     }
@@ -5882,8 +5935,31 @@ function showPaymentModal(totalAmount) {
     isDrawerOpen = false;
     stopGiftCardScanner();
     modal.remove();
+    if (kdsCheckoutTableId) returnToKds();
     return transaction;
-    } finally { clubCompletingPayment = false; }
+    } catch (error) {
+      showToast(error.message || 'No se pudo confirmar el pago. No vuelvas a cobrar al cliente.', 'error');
+      return null;
+    } finally {
+      clubCompletingPayment = false;
+      if (kdsCheckoutTableId && modal.isConnected && retryPayment) {
+        const footer = modal.querySelector('.modal-footer');
+        const confirm = modal.querySelector('#payment-confirm-btn');
+        if (confirm) confirm.hidden = true;
+        if (footer) footer.style.flexWrap = 'wrap';
+        let retry = modal.querySelector('#kds-payment-retry');
+        if (!retry) {
+          retry = document.createElement('button');
+          retry.id = 'kds-payment-retry';
+          retry.className = 'btn btn-primary';
+          retry.textContent = 'Reintentar guardado';
+          retry.style.minHeight = '44px';
+          retry.style.flex = '1';
+          footer?.append(retry);
+        }
+        retry.onclick = () => completePaidTicket(retryPayment.paymentMethod, retryPayment.successMessage, retryPayment.paymentBreakdown);
+      }
+    }
   };
 
   // ── 1. Estado Partes Iguales
@@ -5942,6 +6018,52 @@ function showPaymentModal(totalAmount) {
   });
   
   const articlePayments = []; // { id, amount, method: 'Tarjeta'|'Efectivo', itemsText }
+  let retryPayment = null;
+  let checkingKdsPayment = false;
+  let replayingKdsClick = false;
+  const hasPartialPayment = () => parts.some(part => part.status !== 'pending') || freePayments.length > 0 || articlePayments.length > 0;
+  const preventKdsExit = event => {
+    if (!kdsCheckoutFinished && (clubCompletingPayment || giftCardBusy || checkingKdsPayment || hasPartialPayment() || retryPayment)) {
+      event.preventDefault(); event.returnValue = '';
+    }
+  };
+  if (kdsCheckoutTableId) {
+    window.addEventListener('beforeunload', preventKdsExit);
+    // Validate before recording each split portion or redeeming a Square card.
+    modal.addEventListener('click', async event => {
+      if (replayingKdsClick) return;
+      const button = event.target.closest('button');
+      if (!button) return;
+      const paymentAction = button.matches('#payment-confirm-btn, .split-part-pay-btn, #art-pay-card-btn, #art-pay-cash-btn');
+      const changesMode = button.matches('.payment-method-card, .split-tab-btn');
+      if ((changesMode && (hasPartialPayment() || retryPayment)) || clubCompletingPayment || (giftCardBusy && button.id !== 'kds-payment-retry') || checkingKdsPayment) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        showToast('Termina el cobro en curso antes de cambiar o salir.', 'warning');
+        return;
+      }
+      if (!paymentAction) return;
+      if (retryPayment) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        showToast('Usa Reintentar guardar el cobro. No vuelvas a cobrar al cliente.', 'warning');
+        return;
+      }
+      event.preventDefault(); event.stopImmediatePropagation();
+      checkingKdsPayment = true;
+      try {
+        const table = await fetchCheckoutTable(supabase, store.kdsCheckout.tableId);
+        if (!sameCheckoutItems(table.items, store.kdsCheckout.items)) throw new Error('La mesa ha cambiado. No confirmes el pago; revisa la cuenta.');
+        replayingKdsClick = true;
+        button.click();
+      } catch (error) { showToast(error.message, 'error'); }
+      finally { replayingKdsClick = false; checkingKdsPayment = false; }
+    }, true);
+    modal.addEventListener('change', event => {
+      if (event.target.id === 'split-parts-count' && hasPartialPayment()) {
+        event.stopImmediatePropagation(); event.target.value = String(numParts);
+        showToast('Ya hay partes cobradas. Termina esta división.', 'warning');
+      }
+    }, true);
+  }
 
   const getSelectedArticlesTotal = () => {
     let sum = 0;
@@ -6353,7 +6475,7 @@ function showPaymentModal(totalAmount) {
     modal.innerHTML = `
       <div class="modal-dialog" style="max-width: 500px; width:95%; max-height: 95vh; display:flex; flex-direction:column; padding: 20px;">
         <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 10px; margin-bottom: 12px; flex-shrink:0;">
-          <h3 style="margin:0; font-size:1.2rem; font-weight:700;">Procesar Cobro</h3>
+          <h3 style="margin:0; font-size:1.2rem; font-weight:700;">${kdsCheckoutTableId ? `Cobrar ${escapeHtml(store.state.tables.find(t => String(t.id) === String(kdsCheckoutTableId))?.name || 'mesa')}` : 'Procesar Cobro'}</h3>
         </div>
         <div class="modal-body" style="overflow-y:auto; flex:1; padding-right:2px;">
           <div class="payment-amount-box" style="background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: var(--border-radius-md); padding: 12px; text-align: center; margin-bottom: 14px;">
@@ -6414,8 +6536,14 @@ function showPaymentModal(totalAmount) {
 
     // Botón de Cancelar
     modal.querySelector('#payment-cancel-btn').addEventListener('click', () => {
+      if (clubCompletingPayment || giftCardBusy || checkingKdsPayment) return;
+      if (kdsCheckoutTableId && (hasPartialPayment() || retryPayment)) {
+        showToast('Hay pagos pendientes de guardar. Termina el cobro antes de volver al KDS.', 'warning');
+        return;
+      }
       stopGiftCardScanner();
       modal.remove();
+      if (kdsCheckoutTableId) returnToKds();
     });
 
     if (clubPayment) clubPayment.mount(modal.querySelector('#club-payment-root'));
@@ -10128,6 +10256,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     transactions: () => store.state.transactions,
     onError: message => console.warn(message),
   });
+  void startKdsCheckout();
 
   // Re-render only when the responsive layout actually changes. Mobile keyboards
   // also emit resize events and must never rebuild the active form.
