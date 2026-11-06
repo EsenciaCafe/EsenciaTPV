@@ -4,13 +4,14 @@
  * Features:
  * - Realtime Supabase sync
  * - Color states: green (empty or ready) → yellow (new order) → red (exceeded threshold)
- * - LISTO button: saves delivered items; new items revert to yellow + strikethrough old ones
+ * - Independent food/drink completion with shared delivered quantities
  * - Collapsed card height for empty/ready tables (configurable max items shown)
  * - Custom numeric keypad (no system keyboard) for all number inputs
  * - Full configurable settings panel
  */
 
 import { createClient } from '@supabase/supabase-js';
+import { getKitchenService, normalizeKitchenState, createKitchenAction, applyKitchenAction, saveKitchenAction } from './kdsService.js';
 import {
   cacheOperationalSnapshot,
   getLocalReadiness,
@@ -96,68 +97,24 @@ function saveTableKdsState() {
   localStorage.setItem(TABLE_KDS_KEY, JSON.stringify(state.tableKdsState));
 }
 
-async function publishSharedKdsState() {
-  const compactState = Object.fromEntries(
-    Object.entries(state.tableKdsState || {})
-      .filter(([, value]) => value && value.status)
-      .map(([tableId, value]) => [tableId, {
-        status: value.status,
-        readyAt: value.readyAt || null,
-        updatedAt: new Date().toISOString()
-      }])
-  );
-
-  const persistLocal = async () => {
+async function publishSharedKdsState(tableId, action) {
+  const readiness = await getLocalReadiness();
+  if (readiness.mode === 'emergency') {
     const cached = await loadCachedBootstrap();
-    if (!cached?.operational) return false;
-    const payload = { ...cached.operational, kdsState: compactState };
+    if (!cached?.operational) throw new Error('No hay datos locales disponibles.');
+    const table = cached.operational.tables?.find(table => Number(table.id) === tableId);
+    const kds = applyKitchenAction(table, getTableKds(tableId), action);
+    const payload = { ...cached.operational, kdsState: { ...cached.operational.kdsState, [tableId]: kds } };
     await cacheOperationalSnapshot(payload);
     await queueSharedState(payload, {
       deviceId: cached.device?.id,
       sessionId: cached.offlineStatus?.sessionId || null
     });
     state.localMode = true;
-    return true;
-  };
-
-  try {
-    const readiness = await getLocalReadiness();
-    if (readiness.mode === 'emergency' || navigator.onLine === false) {
-      await persistLocal();
-      return;
-    }
-    const { data, error } = await supabase
-      .from('tpv_state')
-      .select('direct_sale')
-      .eq('id', 'global')
-      .single();
-
-    if (error) throw error;
-
-    const directSale = data?.direct_sale && typeof data.direct_sale === 'object'
-      ? data.direct_sale
-      : { items: [] };
-
-    const { error: updateError } = await supabase
-      .from('tpv_state')
-      .update({
-        direct_sale: { ...directSale, kds_state: compactState },
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', 'global');
-
-    if (updateError) throw updateError;
-  } catch (err) {
-    console.warn('[KDS] No se pudo publicar el estado de cocina:', err?.message || err);
-    await persistLocal().catch(localError => {
-      console.warn('[KDS] No se pudo guardar el estado local:', localError?.message || localError);
-    });
+    return { table, kds };
   }
-}
-
-function persistTableKdsState() {
-  saveTableKdsState();
-  void publishSharedKdsState();
+  if (navigator.onLine === false) throw new Error('Sin conexión. No se ha marcado como listo.');
+  return saveKitchenAction(supabase, tableId, action);
 }
 
 function mergeSharedKdsState(sharedKdsState = {}) {
@@ -165,11 +122,14 @@ function mergeSharedKdsState(sharedKdsState = {}) {
   Object.entries(sharedKdsState).forEach(([tableId, shared]) => {
     if (!shared || typeof shared !== 'object') return;
     const current = state.tableKdsState[tableId] || {};
-    state.tableKdsState[tableId] = {
+    const merged = {
       ...current,
+      ...shared,
       status: shared.status || current.status || 'waiting',
       readyAt: shared.readyAt || null
     };
+    if (!Array.isArray(shared.deliveredItems) && shared.status === 'ready' && shared.readyAt !== current.readyAt) delete merged.deliveredItems;
+    state.tableKdsState[tableId] = normalizeKitchenState(state.tables.find(table => String(table.id) === tableId), merged);
   });
 }
 
@@ -183,6 +143,10 @@ let state = {
   tableStartTimes: {},
   tableKdsState:  loadTableKdsState(),
   allTableDefs:   [],
+  menuItems: [],
+  categories: [],
+  savingTables: new Set(),
+  saveErrors: {},
 };
 
 let channel = null;
@@ -356,7 +320,7 @@ function updateTableStartTimes(tables) {
 
 // ── KDS status ────────────────────────────────────────────────────────────────
 function getTableKds(tableId) {
-  return state.tableKdsState[tableId] || { status: 'waiting', readyAt: null, deliveredItems: [] };
+  return normalizeKitchenState(state.tables.find(table => table.id === tableId), state.tableKdsState[tableId]);
 }
 
 function getDeliveredQty(item, deliveredItems = []) {
@@ -376,21 +340,8 @@ function isItemDeferredForKds(item, kds = {}) {
   return item.deferUntilLater === true && !getReleasedDeferredItems(kds).includes(item.ticketItemId);
 }
 
-function normalizeServiceText(value = '') {
-  return String(value)
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
-}
-
 function getKdsItemServiceGroup(item = {}) {
-  const text = normalizeServiceText(item.name || '');
-  const drinkPattern = /\b(bebida|bebidas|cafe|cafes|te|tes|matcha|latte|leche|cappuccino|capuccino|espresso|americano|cortado|zumo|smoothie|batido|refresco|agua|cerveza|vino|infusion|chai|cola|fanta|sprite|tonica)\b/;
-  const foodPattern = /\b(comida|comidas|alimento|alimentos|pancake|pancakes|minipancake|minipancakes|tostada|tostadas|bocadillo|sandwich|bagel|croissant|galleta|dulce|salado|ensalada|postre|tarta|brownie|arepa|pan|bolleria)\b/;
-
-  if (drinkPattern.test(text)) return 0;
-  if (foodPattern.test(text)) return 1;
-  return 2;
+  return getKitchenService(item, state.menuItems, state.categories) === 'drink' ? 0 : 1;
 }
 
 function sortKdsItemsForService(items = []) {
@@ -423,71 +374,42 @@ function isCollapsed(tableId) {
   return cls === 'empty' || cls === 'ready';
 }
 
-function markTableReady(tableId) {
+async function runKitchenAction(tableId, action) {
+  if (!action || state.savingTables.has(tableId)) return;
+  state.savingTables.add(tableId);
+  delete state.saveErrors[tableId];
+  refreshGrid();
+  try {
+    const result = await publishSharedKdsState(tableId, action);
+    state.tableKdsState[tableId] = normalizeKitchenState(state.tables.find(table => table.id === tableId), result.kds);
+    if (action.type === 'release' || action.type === 'reopen') resetTableStartTime(tableId);
+    saveTableKdsState();
+  } catch (error) {
+    console.warn('[KDS] No se pudo guardar:', error);
+    state.saveErrors[tableId] = 'No se pudo confirmar el guardado. Comprueba la conexión y vuelve a pulsar.';
+  } finally {
+    state.savingTables.delete(tableId);
+    if (state.settingsOpen) render();
+    else refreshGrid();
+  }
+}
+
+function markTableReady(tableId, service) {
   const table = state.tables.find(t => t.id === tableId);
   if (!table) return;
-  const currentKds = getTableKds(tableId);
-  const currentDelivered = currentKds.deliveredItems || [];
-  const pendingItems = getPendingItems(table, currentDelivered);
-  const activePendingItems = pendingItems.filter(item => !isItemDeferredForKds(item, currentKds));
-  const deferredPendingItems = pendingItems.filter(item => isItemDeferredForKds(item, currentKds));
-
-  if (activePendingItems.length === 0 && deferredPendingItems.length > 0) {
-    resetTableStartTime(tableId);
-    state.tableKdsState[tableId] = {
-      ...currentKds,
-      status: 'waiting',
-      readyAt: null,
-      releasedDeferredItems: [
-        ...new Set([
-          ...getReleasedDeferredItems(currentKds),
-          ...deferredPendingItems.map(item => item.ticketItemId)
-        ])
-      ]
-    };
-    persistTableKdsState();
-    render();
-    return;
-  }
-
-  const itemsToMark = activePendingItems;
-  const markedItems = new Map(currentDelivered.map(item => [item.ticketItemId, item]));
-  itemsToMark.forEach(item => {
-    markedItems.set(item.ticketItemId, { ticketItemId: item.ticketItemId, id: item.id, qty: item.qty });
-  });
-  const deliveredItems = Array.from(markedItems.values());
-  const remainingPending = getPendingItems(table, deliveredItems);
-  const hasDeferredOnlyPending = remainingPending.length > 0
-    && remainingPending.every(item => isItemDeferredForKds(item, currentKds));
-  if (hasDeferredOnlyPending) resetTableStartTime(tableId);
-
-  state.tableKdsState[tableId] = {
-    status: remainingPending.length > 0 ? 'waiting' : 'ready',
-    readyAt: remainingPending.length > 0 ? null : Date.now(),
-    deliveredItems,
-    releasedDeferredItems: getReleasedDeferredItems(currentKds).filter(ticketItemId =>
-      (table.items || []).some(item => item.ticketItemId === ticketItemId)
-    )
-  };
-  persistTableKdsState();
-  render();
+  const action = createKitchenAction(table, getTableKds(tableId), service,
+    item => getKitchenService(item, state.menuItems, state.categories));
+  void runKitchenAction(tableId, action);
 }
 
 function reopenTable(tableId) {
-  const kds = getTableKds(tableId);
-  resetTableStartTime(tableId);
-  state.tableKdsState[tableId] = {
-    ...kds,
-    status: 'waiting',
-    readyAt: null,
-    deliveredItems: []
-  };
-  persistTableKdsState();
-  render();
+  const table = state.tables.find(table => table.id === tableId);
+  if (!table) return;
+  void runKitchenAction(tableId, { type: 'reopen', at: Date.now(), items: table.items || [] });
 }
 
 function checkForNewItemsOnReadyTable(tableId, newItems) {
-  const kds = getTableKds(tableId);
+  const kds = state.tableKdsState[tableId] || {};
   if (kds.status !== 'ready') return false;
   const delivered = kds.deliveredItems || [];
   for (const item of newItems) {
@@ -495,7 +417,7 @@ function checkForNewItemsOnReadyTable(tableId, newItems) {
     if (!del || item.qty > del.qty) {
       resetTableStartTime(tableId);
       state.tableKdsState[tableId] = { ...kds, status: 'waiting', readyAt: null };
-      persistTableKdsState();
+      saveTableKdsState();
       return true;
     }
   }
@@ -573,12 +495,10 @@ function renderCard(table, orderNum) {
   const deliveredItems = kds.deliveredItems || [];
   const hasItems     = (table.items || []).length > 0;
   const pendingItems = sortKdsItemsForService(getPendingItems(table, deliveredItems));
-  const activePendingItems = pendingItems.filter(item => !isItemDeferredForKds(item, kds));
-  const deferredPendingItems = pendingItems.filter(item => isItemDeferredForKds(item, kds));
   const collapsed    = isCollapsed(table.id);
   const maxItems     = collapsed ? state.config.collapsedItemCount : Infinity;
   const fontClass    = `font-${state.config.fontSize}`;
-  const allItems     = table.items || [];
+  const allItems     = sortKdsItemsForService(table.items || []);
   const shownItems   = allItems.slice(0, maxItems);
   const hiddenCount  = allItems.length - shownItems.length;
   const totalQty     = allItems.reduce((s, i) => s + i.qty, 0);
@@ -589,19 +509,28 @@ function renderCard(table, orderNum) {
   else if (cardClass === 'empty') timeBadge = `<span class="kds-card-time empty-badge">Libre</span>`;
   else timeBadge = `<span class="kds-card-time ${cardClass}-badge">${formatElapsed(elapsed)}</span>`;
 
-  // LISTO / REABRIR button (only when occupied)
+  const saving = state.savingTables.has(table.id);
   let actionBtn = '';
   if (hasItems) {
     actionBtn = kds.status === 'ready'
-      ? `<button class="kds-ready-btn reopen" data-table-id="${table.id}">↩ Reabrir</button>`
-      : `<button class="kds-ready-btn ${activePendingItems.length === 0 && deferredPendingItems.length > 0 ? 'release-later' : ''}" data-table-id="${table.id}">
-          ${activePendingItems.length === 0 && deferredPendingItems.length > 0 ? 'Sacar después' : '✓ Listo'}
-        </button>`;
+      ? `<button class="kds-ready-btn reopen" data-table-id="${table.id}" ${saving ? 'disabled' : ''}>↩ Reabrir</button>`
+      : ['drink', 'food'].map(service => {
+        const classify = item => getKitchenService(item, state.menuItems, state.categories) === service;
+        if (!allItems.some(classify)) return '';
+        const pending = pendingItems.filter(classify);
+        const deferredOnly = pending.length > 0 && pending.every(item => isItemDeferredForKds(item, kds));
+        const label = service === 'drink' ? 'Bebida lista' : 'Comida lista';
+        const releaseLabel = service === 'drink' ? 'Preparar bebida' : 'Preparar comida';
+        return `<button class="kds-ready-btn ${deferredOnly ? 'release-later' : ''} ${pending.length ? '' : 'service-done'}" data-table-id="${table.id}" data-service="${service}" ${saving || !pending.length ? 'disabled' : ''}>${deferredOnly ? releaseLabel : `✓ ${label}`}</button>`;
+      }).join('');
   }
 
   // Items
   const itemsHtml = hasItems
-    ? shownItems.map(item => renderItem(item, deliveredItems, kds)).join('')
+    ? ['drink', 'food'].map(service => {
+      const items = shownItems.filter(item => getKitchenService(item, state.menuItems, state.categories) === service);
+      return items.length ? `<div class="kds-service-heading">${service === 'drink' ? 'Bebida' : 'Comida'}</div>${items.map(item => renderItem(item, deliveredItems, kds)).join('')}` : '';
+    }).join('')
     : `<div class="kds-card-empty-label">Sin pedidos</div>`;
 
   const hiddenHint = hiddenCount > 0
@@ -623,7 +552,9 @@ function renderCard(table, orderNum) {
         <div class="kds-card-footer">
           <span class="kds-card-count">${totalQty} artículo${totalQty !== 1 ? 's' : ''}</span>
           <span class="kds-card-total">${total.toFixed(2)}€</span>
-          ${actionBtn}
+          <div class="kds-service-actions" aria-busy="${saving}">${actionBtn}</div>
+          ${saving ? '<span class="kds-save-message" role="status">Guardando…</span>' : ''}
+          ${state.saveErrors[table.id] ? `<span class="kds-save-message kds-save-error" role="alert">${escapeHtml(state.saveErrors[table.id])}</span>` : ''}
         </div>
       ` : ''}
     </div>
@@ -765,7 +696,8 @@ function renderSettingsPanel() {
             <strong>${escapeHtml(table.name)}</strong>
             <span>${(table.items || []).reduce((total, item) => total + item.qty, 0)} artículos · marcada como lista</span>
           </div>
-          <button class="kds-restore-ready-btn" data-table-id="${table.id}">Volver a cocina</button>
+          <button class="kds-restore-ready-btn" data-table-id="${table.id}" ${state.savingTables.has(table.id) ? 'disabled' : ''}>${state.savingTables.has(table.id) ? 'Guardando…' : 'Volver a cocina'}</button>
+          ${state.saveErrors[table.id] ? `<span class="kds-save-message kds-save-error" role="alert">${escapeHtml(state.saveErrors[table.id])}</span>` : ''}
         </div>`).join('')
     : '<p class="kds-ready-table-empty">No hay mesas marcadas como listas.</p>';
 
@@ -848,7 +780,7 @@ function renderSettingsPanel() {
 
 function renderHeader() {
   const occupiedCount = state.tables.filter(t => (t.items || []).length > 0).length;
-  const readyCount    = Object.values(state.tableKdsState).filter(s => s.status === 'ready').length;
+  const readyCount    = state.tables.filter(table => getTableKds(table.id).status === 'ready').length;
   const totalItems    = state.tables.reduce((s, t) => s + (t.items || []).reduce((ss, i) => ss + i.qty, 0), 0);
 
   return `
@@ -876,7 +808,7 @@ function renderHeader() {
       <div class="kds-header-actions">
         <div class="kds-stats">
           <span class="kds-stat">Mesas <strong>${occupiedCount}</strong></span>
-          <span class="kds-stat ready-stat">Listos <strong>${readyCount}</strong></span>
+          <span class="kds-stat ready-stat">Listos <strong id="kds-ready-count">${readyCount}</strong></span>
           <span class="kds-stat">Artículos <strong>${totalItems}</strong></span>
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
@@ -934,12 +866,7 @@ function render() {
   }
 
   // Target grid update if changed
-  if (grid) {
-    const newGridHTML = renderGrid();
-    if (grid.innerHTML !== newGridHTML) {
-      grid.innerHTML = newGridHTML;
-    }
-  }
+  refreshGrid();
 
   // Target settings update
   const settingsContainer = document.getElementById('kds-settings-container');
@@ -952,14 +879,27 @@ function render() {
 }
 
 // ── Partial grid refresh (keeps settings panel open, updates only if changed) ──
+const renderedGrids = new WeakMap();
 function refreshGrid() {
   const grid = document.getElementById('kds-grid');
   if (grid) {
     const newGridHTML = renderGrid();
-    if (grid.innerHTML !== newGridHTML) {
+    // Compare generated markup, not browser-normalized innerHTML (disabled="", etc.).
+    if (renderedGrids.get(grid) !== newGridHTML) {
+      const main = grid.closest('.kds-main');
+      const scrollTop = main?.scrollTop || 0;
+      const itemScroll = new Map([...grid.querySelectorAll('.kds-card')].map(card => [card.dataset.tableId, card.querySelector('.kds-card-items')?.scrollTop || 0]));
       grid.innerHTML = newGridHTML;
+      renderedGrids.set(grid, newGridHTML);
+      grid.querySelectorAll('.kds-card').forEach(card => {
+        const items = card.querySelector('.kds-card-items');
+        if (items) items.scrollTop = itemScroll.get(card.dataset.tableId) || 0;
+      });
+      if (main) main.scrollTop = scrollTop;
     }
   }
+  const readyCount = document.getElementById('kds-ready-count');
+  if (readyCount) readyCount.textContent = state.tables.filter(table => getTableKds(table.id).status === 'ready').length;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1032,7 +972,7 @@ function setupGlobalEventListeners() {
     if (readyBtn) {
       e.stopPropagation();
       const tableId = parseInt(readyBtn.dataset.tableId, 10);
-      readyBtn.classList.contains('reopen') ? reopenTable(tableId) : markTableReady(tableId);
+      readyBtn.classList.contains('reopen') ? reopenTable(tableId) : markTableReady(tableId, readyBtn.dataset.service);
       return;
     }
 
@@ -1201,6 +1141,20 @@ async function loadInitialState() {
   }
 }
 
+async function loadServiceCatalog() {
+  try {
+    const items = await supabase.from('menu_items').select('id,category').abortSignal(AbortSignal.timeout(5000));
+    const categories = await supabase.from('categories').select('id,name,parent_id').abortSignal(AbortSignal.timeout(5000));
+    if (items.error || categories.error) throw items.error || categories.error;
+    state.menuItems = items.data || [];
+    state.categories = categories.data || [];
+  } catch {
+    const cached = await loadCachedBootstrap().catch(() => null);
+    state.menuItems = cached?.catalog?.menuItems || [];
+    state.categories = cached?.catalog?.categories || [];
+  }
+}
+
 function onRealtimeUpdate(newTables, sharedKdsState = null) {
   if (sharedKdsState && typeof sharedKdsState === 'object') {
     mergeSharedKdsState(sharedKdsState);
@@ -1230,7 +1184,7 @@ function onRealtimeUpdate(newTables, sharedKdsState = null) {
     }
   });
 
-  if (kdsStateChanged) persistTableKdsState();
+  if (kdsStateChanged) saveTableKdsState();
 
   if (needSound) playBeep();
   updateTableStartTimes(merged);
@@ -1272,9 +1226,18 @@ function startClock() {
 
 function startTimeRefresh() {
   setInterval(() => {
-    if (!state.settingsOpen) {
-      refreshGrid();
-    }
+    root.querySelectorAll('.kds-card[data-table-id]').forEach(card => {
+      const tableId = Number(card.dataset.tableId);
+      const cardClass = getCardClass(tableId);
+      if (cardClass !== 'waiting' && cardClass !== 'urgent') return;
+      card.classList.remove('waiting', 'urgent');
+      card.classList.add(cardClass);
+      const badge = card.querySelector('.kds-card-time');
+      if (badge) {
+        badge.textContent = formatElapsed(getElapsedMinutes(tableId));
+        badge.className = `kds-card-time ${cardClass}-badge`;
+      }
+    });
   }, 15_000);
 }
 
@@ -1288,6 +1251,7 @@ async function init() {
   applyTheme();
   setupGlobalEventListeners();
   await loadInitialState();
+  await loadServiceCatalog();
   render();
   if (!state.localMode) subscribeRealtime();
   startClock();

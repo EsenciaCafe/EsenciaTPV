@@ -161,7 +161,7 @@ html, body {
 .kds-grid {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(var(--kds-cols, 3), 1fr);
+  grid-template-columns: repeat(var(--kds-cols, 3), minmax(0, 1fr));
   align-content: start;
   align-items: start;
 }
@@ -189,12 +189,7 @@ html, body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  animation: cardIn 0.3s ease;
   transition: border-color 0.4s, box-shadow 0.4s, opacity 0.3s;
-}
-@keyframes cardIn {
-  from { opacity:0; transform: scale(.96) translateY(8px); }
-  to   { opacity:1; transform: scale(1) translateY(0); }
 }
 
 /* Empty = green (soft) */
@@ -418,7 +413,41 @@ html, body {
   border-top: 1px solid var(--border-color);
   background: var(--bg-card-footer);
   gap: 8px;
+  flex-wrap: wrap;
 }
+.kds-card-total { margin-left: auto; }
+.kds-service-actions {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.kds-service-actions .kds-ready-btn {
+  flex: 1 1 140px;
+  min-height: 48px;
+  margin-left: 0;
+  white-space: normal;
+  letter-spacing: 0;
+}
+.kds-ready-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+  transform: none;
+  box-shadow: none;
+}
+.kds-ready-btn.service-done {
+  border-color: var(--border-color);
+  background: transparent;
+  color: var(--text-muted);
+}
+.kds-service-heading {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 10px 0 4px;
+}
+.kds-save-message { width: 100%; font-size: 0.9rem; }
+.kds-save-error { color: var(--danger, #ef4444); }
 .kds-card-count { font-size: 0.86rem; color: var(--text-muted); }
 .kds-card-total { font-size: 1.02rem; font-weight: 800; color: var(--text-main); }
 
@@ -904,3 +933,18 @@ html, body {
 .kds-settings-body::-webkit-scrollbar { width: 4px; }
 .kds-settings-body::-webkit-scrollbar-track { background: transparent; }
 .kds-settings-body::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+
+@media (max-width: 1100px) {
+  .kds-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kds-header { flex-wrap: wrap; }
+  .kds-header-actions { flex-wrap: wrap; }
+}
+
+@media (max-width: 600px) {
+  .kds-grid { grid-template-columns: minmax(0, 1fr); }
+  .kds-header { padding: 10px 14px; }
+  .kds-header-actions { width: 100%; justify-content: space-between; gap: 8px; }
+  .kds-stats { gap: 6px; font-size: 0.7rem; }
+  .kds-status-label { font-size: 0.7rem; }
+  .kds-clock { font-size: 1.3rem; letter-spacing: 0; }
+}

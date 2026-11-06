@@ -903,7 +903,10 @@ function renderTablesView(state) {
     const typeClass = table.type === 'takeaway' ? 'takeaway' : '';
     const isEmpty = itemCount === 0 && table.status !== 'pending-bill';
     const kitchenState = state.kdsState?.[table.id] || state.kdsState?.[String(table.id)];
-    const showKitchenBadge = itemCount > 0 && table.status !== 'pending-bill' && kitchenState?.status !== 'ready';
+    const hasPendingKitchenItems = Array.isArray(kitchenState?.deliveredItems) && table.items.some(item =>
+      Number(item.qty) > Number(kitchenState.deliveredItems.find(delivered => delivered.ticketItemId === item.ticketItemId)?.qty || 0)
+    );
+    const showKitchenBadge = itemCount > 0 && table.status !== 'pending-bill' && (kitchenState?.status !== 'ready' || hasPendingKitchenItems);
     const kitchenBadge = showKitchenBadge
       ? `<span class="table-kitchen-badge" title="Pedido en preparación">En cocina</span>`
       : '';
