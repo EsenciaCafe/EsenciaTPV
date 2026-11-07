@@ -40,14 +40,23 @@ async page => {
   await page.locator('[data-table]').filter({ hasText: /^Mesa 1/ }).waitFor();
   await page.screenshot({ path: 'output/playwright/kds-checkout-picker.png' });
   await page.locator('[data-table]').filter({ hasText: /^Mesa 1/ }).click();
+  await page.locator('#kds-account-pay').waitFor();
+  if (await page.locator('#payment-modal').count()) throw Error('Payment opened before account review');
+  await page.locator('#app-loading-overlay').waitFor({state:'detached'});
+  await page.screenshot({ path: 'output/playwright/kds-account-desktop.png' });
+  await page.locator('#kds-account-pay').click();
   await page.locator('#payment-modal').waitFor();
   await page.locator('#app-loading-overlay').waitFor({state:'detached'});
   await page.screenshot({ path: 'output/playwright/kds-checkout-panel.png' });
   await page.locator('#payment-cancel-btn').click();
+  if (await page.locator('#payment-modal').count()) throw Error('Payment cancellation failed');
+  await page.locator('#kds-account-pay').waitFor();
+  await page.locator('#kds-checkout-return').click();
   await page.waitForURL('**/kds.html');
   if (documents.size) throw Error('Cancel created a sale');
   await page.locator('#kds-open-checkout').click();
   await page.locator('[data-table]').filter({ hasText: /^Mesa 1/ }).click();
+  await page.locator('#kds-account-pay').click();
   await page.locator('#payment-modal').waitFor();
   await page.locator('#app-loading-overlay').waitFor({state:'detached'});
   await page.setViewportSize({ width: 390, height: 844 });
@@ -75,6 +84,7 @@ async page => {
   if (await page.locator('[data-table]').filter({ hasText: /^Mesa 1/ }).count()) throw Error('Paid table still selectable');
   if (!(await page.locator('[data-table]').filter({ hasText: /^Mesa 2/ }).count())) throw Error('Other table disappeared');
   await page.locator('[data-table]').filter({ hasText: /^Mesa 2/ }).click();
+  await page.locator('#kds-account-pay').click();
   await page.locator('#payment-modal').waitFor();
   await page.getByRole('button', {name:'Dividir',exact:true}).click();
   await page.locator('.split-part-pay-btn').first().click();
@@ -100,12 +110,72 @@ async page => {
   if (await page.locator('#payment-modal').count()) throw Error('Unsafe fallback without migration');
   unavailable = false;
   await page.goto('http://localhost:4176/index.html?kdsCheckout=1');
-  await page.locator('#payment-modal').waitFor();
+  await page.locator('#kds-account-pay').waitFor();
   state.tables[0].items[0].qty = 3;
+  await page.locator('#kds-account-pay').click();
+  await page.getByText('La cuenta ha cambiado. Revisa los artículos antes de cobrar.', {exact:true}).waitFor();
+  if (await page.locator('#payment-modal').count()) throw Error('Changed account skipped review');
+  await page.locator('#kds-account-pay').click();
+  await page.locator('#payment-modal').waitFor();
+  state.tables[0].items[0].qty = 4;
   await page.locator('#payment-confirm-btn').click();
   await page.getByText('La mesa ha cambiado. No confirmes el pago; revisa la cuenta.', {exact:true}).waitFor();
   if (documents.size !== 2) throw Error('Changed table was charged');
   await page.locator('#payment-cancel-btn').click();
+  await page.locator('#kds-checkout-return').click();
   await page.waitForURL('**/kds.html');
-  return { cancelWithoutSale: true, doubleClickOneSale: true, serverSnapshot: true, noSharedStateOverwrite: true, returnToKds: true, otherTableIntact: true, splitProtected: true, lostResponseRetrySameSale: true, missingMigrationBlocked: true, changedTableBlocked: true, cardTips: true, focusAndScrollStable: true };
+  const longItems = Array.from({length:20}, (_, i) => ({
+    ticketItemId: `long-${i}`, id: `article-${i}`, name: i === 1 ? 'Latte' : `Tostada ${i + 1}`, price: 3, qty: 2,
+    selectedOptions: [{name:'Aguacate',price:1.5,qty:1}], note: i === 0 ? 'Sin sal, servir por separado' : '',
+    discountPercent: i === 0 ? 50 : i === 2 ? 100 : 0, discountReason: i === 0 ? 'Descuento cliente' : '',
+    deferUntilLater: i === 3
+  }));
+  state.tables[0].items = longItems;
+  state.tables.push({id:3,name:'Mesa 3',status:'occupied',items:[{...item,ticketItemId:'ready-line'}]});
+  state.direct_sale.kds_state = {3:{status:'ready',readyAt:Date.now(),deliveredItems:[{ticketItemId:'ready-line',qty:2}]}};
+  const beforeReview = JSON.stringify(state);
+  const writeOffset = writes.length;
+  await page.goto('http://localhost:4176/kds.html');
+  await page.locator('[data-account-table="1"]').click();
+  await page.locator('#kds-account-pay').waitFor();
+  if (await page.locator('.kds-account-line').count() !== 20) throw Error('Truncated account');
+  if (!(await page.locator('.kds-account-line h2').first().textContent()).includes('Latte')) throw Error('Drinks not first');
+  await page.getByText('Sin sal, servir por separado', {exact:true}).waitFor();
+  await page.getByText('Invitación · −9,00', {exact:false}).waitFor();
+  await page.locator('#app-loading-overlay').waitFor({state:'detached'});
+  for (const size of [{width:390,height:844},{width:1024,height:768}]) {
+    await page.setViewportSize(size);
+    await page.emulateMedia({colorScheme:size.width === 1024 ? 'dark' : 'light'});
+    await page.locator('.kds-account-main').evaluate(el => {el.scrollTop = 0;});
+    await page.screenshot({path:`output/playwright/kds-account-long-${size.width}.png`});
+    await page.locator('.kds-account-main').evaluate(el => {el.scrollTop = el.scrollHeight;});
+    const box = await page.locator('#kds-account-pay').boundingBox();
+    if (!box || box.y < 0 || box.y + box.height > size.height || box.x < 0 || box.x + box.width > size.width) throw Error('Pay button outside viewport');
+    if (await page.locator('.kds-account').evaluate(el => el.scrollWidth > el.clientWidth)) throw Error('Account horizontal overflow');
+  }
+  const accountStable = await page.evaluate(async () => {
+    const {store} = await import('/src/store.js');
+    const main = document.querySelector('.kds-account-main');
+    const top = main.scrollTop;
+    main.focus();
+    store.emitChange({source:'realtime'});
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return document.querySelector('.kds-account-main') === main && main.scrollTop === top && document.activeElement === main;
+  });
+  if (!accountStable) throw Error('Account refreshed while reading');
+  const scrollBefore = await page.locator('.kds-account-main').evaluate(el => el.scrollTop);
+  await page.locator('#kds-account-pay').click();
+  await page.locator('#payment-cancel-btn').click();
+  if (await page.locator('.kds-account-main').evaluate(el => el.scrollTop) !== scrollBefore) throw Error('Cancel lost account scroll');
+  await page.locator('#kds-checkout-return').click();
+  await page.waitForURL('**/kds.html');
+  await page.locator('#kds-open-checkout').waitFor();
+  if (await page.locator('[data-account-table="3"]').count()) throw Error('Ready fixture not hidden from kitchen');
+  await page.locator('#kds-open-checkout').click();
+  await page.locator('[data-table="3"]').click();
+  await page.locator('#kds-account-pay').waitFor();
+  if (!(await page.locator('.kds-account-line').count())) throw Error('Ready table account missing');
+  if (JSON.stringify(state) !== beforeReview) throw Error('Review changed server state');
+  if (writes.slice(writeOffset).some(w => !w.path.endsWith('/get_kds_checkout_table'))) throw Error('Review triggered a server mutation');
+  return { longAccount: true, mobileAndTablet: true, readyTableIncluded: true, directTableLink: true, accountScrollStable: true, reviewReadOnly: true, accountBeforePayment: true, cancelReturnsToAccount: true, changedAccountNeedsReview: true, cancelWithoutSale: true, doubleClickOneSale: true, serverSnapshot: true, noSharedStateOverwrite: true, returnToKds: true, otherTableIntact: true, splitProtected: true, lostResponseRetrySameSale: true, missingMigrationBlocked: true, changedTableBlocked: true, cardTips: true, focusAndScrollStable: true };
 }

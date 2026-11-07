@@ -4,6 +4,7 @@ import { choosePromotionClear } from './clubPromotionUi.js';
 import { clubTicketOptions, clearClubTicket } from './clubTicket.js';
 import { store } from './store.js';
 import { checkoutTableId, fetchCheckoutTable, sameCheckoutItems, giftCardOrderReference } from './kdsCheckout.js';
+import { renderKdsAccount } from './kdsAccount.js';
 import { loadSaleById, loadKitchenPublication } from './db.js';
 import { clubEnabled, clubAfterSale, clubAfterRefund, initializeClub, clubLogout, clubLoginWithPin, clubPinEnabled, clubPinBridge, clubQueue, clubActor } from './clubRuntime.js';
 import { mountTransactionIdentity } from './transactionIdentity.js';
@@ -53,6 +54,7 @@ const kdsCheckoutTableId = checkoutTableId(window.location.search);
 let kdsCheckoutStarting = false;
 let kdsCheckoutStarted = false;
 let kdsCheckoutFinished = false;
+let kdsAccountTable = null;
 function returnToKds() {
   kdsCheckoutFinished = true;
   window.location.replace(new URL('./kds.html', document.baseURI).href);
@@ -65,17 +67,64 @@ async function startKdsCheckout() {
   try {
     if (store.isEmergencyMode() || !store.canProcessSales()) throw new Error('El cobro desde KDS requiere conexión. Usa el TPV de emergencia.');
     const table = await fetchCheckoutTable(supabase, kdsCheckoutTableId);
+    showKdsAccount(table);
+    kdsCheckoutStarted = true;
+  } catch (error) {
+    if (status) status.textContent = error.message;
+  } finally { kdsCheckoutStarting = false; }
+}
+
+function showKdsAccount(table, message = '') {
+  kdsAccountTable = structuredClone(table);
+  const items = store.sortTicketItemsForService(kdsAccountTable.items);
+  const lines = items.map(item => ({ ...item, total: store.getItemTotal(item), gross: store.getItemGrossTotal(item), discount: store.getItemDiscountAmount(item) }));
+  const appRoot = document.getElementById('app-root');
+  appRoot.innerHTML = renderKdsAccount({
+    tableName: table.name || 'Mesa', lines,
+    total: store.getTableTotal(kdsAccountTable),
+    grossTotal: lines.reduce((sum, line) => sum + line.gross, 0),
+    discountTotal: lines.reduce((sum, line) => sum + line.discount, 0)
+  });
+  appRoot.querySelector('#kds-checkout-status').textContent = message;
+  appRoot.querySelector('#kds-checkout-return').onclick = () => {
+    if (!kdsCheckoutStarting && !store.paymentInFlight && !document.getElementById('payment-modal')) returnToKds();
+  };
+  appRoot.querySelector('#kds-account-pay').onclick = openKdsAccountPayment;
+}
+
+function returnToKdsAccount() {
+  // Keep the reviewed account and its scroll position; payment never edits it.
+  document.getElementById('kds-account-pay')?.focus({ preventScroll: true });
+}
+
+async function openKdsAccountPayment() {
+  if (kdsCheckoutStarting || !kdsAccountTable || document.getElementById('payment-modal') || store.paymentInFlight) return;
+  kdsCheckoutStarting = true;
+  const button = document.getElementById('kds-account-pay');
+  button.disabled = true;
+  const status = document.getElementById('kds-checkout-status');
+  status.textContent = '';
+  try {
+    if (store.isEmergencyMode() || !store.canProcessSales()) throw new Error('El cobro desde KDS requiere conexión. Usa el TPV de emergencia.');
+    const table = await fetchCheckoutTable(supabase, kdsCheckoutTableId);
+    const sameNotes = JSON.stringify((table.items || []).map(i => [i.ticketItemId, i.note || '']).sort())
+      === JSON.stringify(kdsAccountTable.items.map(i => [i.ticketItemId, i.note || '']).sort());
+    if (!sameCheckoutItems(table.items, kdsAccountTable.items) || !sameNotes) {
+      showKdsAccount(table, 'La cuenta ha cambiado. Revisa los artículos antes de cobrar.');
+      return;
+    }
     const index = store.state.tables.findIndex(t => String(t.id) === String(table.id));
     if (index < 0) throw new Error('No se encuentra la mesa. Vuelve al KDS y actualiza.');
     store.state.tables[index] = table;
     store.state.selectedTableId = table.id;
     store.kdsCheckout = { tableId: table.id, items: structuredClone(table.items) };
-    kdsCheckoutStarted = true;
-    if (status) status.textContent = table.name || 'Cobrar mesa';
     showPaymentModal(store.getActiveTicketTotal());
   } catch (error) {
-    if (status) status.textContent = error.message;
-  } finally { kdsCheckoutStarting = false; }
+    status.textContent = error.message;
+  } finally {
+    kdsCheckoutStarting = false;
+    button.disabled = false;
+  }
 }
 
 // SVG Icons
@@ -4306,7 +4355,7 @@ function render(state = store.state) {
 
   if (kdsCheckoutTableId) {
     if (!appRoot.querySelector('#kds-checkout-status')) {
-      appRoot.innerHTML = '<main style="padding:24px"><h1>Cobrar mesa</h1><p id="kds-checkout-status">Comprobando cuenta...</p><button class="btn btn-secondary" id="kds-checkout-return">Volver al KDS</button></main>';
+      appRoot.innerHTML = '<main style="padding:24px"><h1>Cuenta</h1><p id="kds-checkout-status">Comprobando cuenta...</p><button class="btn btn-secondary" id="kds-checkout-return">Volver al KDS</button></main>';
       appRoot.querySelector('#kds-checkout-return').onclick = () => {
         const cancel = document.querySelector('#payment-cancel-btn');
         if (cancel) cancel.click(); else if (!kdsCheckoutStarting) returnToKds();
@@ -5492,7 +5541,7 @@ function showPaymentModal(totalAmount) {
       'Cerrar invitación',
       'Toda la cuenta esta invitada. Se guardara el ticket con total 0,00 EUR y sin registrar ningun cobro.',
       async () => { const tx=await store.payActiveTicket('Invitación', { payments: [] }); if(!tx)showToast(store.state.clubPromotionError||'No se pudo cerrar la invitación.','error');else { showToast('Cuenta cerrada a 0 €. Artículos registrados y promociones consumidas.','success'); if(kdsCheckoutTableId) returnToKds(); } },
-      kdsCheckoutTableId ? returnToKds : null
+      kdsCheckoutTableId ? returnToKdsAccount : null
     );
     return;
   }
@@ -6543,7 +6592,7 @@ function showPaymentModal(totalAmount) {
       }
       stopGiftCardScanner();
       modal.remove();
-      if (kdsCheckoutTableId) returnToKds();
+      if (kdsCheckoutTableId) returnToKdsAccount();
     });
 
     if (clubPayment) clubPayment.mount(modal.querySelector('#club-payment-root'));

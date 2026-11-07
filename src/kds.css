@@ -949,6 +949,9 @@ html, body {
   .kds-clock { font-size: 1.3rem; letter-spacing: 0; }
 }
 /* Checkout uses the TPV page; this surface only chooses an open account. */
+.kds-account-link { border: 0; background: transparent; color: inherit; font-family: inherit; text-align: left; cursor: pointer; padding: 8px 0; min-height: 44px; }
+.kds-account-link:hover { text-decoration: underline; }
+.kds-account-link:focus-visible { outline: 2px solid var(--secondary); outline-offset: 4px; }
 .kds-checkout-button { min-height: 44px; padding: 8px 16px; border: 1px solid #10b981; border-radius: 8px; background: #102e25; color: #ecfdf5; font: inherit; font-weight: 700; cursor: pointer; }
 .kds-checkout-picker { position: fixed; inset: 0; z-index: 1000; background: var(--bg-base); color: var(--text-main); display: flex; flex-direction: column; padding: max(16px, env(safe-area-inset-top)) 20px max(16px, env(safe-area-inset-bottom)); }
 .kds-checkout-picker header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 20px; flex-shrink: 0; }

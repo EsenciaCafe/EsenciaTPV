@@ -542,7 +542,7 @@ function renderCard(table, orderNum) {
     <div class="kds-card ${cardClass} ${fontClass}" data-table-id="${table.id}">
       <div class="kds-card-header">
         ${orderNum != null ? `<span class="kds-card-order-num">#${orderNum}</span>` : ''}
-        <span class="kds-card-name">${table.name}</span>
+        ${hasItems ? `<button type="button" class="kds-card-name kds-account-link" data-account-table="${escapeHtml(table.id)}" aria-label="Ver cuenta de ${escapeHtml(table.name)}">${escapeHtml(table.name)}</button>` : `<span class="kds-card-name">${escapeHtml(table.name)}</span>`}
         ${timeBadge}
       </div>
       <div class="kds-card-items">
@@ -816,7 +816,7 @@ function renderHeader() {
           <div class="kds-status-dot ${state.connected ? '' : 'disconnected'}" id="kds-status-dot"></div>
           <span class="kds-status-label">${state.localMode ? 'Modo local' : state.connected ? 'En línea' : 'Reconectando...'}</span>
         </div>
-        <button class="kds-checkout-button" id="kds-open-checkout" title="Cobrar una mesa">Cobrar</button>
+        <button class="kds-checkout-button" id="kds-open-checkout" title="Ver cuentas abiertas">Cuentas</button>
         <a href="./index.html" class="kds-settings-btn" title="Volver al TPV" aria-label="Volver al TPV" style="display:grid;place-items:center;text-decoration:none;">TPV</a>
         <button class="kds-settings-btn" id="kds-open-settings" title="Configuración">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -910,6 +910,11 @@ function refreshGrid() {
 
 function setupGlobalEventListeners() {
   document.body.addEventListener('click', (e) => {
+    const accountLink = e.target.closest('[data-account-table]');
+    if (accountLink) {
+      window.location.assign(checkoutUrl(accountLink.dataset.accountTable, document.baseURI));
+      return;
+    }
     if (e.target.closest('#kds-open-checkout')) {
       showCheckoutTables();
       return;
@@ -1092,9 +1097,9 @@ function showCheckoutTables() {
   panel.className = 'kds-checkout-picker';
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-modal', 'true');
-  panel.setAttribute('aria-label', 'Cobrar mesa');
+  panel.setAttribute('aria-label', 'Cuentas abiertas');
   const tables = openCheckoutTables(state.tables);
-  panel.innerHTML = `<header><h2>Cobrar mesa</h2><button class="kds-checkout-button" data-close>Cancelar</button></header>
+  panel.innerHTML = `<header><h2>Cuentas abiertas</h2><button class="kds-checkout-button" data-close>Cancelar</button></header>
     <div class="kds-checkout-tables">${state.localMode || navigator.onLine === false
       ? '<p>El cobro desde KDS requiere conexión. Usa el TPV de emergencia.</p>'
       : tables.length ? tables.map(table => `<button class="kds-checkout-table" data-table="${escapeHtml(table.id)}"><strong>${escapeHtml(table.name || table.id)}</strong><span>${table.items.reduce((sum, item) => sum + Number(item.qty || 0), 0)} artículos</span></button>`).join('')

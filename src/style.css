@@ -5892,3 +5892,39 @@ a.offline-banner__button {
 .club-total-card > div:last-child { border-top:1px solid var(--border-color); color:#10b981; font-size:1.2rem; }
 /* Cinnamon finish information, within the existing modifier dialog. */
 .kitchen-allergen-info { font-size: .85rem; line-height: 1.5; color: var(--text-secondary); padding: .75rem; border: 1px solid var(--border-color, #ddd); border-radius: 8px; }
+/* Read-only KDS account: one scroll surface, separate from payment and kitchen. */
+.kds-account { position: fixed; inset: 0; height: 100dvh; z-index: 20; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--bg-panel); color: var(--text-main); letter-spacing: 0; }
+.kds-account-width { width: 100%; max-width: 1060px; margin: 0 auto; padding: 20px 24px; box-sizing: border-box; }
+.kds-account-header { border-bottom: 1px solid var(--border-color); padding-top: env(safe-area-inset-top); }
+.kds-account-header .kds-account-width { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.kds-account h1 { margin: 0; font-size: 28px; line-height: 1.25; overflow-wrap: anywhere; }
+.kds-account .btn { min-height: 48px; border-radius: 8px; white-space: normal; }
+.kds-account-main { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.kds-account-lines { list-style: none; margin: 0; padding: 0; }
+.kds-account-line { border-bottom: 1px solid var(--border-color); padding: 22px 0; }
+.kds-account-line-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 16px; }
+.kds-account-line h2 { margin: 0; font-size: 24px; line-height: 1.35; overflow-wrap: anywhere; }
+.kds-account-qty { color: var(--secondary); white-space: nowrap; }
+.kds-account-line-price { display: flex; flex-direction: column; align-items: end; font-size: 23px; white-space: nowrap; }
+.kds-account-line-price s { font-size: 17px; color: var(--text-muted); }
+.kds-account-options { margin: 10px 0 0 0; padding-left: 22px; font-size: 20px; line-height: 1.55; overflow-wrap: anywhere; }
+.kds-account-options span { color: var(--text-muted); font-size: 17px; }
+.kds-account-note { margin: 12px 0 0; padding-left: 12px; border-left: 3px solid var(--primary); font-size: 20px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.kds-account-discount { margin: 10px 0 0; font-size: 18px; color: var(--secondary); overflow-wrap: anywhere; }
+.kds-account-totals { margin: 24px 0; font-size: 19px; }
+.kds-account-totals > div { display: flex; justify-content: space-between; gap: 16px; margin-top: 10px; }
+.kds-account-totals dd { margin: 0; white-space: nowrap; }
+.kds-account-total { font-size: 26px; font-weight: 800; }
+.kds-account-footer { border-top: 1px solid var(--border-color); background: var(--bg-panel); padding-bottom: env(safe-area-inset-bottom); }
+.kds-account-footer .btn { width: 100%; font-size: 22px; font-weight: 700; min-height: 56px; }
+.kds-account-footer p { margin: 0 0 12px; font-size: 17px; }
+.kds-account-footer p:empty { display: none; }
+@media (max-width: 600px) {
+  .kds-account-width { padding: 16px; }
+  .kds-account-header .kds-account-width { align-items: stretch; flex-direction: column; gap: 12px; }
+  .kds-account h1 { font-size: 24px; }
+  .kds-account-line h2 { font-size: 22px; }
+  .kds-account-line-price { font-size: 20px; }
+  .kds-account-line-top { gap: 10px; }
+  .kds-account-options { font-size: 19px; }
+}
