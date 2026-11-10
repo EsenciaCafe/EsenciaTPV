@@ -518,6 +518,20 @@ export async function loadSaleById(saleId) {
   );
 }
 
+export async function correctSalePayments(transactionId, expectedPayments, payments, requestId) {
+  const { data, error } = await supabase.rpc('correct_tpv_sale_payments', {
+    p_sale_id: transactionId, p_expected_payments: expectedPayments,
+    p_payments: payments.map(({ id, method, amount }) => ({ id, method, amount })),
+    p_request_id: requestId
+  });
+  if (error) {
+    if (['PGRST202', '42883'].includes(error.code)) throw new Error('Falta activar la actualización de correcciones en Supabase. No se ha cambiado el cobro.');
+    throw new Error(error.message || 'No se pudo confirmar la corrección.');
+  }
+  if (!data?.payments) throw new Error('No se pudo confirmar la corrección. Vuelve a intentarlo.');
+  return data;
+}
+
 export async function upsertSaleRecord(transaction) {
   if (!transaction?.id) return null;
   const transactionItems = Array.isArray(transaction.items) ? transaction.items : [];

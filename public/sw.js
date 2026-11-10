@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tpv-cache-v103-kds-account-review';
+const CACHE_NAME = 'tpv-cache-v104-payment-tip-correction';
 const BASE_URL = new URL('./', self.location.href);
 const BUILD_ASSETS = /* __PRECACHE_ASSETS__ */ [];
 const ASSETS = [

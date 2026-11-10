@@ -1777,6 +1777,7 @@ body.light-theme .btn-quick-pay {
 .payment-correction-body {
   display: grid;
   gap: 14px;
+  align-content: start;
 }
 
 .payment-correction-summary,
@@ -1890,6 +1891,16 @@ body.light-theme .btn-quick-pay {
 .payment-correction-footer .btn {
   min-height: 46px;
 }
+
+.payment-correction-charge { font-size: 16px; font-weight: 700; }
+.payment-correction-amount { width: 100%; min-height: 52px; font-size: 22px; }
+.payment-correction-amount[readonly] { color: var(--text-muted); }
+.payment-correction-tip { display: flex; justify-content: space-between; gap: 12px; color: var(--text-muted); }
+.payment-correction-error { margin: 0; color: var(--danger); font-size: 16px; overflow-wrap: anywhere; }
+.payment-correction-error:empty { display: none; }
+.payment-correction-eyebrow { overflow-wrap: anywhere; }
+.payment-correction-header > div { min-width: 0; }
+.payment-correction-header .modal-close-btn { flex-shrink: 0; }
 
 .tx-detail-item {
   border: 1px solid var(--border-color);

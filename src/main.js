@@ -5,6 +5,7 @@ import { clubTicketOptions, clearClubTicket } from './clubTicket.js';
 import { store } from './store.js';
 import { checkoutTableId, fetchCheckoutTable, sameCheckoutItems, giftCardOrderReference } from './kdsCheckout.js';
 import { renderKdsAccount } from './kdsAccount.js';
+import { openPaymentCorrection } from './paymentCorrectionUi.js';
 import { loadSaleById, loadKitchenPublication } from './db.js';
 import { clubEnabled, clubAfterSale, clubAfterRefund, initializeClub, clubLogout, clubLoginWithPin, clubPinEnabled, clubPinBridge, clubQueue, clubActor } from './clubRuntime.js';
 import { mountTransactionIdentity } from './transactionIdentity.js';
@@ -1428,7 +1429,7 @@ function showTransactionDetailModal(transactionId) {
           `}
           ${store.canCorrectTransactionPayment(tx) ? `
             <button class="pay-btn-opt payment-correction-open-btn" id="tx-payment-correction-btn" style="height:40px; font-size:0.9rem; margin:0;">
-              Corregir método de pago
+              Corregir cobro
             </button>
           ` : ''}
           ${(store.canRefundTransaction(tx) && store.canIssueRefunds()) ? `
@@ -1473,118 +1474,16 @@ function showTransactionDetailModal(transactionId) {
 
 function showPaymentCorrectionModal(transaction) {
   if (!store.canCorrectTransactionPayment(transaction)) {
-    showToast('Este cobro ya no se puede modificar porque el turno está cerrado o usa una tarjeta regalo.', 'warning');
+    showToast('Este cobro no admite correcciones: turno cerrado, devolución o tarjeta regalo.', 'warning');
     return;
   }
-
-  const correctedPayments = getPaymentBreakdown(transaction).map((payment, index) => ({
-    ...payment,
-    id: payment.id || `${transaction.id}-payment-${String(index + 1).padStart(3, '0')}`,
-    method: String(payment.method || '').toLowerCase().includes('efectivo') ? 'Efectivo' : 'Tarjeta',
-    saleAmount: Number(payment.saleAmount ?? payment.amount ?? 0),
-    tipAmount: Math.max(0, Number(payment.tipAmount || 0))
-  }));
-
-  const modal = document.createElement('div');
-  modal.className = 'modal-backdrop';
-
-  const renderCorrection = () => {
-    const removedTip = correctedPayments.reduce((sum, payment) => (
-      sum + (payment.method === 'Tarjeta' ? 0 : Number(payment.tipAmount || 0))
-    ), 0);
-    const correctedTotalCharged = correctedPayments.reduce((sum, payment) => (
-      sum + Number(payment.saleAmount || 0) + (payment.method === 'Tarjeta' ? Number(payment.tipAmount || 0) : 0)
-    ), 0);
-
-    modal.innerHTML = `
-      <div class="modal-dialog payment-correction-dialog">
-        <div class="modal-header payment-correction-header">
-          <div>
-            <span class="payment-correction-eyebrow">${escapeHtml(transaction.id)}</span>
-            <h3>Corregir método de pago</h3>
-          </div>
-          <button class="modal-close-btn" id="payment-correction-close-btn" aria-label="Cerrar">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-              <path d="M6 6l12 12M18 6 6 18" />
-            </svg>
-          </button>
-        </div>
-        <div class="modal-body payment-correction-body">
-          <div class="payment-correction-summary">
-            <span>Total de la venta</span>
-            <strong>${Number(transaction.total || 0).toFixed(2)}€</strong>
-          </div>
-          <p class="payment-correction-help">Selecciona cómo se cobró realmente cada pago. La venta, los artículos y la factura fiscal no cambiarán.</p>
-          <div class="payment-correction-list">
-            ${correctedPayments.map((payment, index) => `
-              <section class="payment-correction-row">
-                <div class="payment-correction-row-heading">
-                  <div>
-                    <span>Pago ${index + 1}</span>
-                    ${Number(payment.tipAmount || 0) > 0 ? `<small>Incluye ${Number(payment.tipAmount).toFixed(2)}€ de propina</small>` : ''}
-                  </div>
-                  <strong>${Number(payment.saleAmount || 0).toFixed(2)}€</strong>
-                </div>
-                <div class="payment-correction-options" role="group" aria-label="Método del pago ${index + 1}">
-                  <button type="button" class="payment-correction-choice ${payment.method === 'Efectivo' ? 'active' : ''}" data-payment-index="${index}" data-payment-method="Efectivo">
-                    Efectivo
-                  </button>
-                  <button type="button" class="payment-correction-choice ${payment.method === 'Tarjeta' ? 'active' : ''}" data-payment-index="${index}" data-payment-method="Tarjeta">
-                    Tarjeta
-                  </button>
-                </div>
-              </section>
-            `).join('')}
-          </div>
-          ${removedTip > 0 ? `
-            <div class="payment-correction-warning">
-              Al pasar ese pago a efectivo se eliminarán ${removedTip.toFixed(2)}€ de propina en tarjeta y dejarán de descontarse del cajón.
-            </div>
-          ` : ''}
-          <div class="payment-correction-total">
-            <span>Total que quedará registrado</span>
-            <strong>${correctedTotalCharged.toFixed(2)}€</strong>
-          </div>
-        </div>
-        <div class="modal-footer payment-correction-footer">
-          <button type="button" class="btn btn-secondary" id="payment-correction-cancel-btn">Cancelar</button>
-          <button type="button" class="btn btn-primary" id="payment-correction-save-btn">Guardar corrección</button>
-        </div>
-      </div>
-    `;
-
-    const closeCorrection = () => modal.remove();
-    modal.querySelector('#payment-correction-close-btn').addEventListener('click', closeCorrection);
-    modal.querySelector('#payment-correction-cancel-btn').addEventListener('click', closeCorrection);
-    modal.querySelectorAll('.payment-correction-choice').forEach(button => {
-      button.addEventListener('click', () => {
-        const paymentIndex = Number(button.dataset.paymentIndex);
-        correctedPayments[paymentIndex].method = button.dataset.paymentMethod;
-        renderCorrection();
-      });
-    });
-
-    modal.querySelector('#payment-correction-save-btn').addEventListener('click', async (event) => {
-      const saveButton = event.currentTarget;
-      saveButton.disabled = true;
-      saveButton.textContent = 'Guardando...';
-      const updatedTransaction = await store.correctTransactionPayments(transaction.id, correctedPayments);
-      if (!updatedTransaction) {
-        showToast('No se pudo corregir el cobro. Comprueba que el turno siga abierto.', 'error');
-        saveButton.disabled = false;
-        saveButton.textContent = 'Guardar corrección';
-        return;
-      }
-      modal.remove();
-      showToast('Método de pago corregido.', 'success');
-      showTransactionDetailModal(updatedTransaction.id);
-    });
-  };
-
-  renderCorrection();
-  document.body.appendChild(modal);
-  modal.addEventListener('click', event => {
-    if (event.target === modal) modal.remove();
+  openPaymentCorrection({
+    transaction,
+    save: (...args) => store.correctTransactionPayments(...args),
+    onSaved: updated => {
+      showToast('Cobro corregido.', 'success');
+      showTransactionDetailModal(updated.id);
+    }
   });
 }
 

@@ -1,6 +1,7 @@
 import { kitchenSelectionError, kitchenSnapshot, isLinkedKitchenOption } from './kitchenCatalog.js';
 import { fetchCheckoutTable, sameCheckoutItems, checkoutSnapshot } from './kdsCheckout.js';
 import { promotionDiscount } from './clubPromotionMath.js';
+import { buildPaymentCorrection, paymentCorrectionSnapshot } from './paymentCorrection.js';
 import {clubServerEnabled} from './clubServerTransport.js';
 import {
   loadCatalog,
@@ -15,6 +16,7 @@ import {
   saveTPVState,
   upsertReceiptTicket,
   upsertSaleRecord,
+  correctSalePayments,
   finalizeOnlineSale,
   loadSalesByDateRange,
   loadSaleById,
@@ -1946,51 +1948,33 @@ class Store {
       !this.isTransactionPaymentCorrectionLocked(transaction);
   }
 
-  async correctTransactionPayments(transactionId, correctedPayments = []) {
-    const transactionIndex = this.state.transactions.findIndex(tx => tx.id === transactionId);
-    if (transactionIndex === -1) return null;
-
-    const currentTransaction = this.state.transactions[transactionIndex];
-    if (!this.canCorrectTransactionPayment(currentTransaction) || correctedPayments.length === 0) return null;
-
-    const payments = correctedPayments.map((payment, index) => {
-      const method = String(payment.method || '').toLowerCase().includes('efectivo')
-        ? 'Efectivo'
-        : 'Tarjeta';
-      const saleAmount = Number(payment.saleAmount ?? payment.amount ?? 0);
-      const tipAmount = method === 'Tarjeta' ? Math.max(0, Number(payment.tipAmount || 0)) : 0;
-      return {
-        ...payment,
-        id: payment.id || `${transactionId}-payment-${String(index + 1).padStart(3, '0')}`,
-        method,
-        saleAmount: Number(saleAmount.toFixed(2)),
-        tipAmount: Number(tipAmount.toFixed(2)),
-        amount: Number((saleAmount + tipAmount).toFixed(2)),
-        provider: method === 'Tarjeta' ? 'BBVA' : '',
-        externalRef: method === 'Tarjeta' ? (payment.externalRef || '') : ''
-      };
-    });
-
-    const methods = [...new Set(payments.map(payment => payment.method))];
-    const tipAmount = payments.reduce((sum, payment) => sum + Number(payment.tipAmount || 0), 0);
-    const totalCharged = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
-    const updatedTransaction = {
-      ...currentTransaction,
-      paymentMethod: methods.length === 1 ? methods[0] : `Mixto (${payments.length} pagos)`,
-      payments,
-      tipAmount: Number(tipAmount.toFixed(2)),
-      totalCharged: Number(totalCharged.toFixed(2))
-    };
-
-    this.state.transactions[transactionIndex] = updatedTransaction;
-    const persistedId = await this.persistSaleRecord(updatedTransaction);
-    if (!persistedId) {
-      this.state.transactions[transactionIndex] = currentTransaction;
-      return null;
+  async correctTransactionPayments(transactionId, draft, { expectedTransaction, requestId } = {}) {
+    this.paymentCorrectionsInFlight ||= new Set();
+    if (this.paymentCorrectionsInFlight.has(transactionId)) throw new Error('Ya se está guardando este cobro.');
+    const current = this.state.transactions.find(tx => tx.id === transactionId);
+    if (!this.canCorrectTransactionPayment(current)) throw new Error('El turno está cerrado, hay una devolución o el cobro no admite correcciones.');
+    const expected = expectedTransaction || current;
+    const snapshot = paymentCorrectionSnapshot(expected);
+    let patch = buildPaymentCorrection(expected, draft);
+    this.paymentCorrectionsInFlight.add(transactionId);
+    try {
+      await this.pendingSaleWrites.get(transactionId);
+      if (this.isEmergencyMode()) {
+        if (JSON.stringify(snapshot) !== JSON.stringify(paymentCorrectionSnapshot(current))) throw new Error('El cobro ha cambiado. Vuelve a abrir el ticket.');
+        if (!await this.persistSaleRecord({...current, ...patch})) throw new Error('No se pudo guardar la corrección local.');
+      } else {
+        patch = await correctSalePayments(transactionId, snapshot, patch.payments, requestId || createUuid());
+      }
+      // Re-find after awaiting: realtime may have reordered the list or added detail.
+      const index = this.state.transactions.findIndex(tx => tx.id === transactionId);
+      const updated = {...(index >= 0 ? this.state.transactions[index] : current), ...patch};
+      if (index >= 0) this.state.transactions[index] = updated;
+      if (!this.isEmergencyMode()) this.broadcastSaleChange(updated);
+      this.emitChange({source: 'payment-correction'});
+      return updated;
+    } finally {
+      this.paymentCorrectionsInFlight.delete(transactionId);
     }
-    if (updatedTransaction.receiptToken) this.publishReceiptTicket(updatedTransaction);
-    this.notify({ flushRemote: true });
-    return updatedTransaction;
   }
 
   getSquareGiftCardOnlineSalesSummary(date = new Date().toISOString().slice(0, 10), options = {}) {
