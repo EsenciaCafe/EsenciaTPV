@@ -8,6 +8,7 @@ import {validatePromotionPrices} from './promotion-prices.mjs';
 import {benefitDiscount,validateBenefitRule} from './benefit.mjs';
 import {allocateCartDiscount,cartPromotionPart} from '../../../src/clubCartPromotionMath.js';
 import {promotionSnapshot,promotionDiscount} from '../../../src/clubPromotionMath.js';
+import {getCustomerInvoice,issueCustomerInvoice} from './customer-invoices.mjs';
 const stable=v=>JSON.stringify(v&&typeof v==='object'?Array.isArray(v)?v.map(x=>JSON.parse(stable(x))):Object.fromEntries(Object.keys(v).sort().map(k=>[k,JSON.parse(stable(v[k]))])):v);
 const hash=v=>createHash('sha256').update(stable(v)).digest('hex');
 const amount=v=>{const n=Number(v),c=Math.round(n*100);if(!Number.isFinite(n)||c<0||!Number.isSafeInteger(c)||Math.abs(n*100-c)>0.00001)throw Error('Importe no válido.');return c;};
@@ -189,6 +190,8 @@ export function createTpvBridge({db,send,sourceProject,loadCatalog,finalizeFisca
    const {_expectedActor,...p}=p_payload;
    if(p_action==='status')return {staffId:context.employeeId,actorId:context.actorId};
    if(p_action==='logout'){await auth.logout(p_session);return {ok:true};}
+   if(p_action==='invoice_get')return getCustomerInvoice(db,p.saleId);
+   if(p_action==='invoice_issue')return issueCustomerInvoice(db,context,p);
    if(p_action==='lookup'){
     const member=await perform(context,'member.lookup',{qr:p.qr});
     await db.query('insert into tpv_bridge_private.member_labels(id,name) values($1,$2) on conflict(id) do update set name=excluded.name,updated_at=now()',[member.id,member.name]);return member;

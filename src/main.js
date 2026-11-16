@@ -6,6 +6,8 @@ import { store } from './store.js';
 import { checkoutTableId, fetchCheckoutTable, sameCheckoutItems, giftCardOrderReference } from './kdsCheckout.js';
 import { renderKdsAccount } from './kdsAccount.js';
 import { openPaymentCorrection } from './paymentCorrectionUi.js';
+import { openCustomerInvoice } from './customerInvoiceUi.js';
+import { clubServerEnabled } from './clubServerTransport.js';
 import { loadSaleById, loadKitchenPublication } from './db.js';
 import { clubEnabled, clubAfterSale, clubAfterRefund, initializeClub, clubLogout, clubLoginWithPin, clubPinEnabled, clubPinBridge, clubQueue, clubActor } from './clubRuntime.js';
 import { mountTransactionIdentity } from './transactionIdentity.js';
@@ -1432,6 +1434,9 @@ function showTransactionDetailModal(transactionId) {
               Corregir cobro
             </button>
           ` : ''}
+          ${import.meta.env.VITE_CUSTOMER_INVOICES_ENABLED === 'true' && clubServerEnabled && tx.type !== 'refund' ? `
+            <button class="pay-btn-opt payment-correction-open-btn" id="tx-customer-invoice-btn" style="min-height:48px; margin:0;">Factura con datos del cliente</button>
+          ` : ''}
           ${(store.canRefundTransaction(tx) && store.canIssueRefunds()) ? `
             <button class="pay-btn-opt danger tx-detail-refund-btn" id="tx-detail-refund-btn" style="height: 40px; font-size: 0.9rem; margin: 0;">
               Registrar Devolución
@@ -1449,6 +1454,15 @@ function showTransactionDetailModal(transactionId) {
   });
 
   const paymentCorrectionBtn = modal.querySelector('#tx-payment-correction-btn');
+  modal.querySelector('#tx-customer-invoice-btn')?.addEventListener('click', () => {
+    const staffId = store.state.auth.profile?.id;
+    openCustomerInvoice({saleId:tx.id,call:async(action,payload)=>{
+      if (store.isEmergencyMode() || !navigator.onLine) throw Error('La emisión de facturas requiere conexión.');
+      await clubPinBridge?.ready();
+      if (!staffId || store.state.auth.profile?.id !== staffId || clubPinBridge?.currentStaff() !== staffId) throw Error('Vuelve a entrar con tu PIN para acceder a las facturas.');
+      return clubPinBridge.action(action,payload);
+    }});
+  });
   if (paymentCorrectionBtn) {
     paymentCorrectionBtn.addEventListener('click', () => {
       modal.remove();

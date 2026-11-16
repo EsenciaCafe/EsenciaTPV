@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tpv-cache-v104-payment-tip-correction';
+const CACHE_NAME = 'tpv-cache-v105-customer-invoices';
 const BASE_URL = new URL('./', self.location.href);
 const BUILD_ASSETS = /* __PRECACHE_ASSETS__ */ [];
 const ASSETS = [

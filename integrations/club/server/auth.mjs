@@ -4,7 +4,7 @@ import {Buffer} from 'node:buffer';
 const scrypt=promisify(scryptCallback),hash=s=>createHash('sha256').update(s).digest('hex');
 const derive=async(pin,salt)=>Buffer.from(await scrypt(pin,salt,32)).toString('hex');
 const match=(a,b)=>a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
-export const cashierPermissions=['lookup','pending','promo_available','promo_reserve','promo_validate','promo_release','promo_cart','promo_clear','finalize_sale','purchase','assignment','assign_sale','prepare_clear','clear_ticket','clear_award'];
+export const cashierPermissions=['lookup','pending','promo_available','promo_reserve','promo_validate','promo_release','promo_cart','promo_clear','finalize_sale','purchase','assignment','assign_sale','prepare_clear','clear_ticket','clear_award','invoice_get','invoice_issue'];
 export const managerPermissions=[...cashierPermissions,'promo_catalogue','promo_save','promo_holds','gift_points','withdraw_sale'];
 // Provision from a trusted backend/admin session ONLY, never a public HTTP method.
 export async function provisionEmployee(db,staffId,permissions){

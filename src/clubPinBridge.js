@@ -11,7 +11,7 @@ export function createClubPinBridge(rawClient, { storage = sessionStorage, devic
   function save(value){const previous=JSON.stringify(current);current=value;try{value?storage.setItem(sessionKey,JSON.stringify(value)):storage.removeItem(sessionKey);}catch{/* session remains memory-only */}if(previous!==JSON.stringify(current))emit();}
   async function call(action,payload={},session=current){
     if (session && action !== 'logout' && (current?.token !== session.token || current?.actorId !== session.actorId)) throw new Error('El empleado ha cambiado.');
-    if (session?.actorId && ['purchase','resolve','lookup','pending','assignment','assign_sale','withdraw_sale','clear_award','gift_points','promo_catalogue','promo_save','promo_available','promo_reserve','promo_validate','promo_complete','promo_release','promo_clear','promo_cart','promo_holds'].includes(action)) payload={...payload,_expectedActor:session.actorId};
+    if (session?.actorId && ['purchase','resolve','lookup','pending','assignment','assign_sale','withdraw_sale','clear_award','gift_points','promo_catalogue','promo_save','promo_available','promo_reserve','promo_validate','promo_complete','promo_release','promo_clear','promo_cart','promo_holds','invoice_get','invoice_issue'].includes(action)) payload={...payload,_expectedActor:session.actorId};
     const request=rawClient.rpc('club_tpv',{p_device:devices.getItem(deviceKey)||'',p_session:session?.token||'',p_action:action,p_payload:payload});
     const {data,error}=await (request.abortSignal?request.abortSignal(AbortSignal.timeout(8000)):request);
     if(error||data?.error)throw Object.assign(new Error(data?.error||error.message),{code:data?.code||error?.code});
